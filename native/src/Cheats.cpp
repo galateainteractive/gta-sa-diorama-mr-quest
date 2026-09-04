@@ -1,0 +1,981 @@
+#include "Cheats.h"
+
+#include "Basketball.h"
+#include "Holster.h"
+#include "Log.h"
+#include "PhysicalWeapon.h"
+#include "Symbols.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <dlfcn.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <iterator>
+
+namespace savr::cheats {
+namespace {
+
+// Every symbol below is present in the checked-in 2.11 arm64 export table
+// (recon/gtasa211-dynsym.txt). Calling the game's handlers retains its own model
+// streaming, wanted, weather and ped logic.
+enum class Kind : unsigned char { Plain, Vehicle, GodMode, UnlockCities, Reset,
+                                  MissionSkip, TutorialSkip, MissionSelect,
+                                  MissionLaunch, Respect, NeverTired,
+                                  Teleport, Basketball };
+
+struct Entry {
+    const char* label;
+    const char* sym;
+    int         vehicleModel;
+    Kind        kind;
+    void*       fn;
+};
+
+constexpr const char* kVehicleCheat = "_ZN6CCheat12VehicleCheatEi";
+
+// Match the Quest Vice City layout: persistent/toggle-style utility first,
+// vehicle spawns next, then the native game cheat catalogue. Debug mission-skip
+// handlers are deliberately excluded because their preconditions are not safe
+// to infer from the retail mobile binary.
+Entry g_cheats[] = {
+    {"GOD MODE",               "_ZN6CCheat25TogglePlayerInvincibilityEv", -1, Kind::GodMode, nullptr},
+
+    {"SPAWN RHINO TANK",       kVehicleCheat, 432, Kind::Vehicle, nullptr},
+    {"SPAWN HYDRA JET",        kVehicleCheat, 520, Kind::Vehicle, nullptr},
+    {"SPAWN HUNTER HELI",      kVehicleCheat, 425, Kind::Vehicle, nullptr},
+    {"SPAWN MONSTER TRUCK",    kVehicleCheat, 444, Kind::Vehicle, nullptr},
+    {"SPAWN NRG 500",          kVehicleCheat, 522, Kind::Vehicle, nullptr},
+    {"SPAWN SANCHEZ",          kVehicleCheat, 468, Kind::Vehicle, nullptr},
+    {"SPAWN INFERNUS",         kVehicleCheat, 411, Kind::Vehicle, nullptr},
+    {"SPAWN TURISMO",          kVehicleCheat, 451, Kind::Vehicle, nullptr},
+    {"SPAWN BULLET",           kVehicleCheat, 541, Kind::Vehicle, nullptr},
+    {"SPAWN QUAD BIKE",        kVehicleCheat, 471, Kind::Vehicle, nullptr},
+    {"SPAWN DOZER",            kVehicleCheat, 486, Kind::Vehicle, nullptr},
+    {"SPAWN TANKER",           kVehicleCheat, 514, Kind::Vehicle, nullptr},
+    {"SPAWN STUNT PLANE",      kVehicleCheat, 513, Kind::Vehicle, nullptr},
+    {"SPAWN VORTEX",           kVehicleCheat, 539, Kind::Vehicle, nullptr},
+    {"SPAWN MAVERICK",         kVehicleCheat, 487, Kind::Vehicle, nullptr},
+    {"SPAWN SHAMAL",           kVehicleCheat, 519, Kind::Vehicle, nullptr},
+    {"SPAWN JETMAX",           kVehicleCheat, 493, Kind::Vehicle, nullptr},
+
+    {"MONEY ARMOUR HEALTH",    "_ZN6CCheat22MoneyArmourHealthCheatEv", -1, Kind::Plain, nullptr},
+    {"RESTORE HEALTH",         "_ZN6CCheat11HealthCheatEv",            -1, Kind::Plain, nullptr},
+    {"WEAPONS SET ONE",        "_ZN6CCheat12WeaponCheat1Ev",           -1, Kind::Plain, nullptr},
+    {"WEAPONS SET TWO",        "_ZN6CCheat12WeaponCheat2Ev",           -1, Kind::Plain, nullptr},
+    {"WEAPONS SET THREE",      "_ZN6CCheat12WeaponCheat3Ev",           -1, Kind::Plain, nullptr},
+    {"WEAPONS SET FOUR",       "_ZN6CCheat12WeaponCheat4Ev",           -1, Kind::Plain, nullptr},
+    {"HITMAN WEAPON SKILLS",   "_ZN6CCheat17WeaponSkillsCheatEv",      -1, Kind::Plain, nullptr},
+    {"MAX VEHICLE SKILLS",     "_ZN6CCheat18VehicleSkillsCheatEv",     -1, Kind::Plain, nullptr},
+    {"MAX STAMINA",            "_ZN6CCheat12StaminaCheatEv",           -1, Kind::Plain, nullptr},
+    {"MAX MUSCLE",             "_ZN6CCheat11MuscleCheatEv",            -1, Kind::Plain, nullptr},
+    {"MAX FAT",                "_ZN6CCheat8FatCheatEv",                -1, Kind::Plain, nullptr},
+    {"SKINNY",                 "_ZN6CCheat11SkinnyCheatEv",            -1, Kind::Plain, nullptr},
+    {"ADRENALINE",             "_ZN6CCheat15AdrenalineCheatEv",        -1, Kind::Plain, nullptr},
+    {"JETPACK",                "_ZN6CCheat12JetpackCheatEv",           -1, Kind::Plain, nullptr},
+    {"PARACHUTE",              "_ZN6CCheat14ParachuteCheatEv",         -1, Kind::Plain, nullptr},
+
+    {"RAISE WANTED LEVEL",     "_ZN6CCheat18WantedLevelUpCheatEv",     -1, Kind::Plain, nullptr},
+    {"LOWER WANTED LEVEL",     "_ZN6CCheat20WantedLevelDownCheatEv",   -1, Kind::Plain, nullptr},
+    {"CLEAR WANTED LEVEL",     "_ZN6CCheat14NotWantedCheatEv",         -1, Kind::Plain, nullptr},
+    {"SIX STAR WANTED",        "_ZN6CCheat11WantedCheatEv",            -1, Kind::Plain, nullptr},
+
+    {"EXTRA SUNNY WEATHER",    "_ZN6CCheat22ExtraSunnyWeatherCheatEv", -1, Kind::Plain, nullptr},
+    {"SUNNY WEATHER",          "_ZN6CCheat17SunnyWeatherCheatEv",      -1, Kind::Plain, nullptr},
+    {"CLOUDY WEATHER",         "_ZN6CCheat18CloudyWeatherCheatEv",     -1, Kind::Plain, nullptr},
+    {"RAINY WEATHER",          "_ZN6CCheat17RainyWeatherCheatEv",      -1, Kind::Plain, nullptr},
+    {"FOGGY WEATHER",          "_ZN6CCheat17FoggyWeatherCheatEv",      -1, Kind::Plain, nullptr},
+    {"STORMY WEATHER",         "_ZN6CCheat10StormCheatEv",             -1, Kind::Plain, nullptr},
+    {"SANDSTORM",              "_ZN6CCheat14SandstormCheatEv",         -1, Kind::Plain, nullptr},
+    {"MIDNIGHT",               "_ZN6CCheat13MidnightCheatEv",          -1, Kind::Plain, nullptr},
+    {"DUSK",                   "_ZN6CCheat9DuskCheatEv",               -1, Kind::Plain, nullptr},
+    {"FAST GAME",              "_ZN6CCheat13FastTimeCheatEv",          -1, Kind::Plain, nullptr},
+    {"SLOW GAME",              "_ZN6CCheat13SlowTimeCheatEv",          -1, Kind::Plain, nullptr},
+
+    {"PEDESTRIAN RIOT",        "_ZN6CCheat9RiotCheatEv",               -1, Kind::Plain, nullptr},
+    {"PEDESTRIAN MAYHEM",      "_ZN6CCheat11MayhemCheatEv",            -1, Kind::Plain, nullptr},
+    {"EVERYONE ATTACKS CJ",    "_ZN6CCheat27EverybodyAttacksPlayerCheatEv", -1, Kind::Plain, nullptr},
+    {"GANGS CONTROL STREETS",  "_ZN6CCheat10GangsCheatEv",             -1, Kind::Plain, nullptr},
+    {"GANG MEMBERS EVERYWHERE", "_ZN6CCheat13GangLandCheatEv",         -1, Kind::Plain, nullptr},
+    {"NINJA THEME",            "_ZN6CCheat10NinjaCheatEv",             -1, Kind::Plain, nullptr},
+    {"BEACH PARTY",            "_ZN6CCheat15BeachPartyCheatEv",        -1, Kind::Plain, nullptr},
+    {"ELVIS EVERYWHERE",       "_ZN6CCheat15ElvisLivesCheatEv",        -1, Kind::Plain, nullptr},
+    {"VILLAGE PEOPLE",         "_ZN6CCheat18VillagePeopleCheatEv",     -1, Kind::Plain, nullptr},
+    {"COUNTRYSIDE INVASION",   "_ZN6CCheat24CountrysideInvasionCheatEv", -1, Kind::Plain, nullptr},
+    {"FUNHOUSE THEME",         "_ZN6CCheat13FunhouseCheatEv",          -1, Kind::Plain, nullptr},
+    {"LOVE CONQUERS ALL",      "_ZN6CCheat20LoveConquersAllCheatEv",   -1, Kind::Plain, nullptr},
+    {"GAMBLER",                "_ZN6CCheat15TheGamblerCheatEv",        -1, Kind::Plain, nullptr},
+
+    {"BLOW UP ALL CARS",       "_ZN6CCheat15BlowUpCarsCheatEv",        -1, Kind::Plain, nullptr},
+    {"PERFECT HANDLING",       "_ZN6CCheat20AllCarsAreGreatCheatEv",   -1, Kind::Plain, nullptr},
+    {"CHEAP TRAFFIC",          "_ZN6CCheat19AllCarsAreShitCheatEv",    -1, Kind::Plain, nullptr},
+    {"FLYING CARS",            "_ZN6CCheat11FlyboyCheatEv",            -1, Kind::Plain, nullptr},
+    {"DRIVE BY AIM",           "_ZN6CCheat12DrivebyCheatEv",           -1, Kind::Plain, nullptr},
+    {"BLACK TRAFFIC",          "_ZN6CCheat14BlackCarsCheatEv",         -1, Kind::Plain, nullptr},
+    {"PINK TRAFFIC",           "_ZN6CCheat13PinkCarsCheatEv",          -1, Kind::Plain, nullptr},
+    {"UNLOCK ALL CITIES",      "_ZN6CStats12SetStatValueEtf",          -1, Kind::UnlockCities, nullptr},
+    {"SUICIDE",                "_ZN6CCheat12SuicideCheatEv",           -1, Kind::Plain, nullptr},
+    {"RESET ALL CHEATS",       "_ZN6CCheat11ResetCheatsEv",            -1, Kind::Reset, nullptr},
+
+
+    // Manual 5-second window that auto-passes "press key to continue" script
+    // waits (CCheat debug leftover). Deliberately NOT automatic: always-on it
+    // skipped real story sequences.
+    {"SKIP SCRIPT PROMPT (5S)", "_ZN6CCheat17ScriptBypassCheatEv",     -1, Kind::Plain, nullptr},
+    {"SKIP MISSION (BETA)",    "DoMissionSkip",                        -1, Kind::MissionSkip, nullptr},
+    {"SKIP TUTORIAL PROMPT",   nullptr,                                -1, Kind::TutorialSkip, nullptr},
+    // Debug mission launcher, driven through the same engine globals the
+    // retail debug widget uses: main.scm polls opcode 0x0A57 each frame and,
+    // when DoMissionSkip is set, dispatches currentMissionPage (a mission
+    // group, 0..5) and currentSkipToMissionNumber (the entry inside that
+    // group) to its per-page mission-start subroutines.
+    // Stat 64 (verified: CStats::FindMaxNumberOfGroupMembers reads stat
+    // array +0x100). Respect gates how many gang members can be recruited:
+    // below 10 nobody joins at all — CJ asks and they refuse. Appended at the
+    // END: CategoryForIndex uses hardcoded index ranges, so inserting rows
+    // mid-table shifts every category after the insertion point.
+    {"MAX RESPECT",            "_ZN6CStats12SetStatValueEtf",          -1, Kind::Respect, nullptr},
+    // CWorld::Players[0] + 0x188 (CPlayerInfo stride 0x1D8) = the byte the
+    // SET_PLAYER_NEVER_GETS_TIRED opcode writes. Latched per-frame: scripts
+    // and save loads reset it.
+    {"INFINITE SPRINT",        "_ZN6CWorld7PlayersE",                  -1, Kind::NeverTired, nullptr},
+    {"MISSION GROUP",          nullptr,                                -1, Kind::MissionSelect, nullptr},
+    {"MISSION NUMBER",         nullptr,                                -1, Kind::MissionSelect, nullptr},
+    {"LAUNCH MISSION",         "DoMissionSkip",                        -1, Kind::MissionLaunch, nullptr},
+    // Ganton double court, right BESIDE a hoop stand: the basketball brain
+    // (streamed script 15, mainV1 opcode 0929) attaches to the HOOP models
+    // 946/947/3496/3497, and the start prompt + ball only appear next to
+    // the stand (hoop 946 at 2290.64,-1541.61 in lae2_stream1.ipl).
+    {"TELEPORT BBALL COURT",   "_ZN4CPed8TeleportE7CVectorh",          -1, Kind::Teleport, nullptr},
+    // Custom immersive basketball: spawns a real physical BBALL_ingame in
+    // front of the player — grab with a hand, throw with the hand's motion,
+    // dribble off the ground. No story script involved.
+    {"SPAWN BASKETBALL",       "_ZN7CObject6CreateEib",                -1, Kind::Basketball, nullptr},
+
+};
+
+std::atomic<bool> g_godMode{false};
+bool* g_nativeInvincible = nullptr;
+bool* g_playerIsOffTheMap = nullptr;
+float (*g_getStatValue)(unsigned short) = nullptr;
+void (*g_setStatValue)(unsigned short, float) = nullptr;
+bool (*g_isPlayerOnAMission)() = nullptr;
+int* g_currentMissionPage = nullptr;
+int* g_currentSkipToMissionNumber = nullptr;
+int* g_skipToMissionNumber = nullptr;
+int* g_numMissions = nullptr;
+std::atomic<int> g_missionPageSel{0};
+std::atomic<int> g_missionNumberSel{0};
+constexpr int kMissionPageCount = 6;
+constexpr int kLegacyMissionCountFallback = 20;
+
+int MissionCountForPage(int page) {
+    page = std::clamp(page, 0, kMissionPageCount - 1);
+    if (g_numMissions != nullptr) {
+        const int count = g_numMissions[page];
+        // Retail lays out six consecutive counts immediately before its
+        // mission-label storage. Fail closed if another binary has a
+        // different or not-yet-initialized layout.
+        if (count > 0 && count <= 512) return count;
+    }
+    return kLegacyMissionCountFallback;
+}
+
+void StepMissionSelection(bool pageRow, int direction) {
+    const int step = direction < 0 ? -1 : 1;
+    if (pageRow) {
+        const int current = g_missionPageSel.load(std::memory_order_acquire);
+        const int page = (current + kMissionPageCount + step) %
+            kMissionPageCount;
+        g_missionPageSel.store(page, std::memory_order_release);
+        const int count = MissionCountForPage(page);
+        const int number = g_missionNumberSel.load(std::memory_order_acquire);
+        g_missionNumberSel.store(std::clamp(number, 0, count - 1),
+                                 std::memory_order_release);
+        return;
+    }
+    const int count = MissionCountForPage(
+        g_missionPageSel.load(std::memory_order_acquire));
+    const int current = g_missionNumberSel.load(std::memory_order_acquire);
+    g_missionNumberSel.store((current + count + step) % count,
+                             std::memory_order_release);
+}
+// After LAUNCH: watch whether main.scm consumes (clears) the skip flag.
+std::atomic<std::uintptr_t> g_missionLaunchProbe{0};
+std::atomic<int> g_missionLaunchTicks{-1};
+void (*g_scriptBypassCheat)() = nullptr;
+// The city-unlock stat can be rewritten by the mission script as the story
+// state machine runs, so a single write silently reverted. While the cheat is
+// latched, the per-frame tick re-asserts it.
+std::atomic<bool> g_unlockCitiesActive{false};
+// MAX RESPECT is latched the same way: stats reload with every save, and a
+// low respect silently disables gang recruiting again.
+std::atomic<bool> g_maxRespectActive{false};
+std::atomic<bool> g_neverTiredActive{false};
+unsigned char* g_neverTiredByte = nullptr;
+
+struct VehicleChoice { const char* name; int model; };
+struct VehicleSelector {
+    const char* label;
+    const VehicleChoice* choices;
+    int count;
+    std::atomic<int> selected{0};
+};
+
+constexpr VehicleChoice kCars[]={{"INFERNUS",411},{"TURISMO",451},
+    {"BULLET",541},{"MONSTER",444},{"RHINO",432},{"DOZER",486},
+    {"TANKER",514},{"QUAD",471}};
+constexpr VehicleChoice kMotorcycles[]={{"NRG-500",522},{"SANCHEZ",468},
+    {"FCR-900",521},{"PCJ-600",461},{"FREEWAY",463},{"FAGGIO",462},
+    {"BF-400",581},{"WAYFARER",586}};
+constexpr VehicleChoice kBicycles[]={{"BMX",481},{"BIKE",509},{"MTB",510}};
+constexpr VehicleChoice kHelicopters[]={{"HUNTER",425},{"MAVERICK",487},
+    {"CARGOBOB",548},{"LEVIATHAN",417},{"RAINDANCE",563},
+    {"SEASPARROW",447},{"SPARROW",469}};
+constexpr VehicleChoice kAirplanes[]={{"HYDRA",520},{"SHAMAL",519},
+    {"STUNTPLANE",513},{"ANDROMADA",592},{"DODO",593},{"NEVADA",553},
+    {"AT-400",577}};
+constexpr VehicleChoice kBoats[]={{"JETMAX",493},{"VORTEX",539},
+    {"SPEEDER",452},{"SQUALO",446},{"TROPIC",454},{"REEFER",453},
+    {"COASTGUARD",472}};
+
+// The complete drivable catalogue (every SA vehicle model 400..611) so any
+// vehicle can be spawned for wheel/HUD calibration. Trains, the tram and
+// unpowered trailers are omitted: CCheat::VehicleCheat spawns them detached
+// from their rail/tractor logic. Names follow the stock model names.
+constexpr VehicleChoice kAllVehicles[]={
+    {"LANDSTALKER",400},{"BRAVURA",401},{"BUFFALO",402},{"LINERUNNER",403},
+    {"PERENNIAL",404},{"SENTINEL",405},{"DUMPER",406},{"FIRETRUCK",407},
+    {"TRASHMASTER",408},{"STRETCH",409},{"MANANA",410},{"INFERNUS",411},
+    {"VOODOO",412},{"PONY",413},{"MULE",414},{"CHEETAH",415},
+    {"AMBULANCE",416},{"LEVIATHAN",417},{"MOONBEAM",418},{"ESPERANTO",419},
+    {"TAXI",420},{"WASHINGTON",421},{"BOBCAT",422},{"MR WHOOPEE",423},
+    {"BF INJECTION",424},{"HUNTER",425},{"PREMIER",426},{"ENFORCER",427},
+    {"SECURICAR",428},{"BANSHEE",429},{"PREDATOR",430},{"BUS",431},
+    {"RHINO",432},{"BARRACKS",433},{"HOTKNIFE",434},{"PREVION",436},
+    {"COACH",437},{"CABBIE",438},{"STALLION",439},{"RUMPO",440},
+    {"RC BANDIT",441},{"ROMERO",442},{"PACKER",443},{"MONSTER",444},
+    {"ADMIRAL",445},{"SQUALO",446},{"SEASPARROW",447},{"PIZZABOY",448},
+    {"TURISMO",451},{"SPEEDER",452},{"REEFER",453},{"TROPIC",454},
+    {"FLATBED",455},{"YANKEE",456},{"CADDY",457},{"SOLAIR",458},
+    {"TOPFUN",459},{"SKIMMER",460},{"PCJ-600",461},{"FAGGIO",462},
+    {"FREEWAY",463},{"RC BARON",464},{"RC RAIDER",465},{"GLENDALE",466},
+    {"OCEANIC",467},{"SANCHEZ",468},{"SPARROW",469},{"PATRIOT",470},
+    {"QUAD",471},{"COASTGUARD",472},{"DINGHY",473},{"HERMES",474},
+    {"SABRE",475},{"RUSTLER",476},{"ZR-350",477},{"WALTON",478},
+    {"REGINA",479},{"COMET",480},{"BMX",481},{"BURRITO",482},
+    {"CAMPER",483},{"MARQUIS",484},{"BAGGAGE",485},{"DOZER",486},
+    {"MAVERICK",487},{"NEWS MAVERICK",488},{"RANCHER",489},
+    {"FBI RANCHER",490},{"VIRGO",491},{"GREENWOOD",492},{"JETMAX",493},
+    {"HOTRING",494},{"SANDKING",495},{"BLISTA COMPACT",496},
+    {"POLICE MAVERICK",497},{"BOXVILLE",498},{"BENSON",499},{"MESA",500},
+    {"RC GOBLIN",501},{"HOTRING A",502},{"HOTRING B",503},{"BLOODRING",504},
+    {"RANCHER LURE",505},{"SUPER GT",506},{"ELEGANT",507},{"JOURNEY",508},
+    {"BIKE",509},{"MOUNTAIN BIKE",510},{"BEAGLE",511},{"CROPDUSTER",512},
+    {"STUNTPLANE",513},{"TANKER",514},{"ROADTRAIN",515},{"NEBULA",516},
+    {"MAJESTIC",517},{"BUCCANEER",518},{"SHAMAL",519},{"HYDRA",520},
+    {"FCR-900",521},{"NRG-500",522},{"HPV1000",523},{"CEMENT TRUCK",524},
+    {"TOWTRUCK",525},{"FORTUNE",526},{"CADRONA",527},{"FBI TRUCK",528},
+    {"WILLARD",529},{"FORKLIFT",530},{"TRACTOR",531},{"COMBINE",532},
+    {"FELTZER",533},{"REMINGTON",534},{"SLAMVAN",535},{"BLADE",536},
+    {"VORTEX",539},{"VINCENT",540},{"BULLET",541},{"CLOVER",542},
+    {"SADLER",543},{"FIRETRUCK LA",544},{"HUSTLER",545},{"INTRUDER",546},
+    {"PRIMO",547},{"CARGOBOB",548},{"TAMPA",549},{"SUNRISE",550},
+    {"MERIT",551},{"UTILITY VAN",552},{"NEVADA",553},{"YOSEMITE",554},
+    {"WINDSOR",555},{"MONSTER A",556},{"MONSTER B",557},{"URANUS",558},
+    {"JESTER",559},{"SULTAN",560},{"STRATUM",561},{"ELEGY",562},
+    {"RAINDANCE",563},{"RC TIGER",564},{"FLASH",565},{"TAHOMA",566},
+    {"SAVANNA",567},{"BANDITO",568},{"KART",571},{"MOWER",572},
+    {"DUNERIDE",573},{"SWEEPER",574},{"BROADWAY",575},{"TORNADO",576},
+    {"AT-400",577},{"DFT-30",578},{"HUNTLEY",579},{"STAFFORD",580},
+    {"BF-400",581},{"NEWSVAN",582},{"TUG",583},{"EMPEROR",585},
+    {"WAYFARER",586},{"EUROS",587},{"HOTDOG",588},{"CLUB",589},
+    {"ANDROMADA",592},{"DODO",593},{"RC CAM",594},{"LAUNCH",595},
+    {"POLICE LS",596},{"POLICE SF",597},{"POLICE LV",598},
+    {"POLICE RANGER",599},{"PICADOR",600},{"SWAT TANK",601},{"ALPHA",602},
+    {"PHOENIX",603},{"GLENDALE DMG",604},{"SADLER DMG",605},
+    {"BOXBURG",609}};
+
+VehicleSelector g_vehicleSelectors[]={
+    {"ANY VEHICLE",kAllVehicles,static_cast<int>(std::size(kAllVehicles))},
+    {"CARS",kCars,static_cast<int>(std::size(kCars))},
+    {"MOTORCYCLES",kMotorcycles,static_cast<int>(std::size(kMotorcycles))},
+    {"BICYCLES",kBicycles,static_cast<int>(std::size(kBicycles))},
+    {"HELICOPTERS",kHelicopters,static_cast<int>(std::size(kHelicopters))},
+    {"AIRPLANES",kAirplanes,static_cast<int>(std::size(kAirplanes))},
+    {"BOATS",kBoats,static_cast<int>(std::size(kBoats))}
+};
+constexpr int kVehicleSelectorCount=static_cast<int>(std::size(g_vehicleSelectors));
+
+// Item giver: ONE selector row cycling a flat list of every carryable
+// weapon/item. Activating gives the item and puts it straight into the RIGHT
+// tracked hand (physicalweapon::ForceHold) — with the holster-menu GRIP LOCK
+// enabled it stays in the hand regardless of grip, which makes calibrating
+// items that have no body point (gadgets, gifts) possible in one place.
+struct WeaponChoice { const char* name; int type; };
+
+constexpr WeaponChoice kGiveItems[]={
+    {"BRASS KNUCKLE",1},{"GOLF CLUB",2},{"NIGHTSTICK",3},{"KNIFE",4},
+    {"BASEBALL BAT",5},{"SHOVEL",6},{"POOL CUE",7},{"KATANA",8},
+    {"CHAINSAW",9},
+    {"PISTOL",22},{"SILENCED",23},{"DESERT EAGLE",24},
+    {"SHOTGUN",25},{"SAWNOFF",26},{"SPAS12",27},
+    {"MICRO UZI",28},{"MP5",29},{"TEC9",32},
+    {"AK47",30},{"M4",31},{"RIFLE",33},{"SNIPER",34},
+    {"RPG",35},{"HEATSEEKER",36},{"FLAMETHROWER",37},{"MINIGUN",38},
+    {"GRENADE",16},{"TEAR GAS",17},{"MOLOTOV",18},{"SATCHEL",39},
+    {"SPRAYCAN",41},{"EXTINGUISHER",42},{"CAMERA",43},
+    {"NIGHTVISION",44},{"THERMAL",45},{"PARACHUTE",46},
+    {"FLOWERS",14},{"CANE",15},{"DILDO",10},{"WHITE DILDO",11},
+    {"VIBRATOR",12},{"SILVER VIBRATOR",13},
+};
+constexpr int kGiveItemCount=static_cast<int>(std::size(kGiveItems));
+std::atomic<int> g_giveItemSelected{0};
+constexpr int kWeaponSelectorCount=1; // the GIVE ITEM row
+
+// SA weapon-slot layout (eWeaponType -> ped weapon slot), the same slots the
+// physical holster sockets are configured with.
+int SlotForWeaponType(int type) {
+    if (type==0||type==1) return 0;
+    if (type>=2&&type<=9) return 1;
+    if (type>=10&&type<=15) return 10;
+    if (type==16||type==17||type==18||type==39) return 8;
+    if (type>=22&&type<=24) return 2;
+    if (type>=25&&type<=27) return 3;
+    if (type==28||type==29||type==32) return 4;
+    if (type==30||type==31) return 5;
+    if (type==33||type==34) return 6;
+    if (type>=35&&type<=38) return 7;
+    if (type==40) return 12;
+    if (type>=41&&type<=43) return 9;
+    if (type>=44&&type<=46) return 11;
+    return -1;
+}
+
+const WeaponChoice& SelectedGiveItem() {
+    return kGiveItems[std::clamp(g_giveItemSelected.load(),0,
+                                 kGiveItemCount-1)];
+}
+
+void* VehicleCheatFunction() {
+    for (Entry& cheat:g_cheats)
+        if (cheat.kind==Kind::Vehicle&&cheat.fn) return cheat.fn;
+    return nullptr;
+}
+
+int CategoryForIndex(int index) {
+    if (index < 0 || index >= static_cast<int>(std::size(g_cheats)))
+        return CATEGORY_GENERAL;
+    if (g_cheats[index].kind == Kind::Vehicle || index == 25 ||
+        (index >= 61 && index <= 67))
+        return CATEGORY_VEHICLES;
+    if (index >= 20 && index <= 24)
+        return CATEGORY_WEAPONS;
+    if (index >= 37 && index <= 47)
+        return CATEGORY_WEATHER;
+    if ((index >= 27 && index <= 29) || (index >= 53 && index <= 60))
+        return CATEGORY_SKINS;
+    return CATEGORY_GENERAL;
+}
+
+int CategorySourceIndex(int category, int item) {
+    if (category < 0 || category >= CATEGORY_COUNT || item < 0) return -1;
+    if (category==CATEGORY_VEHICLES) {
+        item-=kVehicleSelectorCount;
+        if (item<0) return -1;
+    }
+    if (category==CATEGORY_WEAPONS) {
+        item-=kWeaponSelectorCount;
+        if (item<0) return -1;
+    }
+    for (int source=0; source<static_cast<int>(std::size(g_cheats)); ++source) {
+        if (category==CATEGORY_VEHICLES&&g_cheats[source].kind==Kind::Vehicle)
+            continue;
+        if (CategoryForIndex(source)==category && item--==0) return source;
+    }
+    return -1;
+}
+
+}  // namespace
+
+void Init(void* handle) {
+    if (handle == nullptr) return;
+    int ok = 0;
+    for (Entry& cheat : g_cheats) {
+        cheat.fn = dlsym(handle, cheat.sym);
+        if (cheat.fn != nullptr) ++ok;
+    }
+    g_nativeInvincible = static_cast<bool*>(
+        dlsym(handle, "_ZN10CPlayerPed22bDebugPlayerInvincibleE"));
+    g_playerIsOffTheMap = static_cast<bool*>(
+        dlsym(handle, "_ZN11CTheScripts18bPlayerIsOffTheMapE"));
+    g_getStatValue = reinterpret_cast<float (*)(unsigned short)>(
+        dlsym(handle, "_ZN6CStats12GetStatValueEt"));
+    g_setStatValue = reinterpret_cast<void (*)(unsigned short, float)>(
+        dlsym(handle, "_ZN6CStats12SetStatValueEtf"));
+    g_isPlayerOnAMission = reinterpret_cast<bool (*)()>(
+        dlsym(handle, "_ZN11CTheScripts18IsPlayerOnAMissionEv"));
+    g_scriptBypassCheat = reinterpret_cast<void (*)()>(
+        dlsym(handle, "_ZN6CCheat17ScriptBypassCheatEv"));
+    g_currentMissionPage = static_cast<int*>(
+        dlsym(handle, "currentMissionPage"));
+    g_currentSkipToMissionNumber = static_cast<int*>(
+        dlsym(handle, "currentSkipToMissionNumber"));
+    g_skipToMissionNumber = static_cast<int*>(
+        dlsym(handle, "SkipToMissionNumber"));
+    g_numMissions = static_cast<int*>(dlsym(handle, "numMissions"));
+    if (g_nativeInvincible != nullptr)
+        g_godMode.store(*g_nativeInvincible, std::memory_order_release);
+    LOGI("cheats: resolved %d/%d handlers, native god state=%s mission counts=%s",
+         ok,
+         static_cast<int>(std::size(g_cheats)),
+         g_nativeInvincible != nullptr ? "yes" : "no",
+         g_numMissions != nullptr ? "retail" : "legacy-20");
+}
+
+void Tick() {
+    const std::uintptr_t probe =
+        g_missionLaunchProbe.load(std::memory_order_acquire);
+    if (probe != 0) {
+        const int tick = g_missionLaunchTicks.fetch_add(1,
+            std::memory_order_acq_rel);
+        if (*reinterpret_cast<const unsigned char*>(probe) == 0) {
+            // main.scm consumed the launch: leave its debug thread again.
+            if (g.CTheScripts_ScriptSpace != nullptr)
+                *reinterpret_cast<int*>(
+                    static_cast<unsigned char*>(g.CTheScripts_ScriptSpace) +
+                    6132) = 0;
+            g_missionLaunchProbe.store(0, std::memory_order_release);
+            LOGI("[mission] launch consumed by main.scm (tick %d)", tick);
+            return;
+        }
+        if (tick == 120 || tick == 360) {
+            const int value = *reinterpret_cast<const unsigned char*>(probe);
+            LOGI("[mission] flag after launch: DoMissionSkip=%d (tick %d)",
+                 value, tick);
+            if (FILE* f = std::fopen(
+                    "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_debug.txt",
+                    "a")) {
+                std::fprintf(f, "flag tick=%d value=%d\n", tick, value);
+                std::fclose(f);
+            }
+            if (tick == 360)
+                g_missionLaunchProbe.store(0, std::memory_order_release);
+        }
+    }
+    // ScriptBypassCheat must stay MANUAL (the cheat row below): applied
+    // continuously it auto-passes scripted waits that are real gameplay
+    // beats, silently skipping story sequences.
+    if (g_neverTiredActive.load(std::memory_order_acquire) &&
+        g_neverTiredByte != nullptr && *g_neverTiredByte == 0)
+        *g_neverTiredByte = 1;
+    if (g_maxRespectActive.load(std::memory_order_acquire) &&
+        g_getStatValue && g_setStatValue && g_getStatValue(64u) < 1000.0f)
+        g_setStatValue(64u, 1000.0f);
+    if (!g_unlockCitiesActive.load(std::memory_order_acquire)) return;
+    if (!g_getStatValue || !g_setStatValue) return;
+    if (g_getStatValue(181u) < 3.0f) {
+        g_setStatValue(181u, 3.0f);
+        if (g_playerIsOffTheMap) *g_playerIsOffTheMap = false;
+        static unsigned int reassertCount = 0;
+        if ((++reassertCount % 100u) == 1u)
+            LOGI("cheat cities: stat181 re-asserted (script rewrote it, n=%u)",
+                 reassertCount);
+    }
+}
+
+int Count() { return static_cast<int>(std::size(g_cheats)); }
+
+const char* Name(int index) {
+    if (index < 0 || index >= Count()) return "";
+    if (g_cheats[index].kind == Kind::MissionSelect) {
+        static char label[2][48];
+        const bool pageRow =
+            std::strcmp(g_cheats[index].label, "MISSION GROUP") == 0;
+        if (pageRow) {
+            std::snprintf(label[0], sizeof(label[0]), "%s   < %d >",
+                          g_cheats[index].label, g_missionPageSel.load());
+        } else {
+            const int count = MissionCountForPage(g_missionPageSel.load());
+            std::snprintf(label[1], sizeof(label[1]), "%s   < %d / %d >",
+                          g_cheats[index].label, g_missionNumberSel.load(),
+                          count - 1);
+        }
+        return label[pageRow ? 0 : 1];
+    }
+    if (g_cheats[index].kind != Kind::GodMode) return g_cheats[index].label;
+    return g_godMode.load(std::memory_order_acquire) ? "GOD MODE   ON" : "GOD MODE   OFF";
+}
+
+bool Available(int index) {
+    if (index >= 0 && index < Count() &&
+        g_cheats[index].kind == Kind::MissionSelect)
+        return true;
+    return index >= 0 && index < Count() && g_cheats[index].fn != nullptr;
+}
+
+bool ToggleState(int index, bool* enabled) {
+    if (enabled == nullptr || index < 0 || index >= Count() ||
+        g_cheats[index].kind != Kind::GodMode)
+        return false;
+    *enabled = g_godMode.load(std::memory_order_acquire);
+    return true;
+}
+
+void Activate(int index) {
+    if (index < 0 || index >= Count()) return;
+    if (g.FindPlayerPed == nullptr || g.FindPlayerPed(-1) == nullptr) {
+        LOGW("cheat '%s' ignored (not in gameplay)", g_cheats[index].label);
+        return;
+    }
+    Entry& cheat = g_cheats[index];
+    if (cheat.kind == Kind::Basketball) {
+        savr::basketball::SpawnBall();
+        LOGI("cheat: basketball spawn requested");
+        return;
+    }
+    if (cheat.kind == Kind::Teleport) {
+        if (cheat.fn == nullptr) { LOGW("teleport unavailable"); return; }
+        if (g.FindPlayerVehicle && g.FindPlayerVehicle(-1, false)) {
+            LOGW("teleport ignored: leave the vehicle first");
+            return;
+        }
+        // Basketball-glitch repair + diagnosis. Story scripts (the известный
+        // "no basketballs after Madd Dogg" bug) can switch the object brain
+        // entries off in CTheScripts::ScriptsForBrains, after which no court
+        // ever prompts again. Dump the live table, and re-enable any
+        // inactive entry with the basketball activation radius (70.0 — the
+        // opcode-0929 registrations for hoop models 946/947/3496/3497).
+        // Entry layout disasm-verified (AddNewScriptBrain @0x437974):
+        // stride 20; +0 u16 streamedIndex (0xFFFF = free), +2 s8 type,
+        // +3 s8 groupingId, +4 u8 active, +8 f32 radius, +0xC u16 model.
+        if (g.CTheScripts_ScriptsForBrains != nullptr) {
+            auto* table =
+                static_cast<unsigned char*>(g.CTheScripts_ScriptsForBrains);
+            for (int i = 0; i < 70; ++i) {
+                unsigned char* e = table + i * 20;
+                std::uint16_t streamedIndex;
+                std::memcpy(&streamedIndex, e, sizeof(streamedIndex));
+                if (streamedIndex == 0xFFFFu) continue;
+                float radius;
+                std::memcpy(&radius, e + 8, sizeof(radius));
+                std::uint16_t model;
+                std::memcpy(&model, e + 0xC, sizeof(model));
+                const bool active = e[4] != 0;
+                LOGI("[cheat.bball] brain[%d] script=%u type=%d group=%d "
+                     "active=%d radius=%.1f model=%d",
+                     i, streamedIndex, static_cast<signed char>(e[2]),
+                     static_cast<signed char>(e[3]), active ? 1 : 0,
+                     static_cast<double>(radius),
+                     static_cast<std::int16_t>(model));
+                if (!active && radius > 69.0f && radius < 71.0f) {
+                    e[4] = 1;
+                    LOGI("[cheat.bball] brain[%d] re-enabled", i);
+                }
+            }
+        } else {
+            LOGW("[cheat.bball] ScriptsForBrains symbol missing");
+        }
+        // Script-global gates. basketb.scm only shows the court prompt while
+        // $33b0 == 0 ("no basketball challenge running") — the BBCHAL thread
+        // sets it to 1 at startup (@0x1b721 in mainV1) and back to 0 only on
+        // its own termination (@0x1c0fc). Globals are SAVED, so a latch stuck
+        // at 1 kills basketball on every court in that save forever. Dump the
+        // whole family and clear the latch.
+        if (g.CTheScripts_ScriptSpace != nullptr) {
+            auto* space =
+                static_cast<unsigned char*>(g.CTheScripts_ScriptSpace);
+            const auto DumpFix = [&](unsigned off, bool fixZero) {
+                std::int32_t value;
+                std::memcpy(&value, space + off, sizeof(value));
+                LOGI("[cheat.bball] global $%04x = %d%s", off, value,
+                     (fixZero && value != 0) ? " -> 0" : "");
+                if (fixZero && value != 0) {
+                    const std::int32_t zero = 0;
+                    std::memcpy(space + off, &zero, sizeof(zero));
+                }
+            };
+            DumpFix(0x33b0, true);   // challenge-running latch (prompt gate)
+            DumpFix(0x33b4, false);
+            DumpFix(0x33b8, false);
+            DumpFix(0x33bc, false);
+            DumpFix(0x33c0, false);
+            // Both handshakes get poisoned by the restart storm itself (every
+            // dying instance leaves them claimed) — clear them too.
+            DumpFix(0x33cc, true);   // basketb brain handshake
+            DumpFix(0x3368, true);   // brain busy flag
+            DumpFix(0x0660, false);  // basketb exit gate (likely $ONMISSION)
+            // Runtime used-object table: basketb.scm's hoop-model checks
+            // resolve refs -30..-33 through CTheScripts::UsedObjectArray
+            // (disasm 09CC handler @0x4483b8: entry stride 0x1C, resolved
+            // model id at +0x18). Dump the basketball window to see what the
+            // names actually resolved to in this environment.
+            if (void* gameHandle =
+                    dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW)) {
+                if (auto* usedObjects = static_cast<unsigned char*>(dlsym(
+                        gameHandle, "_ZN11CTheScripts15UsedObjectArrayE"))) {
+                    for (int i = 28; i <= 35; ++i) {
+                        char objName[25]{};
+                        std::memcpy(objName, usedObjects + i * 28, 24);
+                        for (char& c : objName) {
+                            if (c != '\0' && (c < 0x20 || c > 0x7e)) c = '?';
+                        }
+                        std::int32_t modelId;
+                        std::memcpy(&modelId, usedObjects + i * 28 + 0x18,
+                                    sizeof(modelId));
+                        LOGI("[cheat.bball] usedobj[%d] name=%s model=%d",
+                             i, objName, modelId);
+                    }
+                }
+                dlclose(gameHandle);
+            }
+            // Streaming states for the hoop models: basketb.scm's accept
+            // path requires HAS_MODEL_LOADED(hoop) — if the state is not 1
+            // (LOADED) the brain exits even though the hoop OBJECT stands
+            // right there. CStreamingInfo stride 20, state byte at +0x10
+            // (disasm ProcessWaitingForScriptBrainArray @0x438528).
+            if (g.CStreaming_ms_aInfoForModel != nullptr) {
+                for (const int modelId :
+                     {946, 947, 3496, 3497, 26230 + 7}) {
+                    const std::uint8_t state =
+                        g.CStreaming_ms_aInfoForModel[modelId * 20 + 0x10];
+                    LOGI("[cheat.bball] streaming model=%d state=%u",
+                         modelId, state);
+                    // The court brain HARD-REQUIRES the hoop model loaded
+                    // (HAS_MODEL_LOADED gate) - something unloads it around
+                    // the court. Pin the hoop models: MISSION_REQUIRED(0x4)
+                    // | KEEP_IN_MEMORY(0x8), same flag family the engine
+                    // uses for script-brain resources.
+                    if (modelId < 26230 && state != 1u &&
+                        g.CStreaming_RequestModel) {
+                        g.CStreaming_RequestModel(modelId, 0x0C);
+                        LOGI("[cheat.bball] requested model=%d (pin 0x0C)",
+                             modelId);
+                    }
+                }
+                // Service the requests synchronously and report the result:
+                // if a pinned hoop model STILL is not loaded afterwards, its
+                // standalone DFF is effectively unreachable in this build
+                // (mobile bakes some props into sector meshes) and the fix
+                // must go through a court whose hoop model does stream.
+                if (void* gameHandle2 =
+                        dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW)) {
+                    if (auto* loadAll = reinterpret_cast<void (*)(bool)>(
+                            dlsym(gameHandle2,
+                                  "_ZN10CStreaming22LoadAllRequestedModelsEb"))) {
+                        loadAll(false);
+                        for (const int modelId : {946, 3496, 3497}) {
+                            LOGI("[cheat.bball] post-load model=%d state=%u",
+                                 modelId,
+                                 g.CStreaming_ms_aInfoForModel[modelId * 20 +
+                                                              0x10]);
+                        }
+                    }
+                    dlclose(gameHandle2);
+                }
+            }
+            // Live script walk: list every ACTIVE script with its current
+            // instruction offset. If a bball instance is ALIVE holding the
+            // $33cc ownership while parked at another court, it shows here
+            // with its exact wait location. CRunningScript: next @+0, name
+            // @+0x10, base @+0x18, ip @+0x20 (disasm-verified).
+            if (void* gameHandle3 =
+                    dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW)) {
+                if (auto* listHead = static_cast<unsigned char**>(dlsym(
+                        gameHandle3, "_ZN11CTheScripts14pActiveScriptsE"))) {
+                    int scriptCount = 0;
+                    for (unsigned char* s = *listHead;
+                         s != nullptr && scriptCount < 96; ++scriptCount) {
+                        char scriptName[9]{};
+                        std::memcpy(scriptName, s + 0x10, 8);
+                        for (char& c : scriptName) {
+                            if (c != '\0' && (c < 0x20 || c > 0x7e)) c = '?';
+                        }
+                        std::uintptr_t base, ip;
+                        std::memcpy(&base, s + 0x18, sizeof(base));
+                        std::memcpy(&ip, s + 0x20, sizeof(ip));
+                        const long off = (base && ip >= base)
+                            ? static_cast<long>(ip - base) : -1;
+                        LOGI("[cheat.bball] active[%d] name=%s ip_off=%ld",
+                             scriptCount, scriptName, off);
+                        std::memcpy(&s, s, sizeof(s));   // next
+                    }
+                }
+                dlclose(gameHandle3);
+            }
+            // $070c = story-progress counter (incremented on mission passes:
+            // SWEET_1/GAN1/... M_PASS blocks). basketb.scm's start gate is
+            // "$3368 == 0 AND $070c > 7" — with fewer than 8 story missions
+            // passed the brain exits instantly (shutdown ip_off=0xac1), which
+            // is exactly the no-prompt symptom. Raise it to 8 so the court
+            // unlocks for testing; story saves past that point are untouched.
+            {
+                std::int32_t progress;
+                std::memcpy(&progress, space + 0x070c, sizeof(progress));
+                if (progress < 8) {
+                    const std::int32_t unlocked = 8;
+                    std::memcpy(space + 0x070c, &unlocked, sizeof(unlocked));
+                    LOGI("[cheat.bball] global $070c = %d -> 8 "
+                         "(unlock basketball progression gate)", progress);
+                } else {
+                    LOGI("[cheat.bball] global $070c = %d (already unlocked)",
+                         progress);
+                }
+            }
+        }
+        void* ped = g.FindPlayerPed(-1);
+        // The BSKBALLHUB_LAX01 (947) court in East LS: on this mobile build
+        // the Ganton hoops' standalone model (946) never streams (baked into
+        // the sector mesh), so its brain always fails HAS_MODEL_LOADED. The
+        // 947 hub model DOES stream — its court can pass the script's model
+        // gate. Hub at (2533.88, -1667.58, 16.29) in lae2_stream0.ipl.
+        GameSymbols::Vec3 pos{2533.9f, -1665.6f, 17.5f};
+        // Stream the destination FIRST: querying ground Z before the scene
+        // is resident returned garbage and dropped CJ under the map.
+        if (g.CStreaming_LoadScene) g.CStreaming_LoadScene(&pos);
+        if (g.CWorld_FindGroundZForCoord) {
+            const float ground = g.CWorld_FindGroundZForCoord(pos.x, pos.y);
+            if (std::isfinite(ground) && ground > 10.0f && ground < 25.0f)
+                pos.z = ground + 1.0f;
+        }
+        // CPed::Teleport(CVector, bool clearOrientation): CVector is the
+        // usual 3-float HFA, flattened like every other binding.
+        reinterpret_cast<void (*)(void*, float, float, float, unsigned char)>(
+            cheat.fn)(ped, pos.x, pos.y, pos.z, 1);
+        LOGI("teleport: basketball court (%.1f %.1f %.1f)",
+             pos.x, pos.y, pos.z);
+        return;
+    }
+    if (cheat.kind == Kind::NeverTired) {
+        if (cheat.fn == nullptr) { LOGW("infinite sprint unavailable"); return; }
+        // 0x188, not 0x189: the retail SET_PLAYER_NEVER_GETS_TIRED handler
+        // (disasm @0x41c3b4: strb [players + id*0x1D8 + 0x188]) — the old
+        // off-by-one wrote a neighbouring byte and did nothing.
+        g_neverTiredByte = static_cast<unsigned char*>(cheat.fn) + 0x188;
+        const bool enabled = !g_neverTiredActive.load(std::memory_order_acquire);
+        g_neverTiredActive.store(enabled, std::memory_order_release);
+        *g_neverTiredByte = enabled ? 1 : 0;
+        LOGI("infinite sprint: %s", enabled ? "ON" : "OFF");
+        return;
+    }
+    if (cheat.kind == Kind::Respect) {
+        if (cheat.fn == nullptr) { LOGW("respect cheat unavailable"); return; }
+        reinterpret_cast<void (*)(unsigned short, float)>(cheat.fn)(64u,
+                                                                    1000.0f);
+        g_maxRespectActive.store(true, std::memory_order_release);
+        LOGI("cheat respect: stat 64 -> 1000 (latched per-frame)");
+        return;
+    }
+    if (cheat.kind == Kind::MissionSelect) {
+        const bool pageRow = std::strcmp(cheat.label, "MISSION GROUP") == 0;
+        StepMissionSelection(pageRow, +1);
+        return;
+    }
+    if (cheat.kind == Kind::MissionLaunch) {
+        if (cheat.fn == nullptr || g_currentMissionPage == nullptr ||
+            g_currentSkipToMissionNumber == nullptr) {
+            LOGW("mission launch unavailable (symbols missing)");
+            return;
+        }
+        const int page = std::clamp(g_missionPageSel.load(), 0,
+                                    kMissionPageCount - 1);
+        const int number = std::clamp(g_missionNumberSel.load(), 0,
+                                      MissionCountForPage(page) - 1);
+        *g_currentMissionPage = page;
+        *g_currentSkipToMissionNumber = number;
+        if (g_skipToMissionNumber != nullptr)
+            *g_skipToMissionNumber = number;
+        // The poll that consumes the launch runs inside main.scm's debug
+        // thread, which is active only while script global $6132 is 1 (the
+        // debug-menu toggle). Arm it for the launch; the Tick probe below
+        // clears it again once the flag has been consumed.
+        if (g.CTheScripts_ScriptSpace != nullptr)
+            *reinterpret_cast<int*>(
+                static_cast<unsigned char*>(g.CTheScripts_ScriptSpace) +
+                6132) = 1;
+        *static_cast<unsigned char*>(cheat.fn) = 1;
+        g_missionLaunchProbe.store(
+            reinterpret_cast<std::uintptr_t>(cheat.fn),
+            std::memory_order_release);
+        g_missionLaunchTicks.store(0, std::memory_order_release);
+        LOGI("mission launch: page=%d number=%d flag=%p page@%p num@%p",
+             page, number,
+             cheat.fn, static_cast<void*>(g_currentMissionPage),
+             static_cast<void*>(g_currentSkipToMissionNumber));
+        if (FILE* f = std::fopen(
+                "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_debug.txt",
+                "a")) {
+            std::fprintf(f, "launch page=%d num=%d\n",
+                         page, number);
+            std::fclose(f);
+        }
+        return;
+    }
+    if (cheat.fn == nullptr && cheat.kind != Kind::TutorialSkip) {
+        LOGW("cheat '%s' unavailable (symbol missing)", cheat.label);
+        return;
+    }
+
+    if (cheat.kind == Kind::Vehicle) {
+        reinterpret_cast<void (*)(int)>(cheat.fn)(cheat.vehicleModel);
+    } else if (cheat.kind == Kind::TutorialSkip) {
+        auto* space = static_cast<unsigned char*>(g.CTheScripts_ScriptSpace);
+        if (space == nullptr) { LOGW("tutorial skip: no ScriptSpace"); return; }
+        auto* step = reinterpret_cast<int*>(space + 0xB904);
+        LOGI("tutorial skip: step global $B904 %d -> 100", *step);
+        *step = 100;
+        return;
+    } else if (cheat.kind == Kind::MissionSkip) {
+        // cheat.fn resolves to the DoMissionSkip DATA byte, not code.
+        if (g_isPlayerOnAMission == nullptr || !g_isPlayerOnAMission()) {
+            LOGW("mission skip ignored: no mission running");
+            return;
+        }
+        *static_cast<unsigned char*>(cheat.fn) = 1;
+        LOGI("mission skip: DoMissionSkip=1 (main.scm takes over)");
+    } else if (cheat.kind == Kind::UnlockCities) {
+        // STAT_CITY_UNLOCKED (181) > 1 removes the forbidden-territory wanted
+        // gate for all three cities (CGameLogic checks <=0 for SF, <=1 for
+        // LV). 3.0 is the finished-story value. The tick below keeps
+        // re-asserting it: the mission script owns this stat and can write its
+        // own story progress back over a single poke.
+        const float before =
+            g_getStatValue ? g_getStatValue(181u) : -1.0f;
+        reinterpret_cast<void (*)(unsigned short,float)>(cheat.fn)(181u,3.0f);
+        g_unlockCitiesActive.store(true, std::memory_order_release);
+        if (g_playerIsOffTheMap) *g_playerIsOffTheMap=false;
+        LOGI("cheat cities: stat181 %.1f -> %.1f (enforced per-frame)",
+             before, g_getStatValue ? g_getStatValue(181u) : -1.0f);
+    } else {
+        reinterpret_cast<void (*)()>(cheat.fn)();
+        if (cheat.kind == Kind::GodMode) {
+            const bool enabled = g_nativeInvincible != nullptr
+                ? *g_nativeInvincible
+                : !g_godMode.load(std::memory_order_relaxed);
+            g_godMode.store(enabled, std::memory_order_release);
+        } else if (cheat.kind == Kind::Reset) {
+            // Rockstar's ResetCheats clears m_aCheatsActive but its debug-player
+            // invincibility flag lives separately. Make the menu's "ALL" literal.
+            if (g_godMode.load(std::memory_order_acquire) &&
+                g_cheats[0].fn != nullptr)
+                reinterpret_cast<void (*)()>(g_cheats[0].fn)();
+            const bool enabled = g_nativeInvincible != nullptr
+                ? *g_nativeInvincible : false;
+            g_godMode.store(enabled, std::memory_order_release);
+        }
+    }
+    LOGI("cheat activated: %s", cheat.label);
+}
+
+const char* CategoryName(int category) {
+    switch (category) {
+        case CATEGORY_GENERAL: return "GENERAL";
+        case CATEGORY_WEAPONS: return "WEAPONS";
+        case CATEGORY_SKINS: return "SKINS";
+        case CATEGORY_WEATHER: return "WEATHER";
+        case CATEGORY_VEHICLES: return "VEHICLES";
+        default: return "CHEATS";
+    }
+}
+
+int CategoryCount(int category) {
+    if (category < 0 || category >= CATEGORY_COUNT) return 0;
+    int count=0;
+    if (category==CATEGORY_VEHICLES) count=kVehicleSelectorCount;
+    if (category==CATEGORY_WEAPONS) count=kWeaponSelectorCount;
+    for (int source=0; source<Count(); ++source) {
+        if (category==CATEGORY_VEHICLES&&g_cheats[source].kind==Kind::Vehicle)
+            continue;
+        if (CategoryForIndex(source)==category) ++count;
+    }
+    return count;
+}
+
+const char* CategoryItemName(int category, int item) {
+    if (category==CATEGORY_VEHICLES&&item>=0&&item<kVehicleSelectorCount) {
+        static char labels[kVehicleSelectorCount][64]{};
+        VehicleSelector& selector=g_vehicleSelectors[item];
+        const int selected=std::clamp(selector.selected.load(),0,selector.count-1);
+        std::snprintf(labels[item],sizeof(labels[item]),"%s   < %s >",
+                      selector.label,selector.choices[selected].name);
+        return labels[item];
+    }
+    if (category==CATEGORY_WEAPONS&&item==0) {
+        static char label[96]{};
+        std::snprintf(label,sizeof(label),"GIVE TO HAND   < %s >",
+                      SelectedGiveItem().name);
+        return label;
+    }
+    return Name(CategorySourceIndex(category,item));
+}
+
+bool CategoryItemAvailable(int category, int item) {
+    if (category==CATEGORY_VEHICLES&&item>=0&&item<kVehicleSelectorCount)
+        return VehicleCheatFunction()!=nullptr;
+    if (category==CATEGORY_WEAPONS&&item>=0&&item<kWeaponSelectorCount)
+        return g.CPed_GiveWeapon!=nullptr;
+    return Available(CategorySourceIndex(category,item));
+}
+
+void ActivateCategoryItem(int category, int item) {
+    if (category==CATEGORY_VEHICLES&&item>=0&&item<kVehicleSelectorCount) {
+        if (!g.FindPlayerPed||!g.FindPlayerPed(-1)) return;
+        void* fn=VehicleCheatFunction();
+        if (!fn) return;
+        VehicleSelector& selector=g_vehicleSelectors[item];
+        const int selected=std::clamp(selector.selected.load(),0,selector.count-1);
+        reinterpret_cast<void(*)(int)>(fn)(selector.choices[selected].model);
+        LOGI("vehicle selector spawned %s (%d)",selector.choices[selected].name,
+             selector.choices[selected].model);
+        return;
+    }
+    if (category==CATEGORY_WEAPONS&&item==0) {
+        void* ped=g.FindPlayerPed?g.FindPlayerPed(-1):nullptr;
+        if (!ped||g.CPed_GiveWeapon==nullptr) return;
+        const WeaponChoice& choice=SelectedGiveItem();
+        const int slot=SlotForWeaponType(choice.type);
+        // GiveWeapon into an occupied slot replaces the previous weapon.
+        g.CPed_GiveWeapon(ped,choice.type,500u,true);
+        // Straight into the RIGHT tracked hand for calibration. Brass knuckle
+        // lives in slot 0 (fists) which the hand system cannot hold — it is
+        // still given and works through the unarmed melee path.
+        const bool held=slot>0?physicalweapon::ForceHold(1,slot):false;
+        LOGI("weapon giver: %s (type %d, slot %d) held=%d",
+             choice.name,choice.type,slot,held?1:0);
+        return;
+    }
+    Activate(CategorySourceIndex(category,item));
+}
+
+bool CycleCategoryItem(int category,int item,int direction) {
+    if (direction==0) return false;
+    {
+        const int source=CategorySourceIndex(category,item);
+        if (source>=0&&source<Count()&&
+            g_cheats[source].kind==Kind::MissionSelect) {
+            const bool pageRow =
+                std::strcmp(g_cheats[source].label, "MISSION GROUP") == 0;
+            StepMissionSelection(pageRow, direction);
+            return true;
+        }
+    }
+    if (category==CATEGORY_VEHICLES&&item>=0&&item<kVehicleSelectorCount) {
+        VehicleSelector& selector=g_vehicleSelectors[item];
+        const int next=(selector.selected.load()+selector.count+
+                        (direction<0?-1:1))%selector.count;
+        selector.selected.store(next);
+        return true;
+    }
+    if (category==CATEGORY_WEAPONS&&item==0) {
+        const int step=direction<0?-1:1;
+        g_giveItemSelected.store(
+            (g_giveItemSelected.load()+kGiveItemCount+step)%kGiveItemCount);
+        return true;
+    }
+    return false;
+}
+
+}  // namespace savr::cheats
