@@ -10261,6 +10261,10 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
                      const HandPose bakedHands[2],
                      const TwoHandVisualState& bakedTwoHand,
                      unsigned int hudSourceTex) {
+    // Tabletop uses the game's own character/vehicle rendering and classic HUD.
+    // Tracked hands, held weapons, cockpit controls and wrist panels are authored
+    // at human scale, so do not composite them over the miniature world.
+    if (vrcam::IsTabletopActive()) return;
     const bool trackedVisuals = !scope.active && drivingWheel.trackedHandsEnabled;
     bool chuteVisuals = false, chuteRingVisual = false;
     {

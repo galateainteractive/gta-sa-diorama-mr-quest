@@ -1,0 +1,49 @@
+# GTA San Andreas Tabletop prototype
+
+This branch adds a small, reversible miniature-world camera mode to the native
+Meta Quest port. It changes rendering and tracked interaction only; missions,
+physics, collision, traffic, pedestrians, vehicles, and saves continue to use
+the retail game's coordinate system.
+
+## Initial view
+
+- visual scale: `0.04` (one game metre appears as four centimetres);
+- physical anchor: 1.25 m forward and 0.55 m below the recentered headset;
+- game anchor: the existing player/vehicle camera anchor, refreshed every frame;
+- orientation: the normal player/vehicle yaw plus 1:1 headset rotation;
+- HUD: the existing classic VR HUD remains at readable human scale;
+- cutscenes: use the unchanged upstream VR camera.
+
+The render camera is kept orthonormal. Instead of placing scale in its matrix,
+physical head translation and eye separation are divided by `visual_scale`.
+This produces correct miniature parallax without changing any game object.
+The normal upstream camera remains in `TheCamera` outside the eye passes so
+gameplay systems do not observe the large Tabletop camera displacement.
+
+## Configuration
+
+`vr_tabletop.ini` is installed in the GTA external-files directory. The private
+branch ships with Tabletop enabled. Set `enabled=0` and restart the game to use
+the original upstream VR path without rebuilding.
+
+Supported process-start values:
+
+```ini
+enabled=1
+visual_scale=0.040
+anchor_forward_m=1.25
+anchor_down_m=0.55
+```
+
+For quick A/B tests, Android properties `debug.savr.tabletop` and
+`debug.savr.tabletop_scale` override the file for that process.
+
+## First-prototype limits
+
+- no passthrough yet; the OpenXR background remains opaque;
+- no in-headset Tabletop settings page yet;
+- tracked hands, physical weapons, wrist panels, cockpit controls, physical
+  pickups, basketball, and late world overlays are disabled in Tabletop;
+- draw distance, fog, LOD, and streaming have not yet been tuned specifically
+  for the miniature view;
+- runtime behaviour still requires an on-device Quest test.

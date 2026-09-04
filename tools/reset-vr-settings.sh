@@ -21,6 +21,7 @@ SETTINGS_FILES=(
   vr_holsters.ini
   vr_hud.ini
   vr_locomotion.ini
+  vr_tabletop.ini
 )
 
 usage() {

@@ -14,6 +14,7 @@
 #include "PhysicalWeapon.h"
 #include "ScopeAim.h"
 #include "Symbols.h"
+#include "Tabletop.h"
 #include "TrafficCensus.h"
 #include "Xr.h"
 
@@ -2493,6 +2494,9 @@ void RelativePose(V3 headPos, const Q& headOri, V3& relPos, Q& relOri) {
 }
 
 float CurrentLocalHeadYaw() {
+    // In Tabletop, stick directions stay aligned to the captured player/vehicle
+    // frame instead of rotating every time the user looks around the model.
+    if (tabletop::Enabled()) return 0.0f;
     if (!g_origin.valid) return 0.0f;
     float hp[3]{},hq[4]{};
     if (!xr::GetHeadPose(hp,hq)) return 0.0f;
@@ -2518,6 +2522,22 @@ CamBasis BuildVrCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
     out.forward = forward;
     out.up      = up;
     out.pos     = base.pos + TrackingToGame(base, relPos);
+    return out;
+}
+
+// Build the inverse of a miniature-world transform without putting scale in
+// the RenderWare camera matrix (all camera bases must remain orthonormal).
+// The game anchor follows the normal player/vehicle base while the physical
+// anchor remains fixed in front of and below the recentered headset origin.
+CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
+    CamBasis out = BuildVrCamera(base, {}, relOri);
+    const float scale = tabletop::VisualScale();
+    const V3 physicalAnchor{
+        0.0f,
+        -tabletop::AnchorDownMeters(),
+        -tabletop::AnchorForwardMeters()};
+    const V3 scaledTranslation = (relPos - physicalAnchor) * (1.0f / scale);
+    out.pos = base.pos + TrackingToGame(base, scaledTranslation);
     return out;
 }
 
@@ -2574,6 +2594,9 @@ Mat34 SetRotate34(float x, float y, float z) {
 // matrix uses this, not the pitched head camera, so the gun never inherits head tilt.
 CamBasis g_vrBase{};
 bool     g_vrBaseValid = false;
+CamBasis g_tabletopRenderCamera{};
+bool     g_tabletopRenderCameraValid = false;
+std::atomic<bool> g_tabletopActive{false};
 
 // The render-list scan is driven by GTA's monitor camera, while the player can
 // look independently with the headset. Cache one current HMD direction before
@@ -3441,6 +3464,8 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
 
     if (stereo && !inHook && self == g.TheCamera) {
         inHook = true;
+        g_tabletopActive.store(false, std::memory_order_release);
+        g_tabletopRenderCameraValid = false;
         float hp[3], hq[4];
         if (xr::GetHeadPose(hp, hq)) {
             // Pair this frame with the pose it is rendered at, for reprojection.
@@ -3475,6 +3500,7 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                 ScriptedCutsceneRunning() &&
                 locomotion::GameCutsceneMode() != 0 &&
                 EffectiveCutsceneCameraIndex() == 0;
+            bool playerAnchorReady = false;
 
             // Stable first-person anchor. Vehicle state is deliberately resolved
             // before the ped matrix: during enter-car the seated skin and vehicle
@@ -4087,6 +4113,7 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                         // Publish the yaw-only body frame for the weapon-in-hand
                         // matrix (it must not inherit head pitch/roll).
                         g_vrBase = base; g_vrBaseValid = true;
+                        playerAnchorReady = true;
                         driving::RefreshVisualTracking();
                 }
             }
@@ -4203,11 +4230,23 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
             V3 relPos; Q relOri;
             RelativePose(headPos, headOri, relPos, relOri);
             const CamBasis vr = BuildVrCamera(base, relPos, relOri);
+            const bool tabletopRequested = tabletop::Enabled() &&
+                playerAnchorReady && !cutsceneRunning && !gameplayCinematic;
+            const CamBasis tabletopCamera = tabletopRequested
+                ? BuildTabletopCamera(base, relPos, relOri) : CamBasis{};
+            const bool tabletopCameraValid = tabletopRequested &&
+                Finite(tabletopCamera.right) && Finite(tabletopCamera.forward) &&
+                Finite(tabletopCamera.up) && Finite(tabletopCamera.pos);
 
             // Never hand the engine a degenerate matrix — one NaN axis takes the
             // whole view black. Fall back to the game camera if anything is off.
             if (Finite(vr.right) && Finite(vr.forward) && Finite(vr.up) &&
                 Finite(vr.pos)) {
+                if (tabletopCameraValid) {
+                    g_tabletopRenderCamera = tabletopCamera;
+                    g_tabletopRenderCameraValid = true;
+                    g_tabletopActive.store(true, std::memory_order_release);
+                }
                 WriteCam(cam, vr);
                 // Scope zoom narrows only the GAME render frustum. The projection
                 // layer remains at the normal 105-degree headset frustum below,
@@ -4700,7 +4739,7 @@ void OnUpdatePads() {
     const bool openChord = bothGrips && (in.menu || in.y);   // B is weapon fire now
     const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     const bool stereo = ShouldRunStereo();
-    driving::UpdateInput(in, stereo, inputBlocked);
+    driving::UpdateInput(in, stereo, inputBlocked || tabletop::Enabled());
 
     const bool vehicleButtonAllowed =
         stereo && !inputBlocked && !bothGrips && !openChord;
@@ -4866,7 +4905,7 @@ void OnUpdatePads() {
                         sizeof(physicalFlags));
             swimming = (physicalFlags & 0x100u) != 0;
         }
-        const bool gestureBlocked = gesturePed == nullptr ||
+        const bool gestureBlocked = tabletop::Enabled() || gesturePed == nullptr ||
             vehicle != nullptr || ParachuteStateActive();
         gesturemove::Result gm{};
         gesturemove::Update(gesturePed, swimming, gestureBlocked, gm);
@@ -20603,7 +20642,11 @@ void OnRenderScene(bool underwater) {
     ScopedPedRenderDistanceOverride pedRenderDistanceOverride;
     inHook = true;
     const std::uintptr_t camU = reinterpret_cast<std::uintptr_t>(g.TheCamera);
-    const CamBasis base = ReadCam(camU);
+    const CamBasis logicalBase = ReadCam(camU);
+    const bool tabletopFrame = IsTabletopActive() &&
+        g_tabletopRenderCameraValid;
+    const CamBasis base = tabletopFrame
+        ? g_tabletopRenderCamera : logicalBase;
     unsigned char black[4] = {0, 0, 0, 255};
 
     // Build one eye-independent draw list from the physical ownership state. A
@@ -20614,12 +20657,12 @@ void OnRenderScene(bool underwater) {
     const bool scopedFrame = scopeaim::IsActive();
     const bool hideChuteWeapons =
         g_hideWeaponsForChuteDeploy.load(std::memory_order_relaxed);
-    auto queueWeapon = [scopedFrame,hideChuteWeapons](void* clump,
-                                                      const RwMat& matrix) {
+    auto queueWeapon = [scopedFrame,hideChuteWeapons,tabletopFrame](
+                           void* clump, const RwMat& matrix) {
         // reference Quest build lets the optic own the complete view. Keep all tracked weapon
         // poses current for firing/ownership, but do not bake held, flying or
         // holstered models into a zoomed eye texture.
-        if (scopedFrame || hideChuteWeapons || !clump ||
+        if (tabletopFrame || scopedFrame || hideChuteWeapons || !clump ||
             g_pendingWeaponCount >= kMaxPendingWeapons) return;
         g_pendingWeapons[g_pendingWeaponCount++] = PendingWeaponDraw{clump, matrix};
     };
@@ -20645,7 +20688,7 @@ void OnRenderScene(bool underwater) {
     if (cutsceneFirstPersonHead) {
         headHideClump = *reinterpret_cast<void**>(
             static_cast<std::uint8_t*>(g_cutsceneCameraActor) + 0x20);
-    } else if (playerPed && playerInVehicle &&
+    } else if (!tabletopFrame && playerPed && playerInVehicle &&
                driving::GetMode() != driving::MODE_IMMERSIVE &&
                !driving::ThirdPersonViewActive()) {
         headHideClump = *reinterpret_cast<void**>(
@@ -20887,7 +20930,9 @@ void OnRenderScene(bool underwater) {
     // Pull the near clip in for the eye pass so the close weapon grip isn't clipped
     // (the game default clips it -> a hole that shows the sky through). Restore after.
     const float savedNearClip = *reinterpret_cast<float*>(scc + 0xA8);
-    const float eyeNearClip = g.RwCameraSetNearClipPlane ? 0.05f : savedNearClip;
+    const float eyeNearClip = g.RwCameraSetNearClipPlane
+        ? (tabletopFrame ? 0.05f / tabletop::VisualScale() : 0.05f)
+        : savedNearClip;
     const float savedFarClip = *reinterpret_cast<float*>(scc + 0xAC);
     const float savedFogPlane = *reinterpret_cast<float*>(scc + 0xB0);
     const float savedViewWindowX=*reinterpret_cast<float*>(scc+0x90);
@@ -21021,7 +21066,9 @@ void OnRenderScene(bool underwater) {
         // render must land each eye texture at the matching physical position, or
         // near objects (the weapon) double badly while far scenery only shimmers.
         const float sign = (e == 0) ? 1.0f : -1.0f;          // 0 = left, 1 = right
-        eye.pos = base.pos + base.right * (sign * kVrHalfIpd);
+        const float stereoHalfIpd = tabletopFrame
+            ? kVrHalfIpd / tabletop::VisualScale() : kVrHalfIpd;
+        eye.pos = base.pos + base.right * (sign * stereoHalfIpd);
         const float renderFovX = g.CDraw_ms_fFOV &&
                 std::isfinite(*g.CDraw_ms_fFOV) &&
                 *g.CDraw_ms_fFOV > 20.0f && *g.CDraw_ms_fFOV < 160.0f
@@ -21124,8 +21171,8 @@ void OnRenderScene(bool underwater) {
             // DEFAULT vehicle mode keeps the stock seated CJ body and suppresses
             // late VR hands. IMMERSIVE uses the same eye anchor but hides CJ and
             // renders the tracked hands plus the virtual wheel instead.
-            const bool hideBody = !playerInVehicle ||
-                driving::GetMode() == driving::MODE_IMMERSIVE;
+            const bool hideBody = !tabletopFrame && (!playerInVehicle ||
+                driving::GetMode() == driving::MODE_IMMERSIVE);
             ScopedPlayerBodyHide hidePlayerBody(hideBody ? playerPed : nullptr);
             airhlod::Render(eye.pos.x, eye.pos.y,
                             aircraftLod.hlodFillActive,
@@ -21251,7 +21298,7 @@ void OnRenderScene(bool underwater) {
             screenDimensions.Set(xr::kGameplayHudWidth,
                                  xr::kGameplayHudHeight);
             *reinterpret_cast<void**>(scc+0x80)=g_hudRaster[set];
-            WriteCam(camU,base);
+            WriteCam(camU,logicalBase);
             if (g.CCamera_CalculateDerivedValues)
                 g.CCamera_CalculateDerivedValues(g.TheCamera,false,true);
             g_origCopy(g.TheCamera,false);
@@ -21288,7 +21335,7 @@ void OnRenderScene(bool underwater) {
 
     // Restore the surface target and the centre camera for the HUD / game logic.
     *reinterpret_cast<void**>(scc + 0x80) = origColor;
-    WriteCam(camU, base);
+    WriteCam(camU, logicalBase);
     if (g.CCamera_CalculateDerivedValues)
         g.CCamera_CalculateDerivedValues(g.TheCamera, false, true);
     g_origCopy(g.TheCamera, false);
@@ -29112,6 +29159,10 @@ bool IsStereoActive() {
     return g_stereoActive.load(std::memory_order_relaxed);
 }
 
+bool IsTabletopActive() {
+    return g_tabletopActive.load(std::memory_order_acquire);
+}
+
 // The camera-copy hook that normally refreshes g_stereoActive stops running
 // the moment the pause menu takes over the frame, so the stale "stereo" value
 // kept the compositor on the frozen eye ring. The per-frame input pump on the
@@ -29121,7 +29172,9 @@ bool RecruitGestureActive() {
 }
 
 void RefreshStereoGate() {
-    g_stereoActive.store(ShouldRunStereo(), std::memory_order_relaxed);
+    const bool stereo = ShouldRunStereo();
+    g_stereoActive.store(stereo, std::memory_order_relaxed);
+    if (!stereo) g_tabletopActive.store(false, std::memory_order_release);
 }
 
 bool IsMobileMenuOpen() {

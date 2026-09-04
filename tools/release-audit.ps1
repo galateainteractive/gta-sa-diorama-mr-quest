@@ -152,7 +152,7 @@ if ($loaderText -notmatch [regex]::Escape('getExternalFilesDir(null)')) {
 foreach ($settingName in @(
     'vr_driving.ini', 'vr_appearance.ini', 'vr_basketball.ini',
     'vr_calib.ini', 'vr_graphics.ini', 'vr_holsters.ini',
-    'vr_hud.ini', 'vr_locomotion.ini'
+    'vr_hud.ini', 'vr_locomotion.ini', 'vr_tabletop.ini'
 )) {
     if ($loaderText -notmatch [regex]::Escape('"' + $settingName + '"')) {
         throw "The Java loader no longer seeds $settingName."
@@ -287,7 +287,7 @@ $resetText = $resetText -join "`n"
 $expectedSettings = @(
     'vr_appearance.ini', 'vr_basketball.ini', 'vr_calib.ini', 'vr_calib.ini.tmp',
     'vr_driving.ini', 'vr_graphics.ini', 'vr_holsters.ini',
-    'vr_hud.ini', 'vr_locomotion.ini'
+    'vr_hud.ini', 'vr_locomotion.ini', 'vr_tabletop.ini'
 )
 $nativeSettings = @(
     Get-ChildItem -LiteralPath (Join-Path $Root 'native\src') -Filter '*.cpp' -File |

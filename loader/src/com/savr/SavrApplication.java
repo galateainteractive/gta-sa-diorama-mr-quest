@@ -49,7 +49,8 @@ public final class SavrApplication extends Application {
             "vr_graphics.ini",
             "vr_holsters.ini",
             "vr_hud.ini",
-            "vr_locomotion.ini"
+            "vr_locomotion.ini",
+            "vr_tabletop.ini"
     };
 
     static {

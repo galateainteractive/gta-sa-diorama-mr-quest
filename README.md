@@ -2,6 +2,10 @@
 
 Version `0.1.3 alpha`. See the [changelog](CHANGELOG.md).
 
+The private `feature/tabletop` branch adds an experimental miniature-world
+camera. See [TABLETOP_PROTOTYPE.md](TABLETOP_PROTOTYPE.md) for its current
+behaviour, settings, and limitations.
+
 This repository contains the source code and build/install tools for the GTA
 San Andreas VR Quest mod. It does **not** contain GTA San Andreas, Rockstar
 assets, the sound mod, a prebuilt APK, native binaries, or signing keys.

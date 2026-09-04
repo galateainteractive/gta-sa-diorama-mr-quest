@@ -38,6 +38,7 @@ DEFAULT_SETTING_NAMES = (
     "vr_holsters.ini",
     "vr_hud.ini",
     "vr_locomotion.ini",
+    "vr_tabletop.ini",
 )
 
 PACKAGE_NAME = "com.rockstargames.gtasa"

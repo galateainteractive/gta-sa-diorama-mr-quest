@@ -17,6 +17,7 @@
 #include "PhysicalWeapon.h"
 #include "ScopeAim.h"
 #include "Symbols.h"
+#include "Tabletop.h"
 #include "Throwable.h"
 #include "VrCamera.h"
 #include "VrFire.h"
@@ -1817,7 +1818,8 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
     // respawn. Menus/open chords only block transitions and firing; they do not
     // silently return an already-held weapon to its socket.
     if (inGameplay) {
-        const bool weaponInteractionsBlocked = anyMenu ||
+        const bool tabletopMode = savr::tabletop::Enabled();
+        const bool weaponInteractionsBlocked = anyMenu || tabletopMode ||
             vrcam::ParachuteWeaponInteractionBlocked();
         savr::physicalweapon::Update(
             weaponInteractionsBlocked,
@@ -1827,12 +1829,16 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         savr::scopeaim::Update(weaponInteractionsBlocked);
         savr::vrfire::Update(weaponInteractionsBlocked);
         savr::throwable::Update(weaponInteractionsBlocked);
-        savr::physicalweapon::EnforceBikeWeaponLimit();
-        savr::physicalweapon::AutoEquipParachute();
-        savr::physicalweapon::AutoAssignGadgetPoint();
+        if (!tabletopMode) {
+            savr::physicalweapon::EnforceBikeWeaponLimit();
+            savr::physicalweapon::AutoEquipParachute();
+            savr::physicalweapon::AutoAssignGadgetPoint();
+        }
         savr::cheats::Tick();
-        savr::pickups::Tick();
-        savr::basketball::Update();
+        if (!tabletopMode) {
+            savr::pickups::Tick();
+            savr::basketball::Update();
+        }
     }
     else {
         savr::physicalweapon::ResetTransient();

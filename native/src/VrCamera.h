@@ -28,6 +28,10 @@ void EndGameFrameTelemetry();
 // this to choose the stereo projection layer over the flat theater screen.
 bool IsStereoActive();
 
+// True only for ordinary gameplay frames currently using the private
+// miniature-world camera. Cutscenes and fallback frames remain upstream VR.
+bool IsTabletopActive();
+
 // Re-evaluate the stereo/theater gate. Called once per frame from the input
 // pump: the camera hook that normally maintains it stops running while the
 // game's own pause menu owns the frame, which used to freeze the last stereo

@@ -75,6 +75,7 @@ add_library(savr SHARED
     src/PhysicalWeapon.cpp
     src/Pickups.cpp
     src/ScopeAim.cpp
+    src/Tabletop.cpp
     src/Throwable.cpp
     src/TrafficCensus.cpp
     src/Weapon.cpp
