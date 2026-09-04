@@ -10,6 +10,7 @@ param(
     [string]$Keystore,
     [string]$ExistingBuildRoot,
     [switch]$BuildOnly,
+    [switch]$ApkOnly,
     [switch]$PayloadOnly,
     [switch]$NonInteractive,
     [switch]$PersonalUpdate
@@ -1337,6 +1338,9 @@ function Invoke-Main {
     if ($PayloadOnly.IsPresent -and $BuildOnly.IsPresent) {
         throw 'PayloadOnly and BuildOnly cannot be used together.'
     }
+    if ($ApkOnly.IsPresent -and ($PayloadOnly.IsPresent -or $BuildOnly.IsPresent)) {
+        throw 'ApkOnly cannot be combined with PayloadOnly or BuildOnly.'
+    }
     if ([string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
         $buildRoot = Join-Path $runsRoot $runId
     }
@@ -1472,17 +1476,22 @@ function Invoke-Main {
         Restore-QuestSavesAndSettings -Backup $backup
     }
 
-    Write-Step 'Refreshing the ADB connection before the large payload transfer'
-    Select-QuestDevice -RequestedSerial $script:SelectedSerial
+    if (-not $ApkOnly.IsPresent) {
+        Write-Step 'Refreshing the ADB connection before the large payload transfer'
+        Select-QuestDevice -RequestedSerial $script:SelectedSerial
 
-    Write-Step 'Publishing hash-verified Quest data'
-    Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'data_main') `
-        -RemoteParent '/sdcard/savr' -RemoteFinal '/sdcard/savr/data_main'
-    $packageFiles = "/sdcard/Android/data/$($script:PackageName)/files"
-    Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'audio') `
-        -RemoteParent $packageFiles -RemoteFinal "$packageFiles/audio"
-    Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'vrhands') `
-        -RemoteParent $packageFiles -RemoteFinal "$packageFiles/vrhands"
+        Write-Step 'Publishing hash-verified Quest data'
+        Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'data_main') `
+            -RemoteParent '/sdcard/savr' -RemoteFinal '/sdcard/savr/data_main'
+        $packageFiles = "/sdcard/Android/data/$($script:PackageName)/files"
+        Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'audio') `
+            -RemoteParent $packageFiles -RemoteFinal "$packageFiles/audio"
+        Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'vrhands') `
+            -RemoteParent $packageFiles -RemoteFinal "$packageFiles/vrhands"
+    }
+    else {
+        Write-Host 'ApkOnly selected: existing verified game/audio payloads were preserved.'
+    }
 
     Write-Step 'Verifying the installed APKs and leaving the game stopped'
     $verificationRoot = Join-Path (Join-Path $resolvedWorkDir 'device-verification') $runId

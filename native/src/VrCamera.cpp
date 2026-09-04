@@ -2525,19 +2525,205 @@ CamBasis BuildVrCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
     return out;
 }
 
+enum class TabletopViewMode : int { Follow = 0, Fixed = 1 };
+
+struct TabletopTransformState {
+    TabletopViewMode mode{TabletopViewMode::Follow};
+    bool fixedBaseValid{};
+    CamBasis fixedBase{};
+    V3 physicalAnchor{};
+    float mapYaw{};
+    bool gestureActive{};
+    int gestureHands{};
+    V3 gestureStartMidpoint{};
+    V3 gestureStartAnchor{};
+    float gestureStartDistance{};
+    float gestureStartAngle{};
+    float gestureStartScale{};
+    float gestureStartYaw{};
+};
+
+TabletopTransformState g_tabletopTransform{};
+V3 g_tabletopRadiusCenter{};
+bool g_tabletopRadiusCenterValid{};
+
+V3 RotateTrackingYaw(V3 v, float yaw) {
+    const float c = std::cos(yaw);
+    const float s = std::sin(yaw);
+    return {c * v.x - s * v.z, v.y, s * v.x + c * v.z};
+}
+
+V3 TrackingToTabletopGame(const CamBasis& base, V3 v, float yaw) {
+    return TrackingToGame(base, RotateTrackingYaw(v, yaw));
+}
+
+V3 RelativeTrackingPosition(V3 localPosition) {
+    const Q inv{-g_origin.ori.x, -g_origin.ori.y, -g_origin.ori.z,
+                g_origin.ori.w};
+    return Rotate(inv, localPosition - g_origin.pos);
+}
+
+V3 DefaultTabletopPhysicalAnchor() {
+    return {0.0f, -tabletop::AnchorDownMeters(),
+            -tabletop::AnchorForwardMeters()};
+}
+
+void ResetTabletopTransform(bool keepMode) {
+    const TabletopViewMode mode = keepMode ? g_tabletopTransform.mode
+                                            : TabletopViewMode::Follow;
+    g_tabletopTransform = {};
+    g_tabletopTransform.mode = mode;
+    g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
+    tabletop::ResetVisualScale();
+    tabletop::ResetRadiusPreset();
+    LOGI("[tabletop.controls] reset mode=%s scale=%.3f radius=%.0fm",
+         mode == TabletopViewMode::Fixed ? "fixed" : "follow",
+         static_cast<double>(tabletop::VisualScale()),
+         static_cast<double>(tabletop::RadiusMeters()));
+}
+
+void UpdateTabletopControls(xr::InputState& input, bool blocked) {
+    static bool l3WasDown{};
+    static bool r3WasDown{};
+    static bool initialized{};
+    if (!initialized) {
+        g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
+        initialized = true;
+    }
+
+    const bool l3Edge = input.l3 && !l3WasDown;
+    const bool r3Edge = input.r3 && !r3WasDown;
+    l3WasDown = input.l3;
+    r3WasDown = input.r3;
+
+    if (!tabletop::Enabled()) return;
+
+    if (!blocked && input.l3 && input.r3 && (l3Edge || r3Edge)) {
+        ResetTabletopTransform(true);
+        xr::TriggerHaptic(0, 0.65f, 90.0f, 70.0f);
+        xr::TriggerHaptic(1, 0.65f, 90.0f, 70.0f);
+    } else if (!blocked && l3Edge) {
+        g_tabletopTransform.mode =
+            g_tabletopTransform.mode == TabletopViewMode::Follow
+                ? TabletopViewMode::Fixed : TabletopViewMode::Follow;
+        g_tabletopTransform.fixedBaseValid = false;
+        g_tabletopTransform.gestureActive = false;
+        LOGI("[tabletop.controls] view=%s",
+             g_tabletopTransform.mode == TabletopViewMode::Fixed
+                 ? "fixed" : "follow");
+        xr::TriggerHaptic(0, 0.55f, 80.0f, 55.0f);
+    } else if (!blocked && r3Edge) {
+        const float radius = tabletop::CycleRadiusPreset();
+        LOGI("[tabletop.controls] radius=%.0fm preset=%d",
+             static_cast<double>(radius), tabletop::RadiusPresetIndex());
+        xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
+    }
+
+    // L3/R3 are tabletop test controls and must not leak into GTA bindings.
+    input.l3 = false;
+    input.r3 = false;
+
+    if (blocked || g_tabletopTransform.mode != TabletopViewMode::Fixed ||
+        !g_origin.valid) {
+        g_tabletopTransform.gestureActive = false;
+        return;
+    }
+
+    xr::HandPose hands[2]{};
+    xr::GetHandPoses(hands);
+    const bool held[2]{hands[0].valid && input.grip[0] >= 0.65f,
+                       hands[1].valid && input.grip[1] >= 0.65f};
+    const int handCount = static_cast<int>(held[0]) + static_cast<int>(held[1]);
+    if (handCount == 0) {
+        g_tabletopTransform.gestureActive = false;
+        return;
+    }
+
+    V3 positions[2]{};
+    for (int hand = 0; hand < 2; ++hand) {
+        positions[hand] = RelativeTrackingPosition(
+            {hands[hand].gripPos[0], hands[hand].gripPos[1],
+             hands[hand].gripPos[2]});
+    }
+    const V3 midpoint = handCount == 2
+        ? (positions[0] + positions[1]) * 0.5f
+        : positions[held[0] ? 0 : 1];
+    const V3 separation = positions[1] - positions[0];
+    const float distance = std::sqrt(std::max(0.0f, Dot(separation, separation)));
+    const float angle = std::atan2(separation.x, separation.z);
+
+    if (!g_tabletopTransform.gestureActive ||
+        g_tabletopTransform.gestureHands != handCount) {
+        g_tabletopTransform.gestureActive = true;
+        g_tabletopTransform.gestureHands = handCount;
+        g_tabletopTransform.gestureStartMidpoint = midpoint;
+        g_tabletopTransform.gestureStartAnchor =
+            g_tabletopTransform.physicalAnchor;
+        g_tabletopTransform.gestureStartDistance = distance;
+        g_tabletopTransform.gestureStartAngle = angle;
+        g_tabletopTransform.gestureStartScale = tabletop::VisualScale();
+        g_tabletopTransform.gestureStartYaw = g_tabletopTransform.mapYaw;
+    } else {
+        constexpr float kTranslationGain = 3.0f;
+        g_tabletopTransform.physicalAnchor =
+            g_tabletopTransform.gestureStartAnchor +
+            (midpoint - g_tabletopTransform.gestureStartMidpoint) *
+                kTranslationGain;
+        if (handCount == 2 &&
+            g_tabletopTransform.gestureStartDistance > 0.04f) {
+            tabletop::SetVisualScale(
+                g_tabletopTransform.gestureStartScale *
+                distance / g_tabletopTransform.gestureStartDistance);
+            float delta = angle - g_tabletopTransform.gestureStartAngle;
+            while (delta > 3.14159265f) delta -= 6.28318531f;
+            while (delta < -3.14159265f) delta += 6.28318531f;
+            g_tabletopTransform.mapYaw =
+                g_tabletopTransform.gestureStartYaw + delta;
+        }
+    }
+
+    // In fixed-table mode the grips manipulate the model, not weapons/vehicles.
+    input.grip[0] = 0.0f;
+    input.grip[1] = 0.0f;
+}
+
 // Build the inverse of a miniature-world transform without putting scale in
 // the RenderWare camera matrix (all camera bases must remain orthonormal).
 // The game anchor follows the normal player/vehicle base while the physical
 // anchor remains fixed in front of and below the recentered headset origin.
 CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
-    CamBasis out = BuildVrCamera(base, {}, relOri);
+    if (g_tabletopTransform.mode == TabletopViewMode::Fixed &&
+        !g_tabletopTransform.fixedBaseValid) {
+        g_tabletopTransform.fixedBase = base;
+        g_tabletopTransform.fixedBaseValid = true;
+        g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
+        g_tabletopTransform.mapYaw = 0.0f;
+        g_tabletopTransform.gestureActive = false;
+        LOGI("[tabletop.controls] fixed anchor captured world=(%.1f %.1f %.1f)",
+             static_cast<double>(base.pos.x), static_cast<double>(base.pos.y),
+             static_cast<double>(base.pos.z));
+    }
+    const CamBasis& anchorBase =
+        g_tabletopTransform.mode == TabletopViewMode::Fixed &&
+                g_tabletopTransform.fixedBaseValid
+            ? g_tabletopTransform.fixedBase : base;
+    const float yaw = g_tabletopTransform.mode == TabletopViewMode::Fixed
+        ? g_tabletopTransform.mapYaw : 0.0f;
+    const V3 localFwd = Rotate(relOri, {0.0f, 0.0f, -1.0f});
+    const V3 localUp = Rotate(relOri, {0.0f, 1.0f, 0.0f});
+    V3 forward = Normalized(TrackingToTabletopGame(anchorBase, localFwd, yaw));
+    V3 up = Normalized(TrackingToTabletopGame(anchorBase, localUp, yaw));
+    V3 left = Normalized(Cross(up, forward));
+    up = Normalized(Cross(forward, left));
+    CamBasis out{left, forward, up, {}};
     const float scale = tabletop::VisualScale();
-    const V3 physicalAnchor{
-        0.0f,
-        -tabletop::AnchorDownMeters(),
-        -tabletop::AnchorForwardMeters()};
+    const V3 physicalAnchor = g_tabletopTransform.mode == TabletopViewMode::Fixed
+        ? g_tabletopTransform.physicalAnchor : DefaultTabletopPhysicalAnchor();
     const V3 scaledTranslation = (relPos - physicalAnchor) * (1.0f / scale);
-    out.pos = base.pos + TrackingToGame(base, scaledTranslation);
+    out.pos = anchorBase.pos +
+        TrackingToTabletopGame(anchorBase, scaledTranslation, yaw);
+    g_tabletopRadiusCenter = anchorBase.pos;
+    g_tabletopRadiusCenterValid = true;
     return out;
 }
 
@@ -4717,6 +4903,8 @@ void OnUpdatePads() {
 
     xr::InputState in{};
     xr::GetInput(in);
+    const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
+    UpdateTabletopControls(in, inputBlocked);
     float mappedMoveX=0.0f,mappedMoveY=0.0f;
     float mappedTurnX=0.0f,mappedTurnY=0.0f;
     locomotion::MapGameplaySticks(
@@ -4737,7 +4925,6 @@ void OnUpdatePads() {
 
     const bool bothGrips = in.grip[0] >= 0.75f && in.grip[1] >= 0.75f;
     const bool openChord = bothGrips && (in.menu || in.y);   // B is weapon fire now
-    const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     const bool stereo = ShouldRunStereo();
     driving::UpdateInput(in, stereo, inputBlocked || tabletop::Enabled());
 
@@ -7775,6 +7962,7 @@ using SetupMapEntityVisibilityDrawDistanceFn = int (*)(
     void*, void*, float, bool, float, void*, float*);
 using ShouldModelBeStreamedFn = bool (*)(void*, const void*, float);
 using IsSphereVisibleFn = bool (*)(void*, const void*, float);
+using RenderOneRoadFn = void (*)(void*);
 using RenderOneNonRoadFn = void (*)(void*);
 using RenderAlphaEntityFn = void (*)(void*, float);
 using RenderVehicleHiDetailFn = void* (*)(void*);
@@ -7826,6 +8014,7 @@ extern "C" int SavrSetupMapEntityVisibilityWithDrawDistance(
     void*, void*, float, bool, float, void*, float*);
 std::atomic<bool> g_setupMapDrawDistanceBridgeActive{false};
 ShouldModelBeStreamedFn g_origShouldModelBeStreamed = nullptr;
+RenderOneRoadFn g_origRenderOneRoad = nullptr;
 RenderOneNonRoadFn g_origRenderOneNonRoad = nullptr;
 RenderAlphaEntityFn g_origRenderAlphaEntity = nullptr;
 RenderVehicleHiDetailFn g_origRenderVehicleHiDetail = nullptr;
@@ -13604,7 +13793,28 @@ void ReportStereoDispatchCullWindow() {
     window.startMs = nowMs;
 }
 
+bool TabletopEntityInsideRadius(const void* entity) {
+    if (!g_tabletopActive.load(std::memory_order_acquire) ||
+        !g_tabletopRadiusCenterValid || entity == nullptr) {
+        return true;
+    }
+    V3 world{};
+    if (!ReadEntityWorldPosition(entity, &world)) return true;
+    const float dx = world.x - g_tabletopRadiusCenter.x;
+    const float dy = world.y - g_tabletopRadiusCenter.y;
+    // A small allowance avoids clipping a large building whose origin sits just
+    // outside the selected circle while most of its geometry is still inside.
+    const float radius = tabletop::RadiusMeters() + 6.0f;
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+void OnRenderOneRoad(void* entity) {
+    if (!TabletopEntityInsideRadius(entity)) return;
+    if (g_origRenderOneRoad) g_origRenderOneRoad(entity);
+}
+
 void OnRenderOneNonRoad(void* entity) {
+    if (!TabletopEntityInsideRadius(entity)) return;
     if (!StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, false);
     const traffic_census::AtomicRenderProbe atomicProbe =
@@ -13639,6 +13849,7 @@ void OnRenderOneNonRoad(void* entity) {
 }
 
 void OnRenderAlphaEntity(void* entity, float distance) {
+    if (!TabletopEntityInsideRadius(entity)) return;
     if (!StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, true);
     if (VisibilityWitnessEnabled()) TraceEntityRender(entity, "alpha");
@@ -20647,7 +20858,11 @@ void OnRenderScene(bool underwater) {
         g_tabletopRenderCameraValid;
     const CamBasis base = tabletopFrame
         ? g_tabletopRenderCamera : logicalBase;
-    unsigned char black[4] = {0, 0, 0, 255};
+    // Passthrough shows through untouched pixels in tabletop mode. Geometry
+    // still writes its normal alpha; only the empty sky starts transparent.
+    unsigned char black[4] = {0, 0, 0,
+        static_cast<unsigned char>(tabletopFrame && tabletop::PassthroughEnabled()
+            ? 0 : 255)};
 
     // Build one eye-independent draw list from the physical ownership state. A
     // slot appears exactly once: in a hand, flying, or at its body socket. While
@@ -21149,9 +21364,11 @@ void OnRenderScene(bool underwater) {
         // Re-issue it here (at this eye's camera; the sky is at infinity so it is
         // parallax-free and correct per eye) — otherwise the sky is black.
         tA = NowMs();
-        if (g.DefinedState) g.DefinedState();
-        RenderWorldStableSkyPolys(camU, mobileFog);
-        graphicsfx::RenderSkyEye(sc, e);
+        if (!tabletopFrame || !tabletop::PassthroughEnabled()) {
+            if (g.DefinedState) g.DefinedState();
+            RenderWorldStableSkyPolys(camU, mobileFog);
+            graphicsfx::RenderSkyEye(sc, e);
+        }
         tSky[e] += NowMs() - tA;
         // Opaque path: the CClouds::Render hook (OnCloudsRender) suppresses the
         // flat eye backdrop and draws the weapon BEFORE world geometry. Fallback
@@ -21174,15 +21391,16 @@ void OnRenderScene(bool underwater) {
             const bool hideBody = !tabletopFrame && (!playerInVehicle ||
                 driving::GetMode() == driving::MODE_IMMERSIVE);
             ScopedPlayerBodyHide hidePlayerBody(hideBody ? playerPed : nullptr);
-            airhlod::Render(eye.pos.x, eye.pos.y,
-                            aircraftLod.hlodFillActive,
-                            aircraftLod.groundRadiusM);
-            if (aircraftLod.hlodFillActive && g.DefinedState) {
+            if (!tabletopFrame) airhlod::Render(
+                eye.pos.x, eye.pos.y, aircraftLod.hlodFillActive,
+                aircraftLod.groundRadiusM);
+            if (!tabletopFrame && aircraftLod.hlodFillActive && g.DefinedState) {
                 // HLOD records only a colour-buffer safety layer. Restore the
                 // exact baseline expected by stock RenderScene afterwards.
                 g.DefinedState();
             }
-            if (kAircraftMegaMeshEnabled && g_aircraftMegaMeshActive) {
+            if (!tabletopFrame && kAircraftMegaMeshEnabled &&
+                g_aircraftMegaMeshActive) {
                 RenderAircraftMegaMesh();
                 // The proxy deliberately owns no RenderWare state beyond this
                 // pre-world draw. Re-establish the same baseline RenderScene
@@ -29458,6 +29676,36 @@ bool Install() {
         aircraftRenderWitnessRequested;
     const bool renderHookRequested =
         renderWitnessRequested || targetedAlphaPolicyRequested;
+
+    // Tabletop needs the same circular boundary on the dedicated road pass;
+    // otherwise distant terrain remains as an infinite carpet after buildings
+    // and props have been clipped. This symbol/prologue is exact for the
+    // verified 2.11.311 libGame and fails closed on any other build.
+    bool tabletopRoadFingerprint = tabletop::Enabled() && g.LoadBase &&
+        g.CRenderer_RenderOneRoad &&
+        reinterpret_cast<std::uintptr_t>(g.CRenderer_RenderOneRoad) -
+                g.LoadBase == 0x4b4d30u;
+    if (tabletopRoadFingerprint) {
+        static constexpr std::uint32_t kRoadPrologue[4] = {
+            0xa9be7bfdu, 0xf9000bf3u, 0x910003fdu, 0xaa0003f3u,
+        };
+        std::uint32_t observed[4]{};
+        std::memcpy(observed,
+                    reinterpret_cast<const void*>(g.CRenderer_RenderOneRoad),
+                    sizeof(observed));
+        tabletopRoadFingerprint =
+            std::memcmp(observed, kRoadPrologue, sizeof(observed)) == 0;
+    }
+    if (tabletopRoadFingerprint) {
+        g_origRenderOneRoad = reinterpret_cast<RenderOneRoadFn>(
+            InstallTrampoline(
+                reinterpret_cast<void*>(g.CRenderer_RenderOneRoad),
+                reinterpret_cast<void*>(&OnRenderOneRoad)));
+    }
+    LOGI("[tabletop.radius] road_hook=%d fingerprint=%d radius=%.0fm",
+         g_origRenderOneRoad ? 1 : 0, tabletopRoadFingerprint ? 1 : 0,
+         static_cast<double>(tabletop::RadiusMeters()));
+
     bool renderWitnessFingerprint = renderHookRequested && g.LoadBase &&
         g.CRenderer_RenderOneNonRoad &&
         g.CVisibilityPlugins_RenderEntity &&

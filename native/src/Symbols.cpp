@@ -242,6 +242,7 @@ bool ResolveGameSymbols(void* handle) {
         {"_ZN9CRenderer26SetupBigBuildingVisibilityEP7CEntityRf",              reinterpret_cast<void**>(&g.CRenderer_SetupBigBuildingVisibility), false},
         {"_ZN9CRenderer24SetupMapEntityVisibilityEP7CEntityP14CBaseModelInfofb", reinterpret_cast<void**>(&g.CRenderer_SetupMapEntityVisibility), false},
         {"_ZN9CRenderer21ShouldModelBeStreamedEP7CEntityRK7CVectorf",             reinterpret_cast<void**>(&g.CRenderer_ShouldModelBeStreamed), false},
+        {"_ZN9CRenderer13RenderOneRoadEP7CEntity",                               reinterpret_cast<void**>(&g.CRenderer_RenderOneRoad), false},
         {"_ZN9CRenderer16RenderOneNonRoadEP7CEntity",                            reinterpret_cast<void**>(&g.CRenderer_RenderOneNonRoad), false},
         {"_ZN18CVisibilityPlugins12RenderEntityEPvf",                            reinterpret_cast<void**>(&g.CVisibilityPlugins_RenderEntity), false},
         {"_ZN9CRenderer9ScanWorldEv",                                             reinterpret_cast<void**>(&g.CRenderer_ScanWorld), false},

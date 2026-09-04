@@ -466,6 +466,7 @@ struct GameSymbols {
                                              float farClip);
     // Read-only end-to-end visibility witness. RenderOneNonRoad consumes the
     // opaque list while RenderEntity consumes alpha/fading entries.
+    void  (*CRenderer_RenderOneRoad)(void* entity);
     void  (*CRenderer_RenderOneNonRoad)(void* entity);
     void  (*CVisibilityPlugins_RenderEntity)(void* entity, float distance);
     // Retail ScanWorld builds a narrow monitor-camera wedge.  The VR nearby

@@ -14,6 +14,7 @@
 #include "Log.h"
 #include "PerfTelemetry.h"
 #include "ScopeAim.h"
+#include "Tabletop.h"
 #include "TrafficCensus.h"
 #include "VrCamera.h"
 
@@ -2148,6 +2149,95 @@ struct State {
 
 State s;
 
+bool g_hasPassthroughExt = false;
+bool g_passthroughActive = false;
+XrPassthroughFB g_passthrough{XR_NULL_HANDLE};
+XrPassthroughLayerFB g_passthroughLayer{XR_NULL_HANDLE};
+PFN_xrCreatePassthroughFB g_xrCreatePassthroughFB{};
+PFN_xrDestroyPassthroughFB g_xrDestroyPassthroughFB{};
+PFN_xrPassthroughStartFB g_xrPassthroughStartFB{};
+PFN_xrPassthroughPauseFB g_xrPassthroughPauseFB{};
+PFN_xrCreatePassthroughLayerFB g_xrCreatePassthroughLayerFB{};
+PFN_xrDestroyPassthroughLayerFB g_xrDestroyPassthroughLayerFB{};
+PFN_xrPassthroughLayerPauseFB g_xrPassthroughLayerPauseFB{};
+PFN_xrPassthroughLayerResumeFB g_xrPassthroughLayerResumeFB{};
+PFN_xrPassthroughLayerSetStyleFB g_xrPassthroughLayerSetStyleFB{};
+
+void SetPassthroughActive(bool active) {
+    if (g_passthrough == XR_NULL_HANDLE ||
+        g_passthroughLayer == XR_NULL_HANDLE ||
+        active == g_passthroughActive) return;
+    if (active) {
+        const XrResult start = g_xrPassthroughStartFB(g_passthrough);
+        const XrResult resume = XR_SUCCEEDED(start)
+            ? g_xrPassthroughLayerResumeFB(g_passthroughLayer) : start;
+        g_passthroughActive = XR_SUCCEEDED(start) && XR_SUCCEEDED(resume);
+        LOGI("[tabletop.passthrough] %s start=%d resume=%d",
+             g_passthroughActive ? "active" : "failed",
+             static_cast<int>(start), static_cast<int>(resume));
+        if (!g_passthroughActive && XR_SUCCEEDED(start))
+            g_xrPassthroughPauseFB(g_passthrough);
+    } else {
+        g_xrPassthroughLayerPauseFB(g_passthroughLayer);
+        g_xrPassthroughPauseFB(g_passthrough);
+        g_passthroughActive = false;
+        LOGI("[tabletop.passthrough] paused");
+    }
+}
+
+bool InitializePassthrough() {
+    if (!g_hasPassthroughExt || s.instance == XR_NULL_HANDLE ||
+        s.session == XR_NULL_HANDLE) return false;
+#define LOAD_PASSTHROUGH(name) \
+    xrGetInstanceProcAddr(s.instance, "xr" #name, \
+        reinterpret_cast<PFN_xrVoidFunction*>(&g_xr##name))
+    LOAD_PASSTHROUGH(CreatePassthroughFB);
+    LOAD_PASSTHROUGH(DestroyPassthroughFB);
+    LOAD_PASSTHROUGH(PassthroughStartFB);
+    LOAD_PASSTHROUGH(PassthroughPauseFB);
+    LOAD_PASSTHROUGH(CreatePassthroughLayerFB);
+    LOAD_PASSTHROUGH(DestroyPassthroughLayerFB);
+    LOAD_PASSTHROUGH(PassthroughLayerPauseFB);
+    LOAD_PASSTHROUGH(PassthroughLayerResumeFB);
+    LOAD_PASSTHROUGH(PassthroughLayerSetStyleFB);
+#undef LOAD_PASSTHROUGH
+    if (!g_xrCreatePassthroughFB || !g_xrDestroyPassthroughFB ||
+        !g_xrPassthroughStartFB || !g_xrPassthroughPauseFB ||
+        !g_xrCreatePassthroughLayerFB || !g_xrDestroyPassthroughLayerFB ||
+        !g_xrPassthroughLayerPauseFB || !g_xrPassthroughLayerResumeFB ||
+        !g_xrPassthroughLayerSetStyleFB) {
+        LOGW("[tabletop.passthrough] entrypoints unavailable");
+        return false;
+    }
+    XrPassthroughCreateInfoFB create{XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
+    const XrResult createResult =
+        g_xrCreatePassthroughFB(s.session, &create, &g_passthrough);
+    if (XR_FAILED(createResult)) {
+        LOGE("xrCreatePassthroughFB failed: %d",
+             static_cast<int>(createResult));
+        return false;
+    }
+    XrPassthroughLayerCreateInfoFB layer{
+        XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB};
+    layer.passthrough = g_passthrough;
+    layer.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+    const XrResult layerResult = g_xrCreatePassthroughLayerFB(
+        s.session, &layer, &g_passthroughLayer);
+    if (XR_FAILED(layerResult)) {
+        LOGE("xrCreatePassthroughLayerFB failed: %d",
+             static_cast<int>(layerResult));
+        g_xrDestroyPassthroughFB(g_passthrough);
+        g_passthrough = XR_NULL_HANDLE;
+        return false;
+    }
+    XrPassthroughStyleFB style{XR_TYPE_PASSTHROUGH_STYLE_FB};
+    style.textureOpacityFactor = 1.0f;
+    style.edgeColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    g_xrPassthroughLayerSetStyleFB(g_passthroughLayer, &style);
+    LOGI("[tabletop.passthrough] XR_FB_passthrough initialized");
+    return true;
+}
+
 // Asynchronous GPU-stage profiler for the XR presentation context. The
 // RenderQueue timer measures the game's renderer context, but it cannot see a
 // late stall while the XR context copies shared eye textures into OpenXR
@@ -2994,6 +3084,7 @@ void PollEvents() {
                 // not only immediately after xrBeginSession.
                 g_perfDirty.store(true, std::memory_order_relaxed);
             } else if (s.sessionState == XR_SESSION_STATE_STOPPING) {
+                SetPassthroughActive(false);
                 s.running = false;
                 g_runtimeCpuValid = false;
                 g_runtimeGpuValid = false;
@@ -3463,6 +3554,7 @@ vec3 GradeOutput(vec3 colour) {
 }
 
 void main() {
+    float sourceAlpha = texture(uTexture, vUv).a;
     vec3 middle = SampleColour(vUv);
     vec3 nw = SampleColour(vUv + vec2(-1.0, -1.0) * uInverseSourceSize);
     vec3 ne = SampleColour(vUv + vec2( 1.0, -1.0) * uInverseSourceSize);
@@ -3477,7 +3569,7 @@ void main() {
     float lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));
 
     if (lmax - lmin < max(0.0312, lmax * 0.125)) {
-        outColor = vec4(GradeOutput(middle), 1.0);
+        outColor = vec4(GradeOutput(middle), sourceAlpha);
         return;
     }
 
@@ -3494,7 +3586,8 @@ void main() {
         SampleColour(vUv + direction * -0.5) +
         SampleColour(vUv + direction *  0.5));
     float lb = Luma(b);
-    outColor = vec4(GradeOutput((lb < lmin || lb > lmax) ? a : b), 1.0);
+    outColor = vec4(GradeOutput((lb < lmin || lb > lmax) ? a : b),
+                    sourceAlpha);
 }
 )";
 
@@ -3527,7 +3620,8 @@ vec3 GradeMobileOriginal(vec3 colour) {
 void main() {
     // Match the normalized intermediate target used by retail before applying
     // the compositor-only underwater tint.
-    vec3 colour = clamp(GradeMobileOriginal(texture(uTexture, vUv).rgb),
+    vec4 source = texture(uTexture, vUv);
+    vec3 colour = clamp(GradeMobileOriginal(source.rgb),
                         0.0, 1.0);
     float amount = smoothstep(0.12, 0.50, clamp(uUnderwater, 0.0, 1.0));
     float depth = clamp(uWaterDepth * 0.08, 0.0, 0.65);
@@ -3535,7 +3629,7 @@ void main() {
                   vec3(0.008, 0.042, 0.070);
     vec3 deep = vec3(0.012, 0.10, 0.16);
     vec3 water = mix(tinted, deep, depth);
-    outColor = vec4(mix(colour, clamp(water, 0.0, 1.0), amount), 1.0);
+    outColor = vec4(mix(colour, clamp(water, 0.0, 1.0), amount), source.a);
 }
 )";
 
@@ -6245,11 +6339,15 @@ bool Initialize(JavaVM* vm, jobject activity) {
     g_hasVisibilityMaskExt = hasExt(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
     if (g_hasVisibilityMaskExt)
         extensions.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
-    LOGI("[perf.init] xr_ext perf_settings=%d thread_settings=%d refresh=%d meta_metrics=%d visibility_mask=%d",
+    g_hasPassthroughExt = hasExt(XR_FB_PASSTHROUGH_EXTENSION_NAME);
+    if (g_hasPassthroughExt)
+        extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
+    LOGI("[perf.init] xr_ext perf_settings=%d thread_settings=%d refresh=%d meta_metrics=%d visibility_mask=%d passthrough=%d",
          g_hasPerfExt ? 1 : 0, g_hasThreadExt ? 1 : 0,
          g_hasDisplayRefreshExt ? 1 : 0,
          g_hasPerformanceMetricsExt ? 1 : 0,
-         g_hasVisibilityMaskExt ? 1 : 0);
+         g_hasVisibilityMaskExt ? 1 : 0,
+         g_hasPassthroughExt ? 1 : 0);
     // Capability evidence only. Do not enable foveation here: GTA renders the
     // expensive world into intermediate RenderWare eye textures, so XR-swapchain
     // foveation would currently optimize only the final blit.
@@ -6353,6 +6451,7 @@ bool CreateSession() {
     if (!Check(xrCreateSession(s.instance, &create, &s.session), "xrCreateSession")) {
         return false;
     }
+    InitializePassthrough();
     XrReferenceSpaceCreateInfo spaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     spaceInfo.referenceSpaceType   = XR_REFERENCE_SPACE_TYPE_LOCAL;
     spaceInfo.poseInReferenceSpace = {{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
@@ -10967,6 +11066,9 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         nanosleep(&idle, nullptr);
         return;
     }
+    SetPassthroughActive(
+        tabletop::PassthroughEnabled() && vrcam::IsTabletopActive() &&
+        s.sessionState == XR_SESSION_STATE_FOCUSED);
 
     // (Re)apply CPU/GPU perf hints and the app-main thread pin when they change
     // (menu edit, or the GameThread TID first arriving). Cheap when not dirty.
@@ -11110,6 +11212,8 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     XrCompositionLayerProjection eyeProjection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     XrCompositionLayerProjectionView eyeViews[2]{{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW},
                                                  {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
+    XrCompositionLayerPassthroughFB passthroughLayer{
+        XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
     const XrCompositionLayerBaseHeader* layers[6]{};
     uint32_t layerCount = 0;
     int submittedStereoSequence = -1;
@@ -11430,6 +11534,23 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
              g_controlsTipsActive.load(std::memory_order_relaxed) ||
              g_aboutActive.load(std::memory_order_relaxed)) && PresentDebugPanel(debugQuad)) {
             layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&debugQuad);
+        }
+    }
+
+    const bool submitPassthrough = frameState.shouldRender == XR_TRUE &&
+        projectionLayerSubmitted && g_passthroughActive &&
+        tabletop::PassthroughEnabled();
+    if (submitPassthrough) {
+        eyeProjection.layerFlags |=
+            XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+            XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+        passthroughLayer.layerHandle = g_passthroughLayer;
+        if (layerCount < static_cast<uint32_t>(std::size(layers))) {
+            for (uint32_t index = layerCount; index > 0; --index)
+                layers[index] = layers[index - 1];
+            layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(
+                &passthroughLayer);
+            ++layerCount;
         }
     }
 

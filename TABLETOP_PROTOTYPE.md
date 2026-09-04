@@ -5,14 +5,31 @@ Meta Quest port. It changes rendering and tracked interaction only; missions,
 physics, collision, traffic, pedestrians, vehicles, and saves continue to use
 the retail game's coordinate system.
 
-## Initial view
+## Views and controls
 
 - visual scale: `0.04` (one game metre appears as four centimetres);
 - physical anchor: 1.25 m forward and 0.55 m below the recentered headset;
-- game anchor: the existing player/vehicle camera anchor, refreshed every frame;
+- default game anchor: the existing player/vehicle camera anchor, refreshed every frame;
 - orientation: the normal player/vehicle yaw plus 1:1 headset rotation;
 - HUD: the existing classic VR HUD remains at readable human scale;
 - cutscenes: use the unchanged upstream VR camera.
+
+Runtime controls:
+
+- `L3`: alternate between the original follow-player view and a fixed table;
+- fixed table + one grip: drag the model through the room;
+- fixed table + both grips: move, rotate and resize the model (hands farther
+  apart make it larger; hands closer make it smaller);
+- `R3`: cycle the visible map radius through 30, 60, 90 and 120 metres;
+- `L3 + R3`: reset scale, placement and radius while keeping the current view.
+
+The fixed view captures the current player/vehicle frame once. Character and
+vehicle controls continue to use the stock gameplay path while the physical
+table stays in place.
+
+When supported by the runtime, `XR_FB_passthrough` is submitted underneath the
+world projection. Empty sky pixels are transparent, while road, opaque and
+alpha entity dispatches are limited to the selected circular map radius.
 
 The render camera is kept orthonormal. Instead of placing scale in its matrix,
 physical head translation and eye separation are divided by `visual_scale`.
@@ -30,20 +47,23 @@ Supported process-start values:
 
 ```ini
 enabled=1
+passthrough=1
 visual_scale=0.040
 anchor_forward_m=1.25
 anchor_down_m=0.55
+radius_preset=1
 ```
 
 For quick A/B tests, Android properties `debug.savr.tabletop` and
 `debug.savr.tabletop_scale` override the file for that process.
 
-## First-prototype limits
+## Current prototype limits
 
-- no passthrough yet; the OpenXR background remains opaque;
 - no in-headset Tabletop settings page yet;
 - tracked hands, physical weapons, wrist panels, cockpit controls, physical
   pickups, basketball, and late world overlays are disabled in Tabletop;
-- draw distance, fog, LOD, and streaming have not yet been tuned specifically
-  for the miniature view;
-- runtime behaviour still requires an on-device Quest test.
+- the radius boundary is intentionally a hard prototype cut at render dispatch;
+  a later package can add a soft/faded edge or a physical table base;
+- draw distance, fog, LOD, and streaming still need on-device tuning for each
+  radius preset;
+- passthrough, grab direction and rotation sign require on-device Quest tuning.

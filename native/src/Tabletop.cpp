@@ -5,6 +5,7 @@
 #include <sys/system_properties.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -23,13 +24,20 @@ constexpr char kScaleProperty[] = "debug.savr.tabletop_scale";
 
 struct Settings {
     bool enabled{true};
+    bool passthrough{true};
     float visualScale{0.04f};
     float anchorForwardMeters{1.25f};
     float anchorDownMeters{0.55f};
+    int radiusPreset{1};
 };
 
 Settings g_settings{};
 std::once_flag g_loadOnce;
+std::atomic<float> g_visualScale{0.04f};
+std::atomic<int> g_radiusPreset{1};
+constexpr float kRadiusPresets[]{30.0f, 60.0f, 90.0f, 120.0f};
+constexpr int kRadiusPresetCount =
+    static_cast<int>(sizeof(kRadiusPresets) / sizeof(kRadiusPresets[0]));
 
 char* Trim(char* text) {
     while (*text && std::isspace(static_cast<unsigned char>(*text))) ++text;
@@ -74,6 +82,8 @@ void LoadSettings() {
             key = Trim(key);
             if (strcasecmp(key, "enabled") == 0) {
                 loaded.enabled = ParseBool(value, loaded.enabled);
+            } else if (strcasecmp(key, "passthrough") == 0) {
+                loaded.passthrough = ParseBool(value, loaded.passthrough);
             } else if (strcasecmp(key, "visual_scale") == 0) {
                 loaded.visualScale = ParseFloat(value, loaded.visualScale);
             } else if (strcasecmp(key, "anchor_forward_m") == 0) {
@@ -81,6 +91,9 @@ void LoadSettings() {
                     ParseFloat(value, loaded.anchorForwardMeters);
             } else if (strcasecmp(key, "anchor_down_m") == 0) {
                 loaded.anchorDownMeters = ParseFloat(value, loaded.anchorDownMeters);
+            } else if (strcasecmp(key, "radius_preset") == 0) {
+                loaded.radiusPreset = static_cast<int>(
+                    ParseFloat(value, static_cast<float>(loaded.radiusPreset)));
             }
         }
         std::fclose(file);
@@ -98,11 +111,17 @@ void LoadSettings() {
     loaded.anchorForwardMeters =
         std::clamp(loaded.anchorForwardMeters, 0.25f, 3.00f);
     loaded.anchorDownMeters = std::clamp(loaded.anchorDownMeters, 0.10f, 1.50f);
+    loaded.radiusPreset = std::clamp(loaded.radiusPreset, 0,
+                                     kRadiusPresetCount - 1);
     g_settings = loaded;
-    LOGI("[tabletop] enabled=%d scale=%.3f anchor_forward=%.2fm anchor_down=%.2fm",
-         loaded.enabled ? 1 : 0, static_cast<double>(loaded.visualScale),
+    g_visualScale.store(loaded.visualScale, std::memory_order_relaxed);
+    g_radiusPreset.store(loaded.radiusPreset, std::memory_order_relaxed);
+    LOGI("[tabletop] enabled=%d passthrough=%d scale=%.3f anchor_forward=%.2fm anchor_down=%.2fm radius=%.0fm",
+         loaded.enabled ? 1 : 0, loaded.passthrough ? 1 : 0,
+         static_cast<double>(loaded.visualScale),
          static_cast<double>(loaded.anchorForwardMeters),
-         static_cast<double>(loaded.anchorDownMeters));
+         static_cast<double>(loaded.anchorDownMeters),
+         static_cast<double>(kRadiusPresets[loaded.radiusPreset]));
 }
 
 const Settings& GetSettings() {
@@ -113,8 +132,37 @@ const Settings& GetSettings() {
 } // namespace
 
 bool Enabled() { return GetSettings().enabled; }
-float VisualScale() { return GetSettings().visualScale; }
+float VisualScale() {
+    (void)GetSettings();
+    return g_visualScale.load(std::memory_order_relaxed);
+}
+void SetVisualScale(float scale) {
+    (void)GetSettings();
+    g_visualScale.store(std::clamp(scale, 0.01f, 0.20f),
+                        std::memory_order_relaxed);
+}
+void ResetVisualScale() { SetVisualScale(GetSettings().visualScale); }
 float AnchorForwardMeters() { return GetSettings().anchorForwardMeters; }
 float AnchorDownMeters() { return GetSettings().anchorDownMeters; }
+bool PassthroughEnabled() { return GetSettings().passthrough; }
+
+int RadiusPresetIndex() {
+    (void)GetSettings();
+    return g_radiusPreset.load(std::memory_order_relaxed);
+}
+float RadiusMeters() { return kRadiusPresets[RadiusPresetIndex()]; }
+float CycleRadiusPreset() {
+    (void)GetSettings();
+    int current = g_radiusPreset.load(std::memory_order_relaxed);
+    int next{};
+    do {
+        next = (current + 1) % kRadiusPresetCount;
+    } while (!g_radiusPreset.compare_exchange_weak(
+        current, next, std::memory_order_relaxed));
+    return kRadiusPresets[next];
+}
+void ResetRadiusPreset() {
+    g_radiusPreset.store(GetSettings().radiusPreset, std::memory_order_relaxed);
+}
 
 } // namespace savr::tabletop
