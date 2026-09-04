@@ -13802,9 +13802,27 @@ bool TabletopEntityInsideRadius(const void* entity) {
     if (!ReadEntityWorldPosition(entity, &world)) return true;
     const float dx = world.x - g_tabletopRadiusCenter.x;
     const float dy = world.y - g_tabletopRadiusCenter.y;
-    // A small allowance avoids clipping a large building whose origin sits just
-    // outside the selected circle while most of its geometry is still inside.
-    const float radius = tabletop::RadiusMeters() + 6.0f;
+    // Entity pivots are often far from the visible centre of a long building or
+    // road tile. Use its collision bound as the edge allowance when available,
+    // then retain six metres as a conservative fallback for small props.
+    float allowance = 6.0f;
+    if (g.CModelInfo_ms_modelInfoPtrs) {
+        const auto* bytes = static_cast<const std::uint8_t*>(entity);
+        const int modelId = static_cast<int>(
+            *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
+        if (modelId >= 0 && modelId < 20000) {
+            const auto* model = static_cast<const std::uint8_t*>(
+                g.CModelInfo_ms_modelInfoPtrs[modelId]);
+            const auto* collision = model
+                ? *reinterpret_cast<const std::uint8_t* const*>(model + 0x30)
+                : nullptr;
+            const float bound = collision
+                ? *reinterpret_cast<const float*>(collision + 0x24) : 0.0f;
+            if (std::isfinite(bound) && bound > 0.0f)
+                allowance = std::clamp(bound, 6.0f, 80.0f);
+        }
+    }
+    const float radius = tabletop::RadiusMeters() + allowance;
     return dx * dx + dy * dy <= radius * radius;
 }
 
@@ -20860,8 +20878,10 @@ void OnRenderScene(bool underwater) {
         ? g_tabletopRenderCamera : logicalBase;
     // Passthrough shows through untouched pixels in tabletop mode. Geometry
     // still writes its normal alpha; only the empty sky starts transparent.
+    const bool tabletopPassthrough = tabletopFrame &&
+        tabletop::PassthroughEnabled() && xr::IsPassthroughActive();
     unsigned char black[4] = {0, 0, 0,
-        static_cast<unsigned char>(tabletopFrame && tabletop::PassthroughEnabled()
+        static_cast<unsigned char>(tabletopPassthrough
             ? 0 : 255)};
 
     // Build one eye-independent draw list from the physical ownership state. A
@@ -21364,7 +21384,7 @@ void OnRenderScene(bool underwater) {
         // Re-issue it here (at this eye's camera; the sky is at infinity so it is
         // parallax-free and correct per eye) — otherwise the sky is black.
         tA = NowMs();
-        if (!tabletopFrame || !tabletop::PassthroughEnabled()) {
+        if (!tabletopPassthrough) {
             if (g.DefinedState) g.DefinedState();
             RenderWorldStableSkyPolys(camU, mobileFog);
             graphicsfx::RenderSkyEye(sc, e);
@@ -22727,6 +22747,23 @@ bool OnGetIsOnScreen(void* entity) {
 }
 
 bool OnIsEntityOccluded(void* entity) {
+    // The tabletop circle is a deliberately complete dollhouse slice. Stock
+    // occlusion was calculated for the logical phone camera and can hide a
+    // building that is plainly visible from above or from the opposite side.
+    // Keep the bypass bounded by the selected render radius.
+    if (g_tabletopActive.load(std::memory_order_acquire) && entity &&
+        g_tabletopRadiusCenterValid) {
+        V3 world{};
+        if (ReadEntityWorldPosition(entity, &world)) {
+            const float dx = world.x - g_tabletopRadiusCenter.x;
+            const float dy = world.y - g_tabletopRadiusCenter.y;
+            const float radius = tabletop::RadiusMeters() + 6.0f;
+            if (std::isfinite(dx) && std::isfinite(dy) &&
+                dx * dx + dy * dy <= radius * radius) {
+                return false;
+            }
+        }
+    }
     if (g_stereoActive.load(std::memory_order_relaxed) && entity &&
         g_aircraftOrdinaryHorizonScanActive && IsKnownCullOwnerThread() &&
         g_aircraftOrdinaryHorizonContextEntity == entity &&
@@ -22961,6 +22998,20 @@ bool OnIsSphereVisible(void* cam, const void* origin, float radius) {
             contextDepth > 0 &&
             (contextStaticType || contextTargetedObject) &&
             returnAddress == g.LoadBase + 0x48c26cu;
+        if (auditedStaticCall &&
+            g_tabletopActive.load(std::memory_order_acquire) &&
+            g_tabletopRadiusCenterValid) {
+            const float tx = o[0] - g_tabletopRadiusCenter.x;
+            const float ty = o[1] - g_tabletopRadiusCenter.y;
+            const float extent = std::isfinite(radius)
+                ? std::max(0.0f, radius) : 0.0f;
+            const float tabletopRadius = tabletop::RadiusMeters();
+            if (std::isfinite(tx) && std::isfinite(ty) &&
+                std::isfinite(tabletopRadius) && tabletopRadius > 0.0f &&
+                std::hypot(tx, ty) - extent <= tabletopRadius) {
+                return true;
+            }
+        }
         const bool aircraftOrdinaryHorizonCall = auditedStaticCall &&
             contextAircraftOrdinaryHorizon &&
             g_aircraftOrdinaryHorizonScanActive &&
@@ -24288,7 +24339,12 @@ void OnScanWorld() {
         }
     }
 
-    const float configuredNearbyRadius = EffectiveNearbySectorScanM();
+    const bool tabletopRadialScan =
+        g_tabletopActive.load(std::memory_order_acquire) &&
+        g_tabletopRadiusCenterValid;
+    const float configuredNearbyRadius = tabletopRadialScan
+        ? std::max(EffectiveNearbySectorScanM(), tabletop::RadiusMeters())
+        : EffectiveNearbySectorScanM();
     // Aircraft max-gaze admission relies on phase 2 visiting the complete
     // ordinary 300 m disk.  TreesPalmsM currently supplies that radius, but a
     // graphics-profile change must not silently reintroduce an HMD-dependent
@@ -24312,8 +24368,10 @@ void OnScanWorld() {
         return;
     }
 
-    const float cameraX = g.CRenderer_ms_vecCameraPosition[0];
-    const float cameraY = g.CRenderer_ms_vecCameraPosition[1];
+    const float cameraX = tabletopRadialScan
+        ? g_tabletopRadiusCenter.x : g.CRenderer_ms_vecCameraPosition[0];
+    const float cameraY = tabletopRadialScan
+        ? g_tabletopRadiusCenter.y : g.CRenderer_ms_vecCameraPosition[1];
     if (!std::isfinite(cameraX) || !std::isfinite(cameraY)) {
         SelectAndReplayAircraftOrdinaryRadialShell(aircraftScanLod);
         RequestAircraftOrdinaryPrefetchCandidates();
@@ -24370,6 +24428,13 @@ void OnScanWorld() {
     int sectors = 0;
     int coneRejectedSectors = 0;
 
+    const float savedRendererCameraX = g.CRenderer_ms_vecCameraPosition[0];
+    const float savedRendererCameraY = g.CRenderer_ms_vecCameraPosition[1];
+    if (tabletopRadialScan) {
+        g.CRenderer_ms_vecCameraPosition[0] = cameraX;
+        g.CRenderer_ms_vecCameraPosition[1] = cameraY;
+    }
+
     for (int sectorY = minY; sectorY <= maxY; ++sectorY) {
         const float sectorMinY = kWorldMin + sectorY * kSectorM;
         const float sectorMaxY = sectorMinY + kSectorM;
@@ -24404,6 +24469,10 @@ void OnScanWorld() {
             g.CRenderer_ScanSectorList(sectorX, sectorY);
             ++sectors;
         }
+    }
+    if (tabletopRadialScan) {
+        g.CRenderer_ms_vecCameraPosition[0] = savedRendererCameraX;
+        g.CRenderer_ms_vecCameraPosition[1] = savedRendererCameraY;
     }
 
     // Phase 2 deliberately keeps the proven retail 300 m footprint. Once all

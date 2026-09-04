@@ -1010,7 +1010,9 @@ def patch_manifest(text: str) -> str:
     text = text.replace(
         "    <application",
         '    <uses-feature android:name="android.hardware.vr.headtracking" '
-        'android:required="true" android:version="1"/>\n    <application',
+        'android:required="true" android:version="1"/>\n'
+        '    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" '
+        'android:required="false"/>\n    <application',
         1,
     )
     return text

@@ -2150,7 +2150,7 @@ struct State {
 State s;
 
 bool g_hasPassthroughExt = false;
-bool g_passthroughActive = false;
+std::atomic<bool> g_passthroughActive{false};
 XrPassthroughFB g_passthrough{XR_NULL_HANDLE};
 XrPassthroughLayerFB g_passthroughLayer{XR_NULL_HANDLE};
 PFN_xrCreatePassthroughFB g_xrCreatePassthroughFB{};
@@ -2166,21 +2166,25 @@ PFN_xrPassthroughLayerSetStyleFB g_xrPassthroughLayerSetStyleFB{};
 void SetPassthroughActive(bool active) {
     if (g_passthrough == XR_NULL_HANDLE ||
         g_passthroughLayer == XR_NULL_HANDLE ||
-        active == g_passthroughActive) return;
+        active == g_passthroughActive.load(std::memory_order_acquire)) return;
     if (active) {
         const XrResult start = g_xrPassthroughStartFB(g_passthrough);
         const XrResult resume = XR_SUCCEEDED(start)
             ? g_xrPassthroughLayerResumeFB(g_passthroughLayer) : start;
-        g_passthroughActive = XR_SUCCEEDED(start) && XR_SUCCEEDED(resume);
+        g_passthroughActive.store(
+            XR_SUCCEEDED(start) && XR_SUCCEEDED(resume),
+            std::memory_order_release);
         LOGI("[tabletop.passthrough] %s start=%d resume=%d",
-             g_passthroughActive ? "active" : "failed",
+             g_passthroughActive.load(std::memory_order_acquire)
+                 ? "active" : "failed",
              static_cast<int>(start), static_cast<int>(resume));
-        if (!g_passthroughActive && XR_SUCCEEDED(start))
+        if (!g_passthroughActive.load(std::memory_order_acquire) &&
+            XR_SUCCEEDED(start))
             g_xrPassthroughPauseFB(g_passthrough);
     } else {
         g_xrPassthroughLayerPauseFB(g_passthroughLayer);
         g_xrPassthroughPauseFB(g_passthrough);
-        g_passthroughActive = false;
+        g_passthroughActive.store(false, std::memory_order_release);
         LOGI("[tabletop.passthrough] paused");
     }
 }
@@ -11538,7 +11542,8 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     }
 
     const bool submitPassthrough = frameState.shouldRender == XR_TRUE &&
-        projectionLayerSubmitted && g_passthroughActive &&
+        projectionLayerSubmitted &&
+        g_passthroughActive.load(std::memory_order_acquire) &&
         tabletop::PassthroughEnabled();
     if (submitPassthrough) {
         eyeProjection.layerFlags |=
@@ -11844,6 +11849,10 @@ bool IsSessionRunning() {
 
 bool IsSessionFocused() {
     return g_sessionFocused.load(std::memory_order_acquire);
+}
+
+bool IsPassthroughActive() {
+    return g_passthroughActive.load(std::memory_order_acquire);
 }
 
 void SetTheaterCrop(int width, int height) {

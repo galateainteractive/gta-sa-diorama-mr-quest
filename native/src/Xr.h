@@ -22,6 +22,10 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs);
 
 bool IsSessionRunning();
 bool IsSessionFocused();
+// True only after the Quest runtime has successfully started and resumed the
+// XR_FB_passthrough layer. Rendering uses this instead of the user preference
+// so a missing extension falls back to the normal sky rather than black.
+bool IsPassthroughActive();
 
 // Latest controller state, mapped later onto the game's gamepad. Sticks are
 // [-1,1], triggers [0,1], buttons are momentary.
