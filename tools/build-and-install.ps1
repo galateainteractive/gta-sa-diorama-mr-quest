@@ -8,7 +8,9 @@ param(
     [string]$Serial,
     [string]$LogPath,
     [string]$Keystore,
+    [string]$ExistingBuildRoot,
     [switch]$BuildOnly,
+    [switch]$PayloadOnly,
     [switch]$NonInteractive,
     [switch]$PersonalUpdate
 )
@@ -829,9 +831,35 @@ function Invoke-AdbCapture {
     return Invoke-NativeCapture -FilePath $script:AdbExe -Arguments $allArguments -AllowFailure:$AllowFailure -EchoOutput:$EchoOutput
 }
 
+function Restart-PinnedAdbServer {
+    if ([string]::IsNullOrWhiteSpace([string]$script:AdbExe)) { throw 'ADB has not been initialized.' }
+
+    Write-Host 'Restarting the pinned ADB server to avoid conflicts with SideQuest or another Android tool...'
+    Invoke-AdbCapture -Arguments @('kill-server') -WithoutSerial -AllowFailure | Out-Null
+    Start-Sleep -Milliseconds 500
+
+    # A crashed or competing ADB server can remain alive while no longer
+    # answering on port 5037. ADB is only a local helper process; stopping a
+    # leftover instance is safe and does not alter files on the Quest.
+    foreach ($process in @(Get-Process -Name adb -ErrorAction SilentlyContinue)) {
+        try { Stop-Process -Id $process.Id -Force -ErrorAction Stop }
+        catch { Write-Warning "Could not stop leftover ADB process $($process.Id): $($_.Exception.Message)" }
+    }
+    Start-Sleep -Milliseconds 500
+
+    $start = Invoke-AdbCapture -Arguments @('start-server') -WithoutSerial -AllowFailure -EchoOutput
+    if ($start.ExitCode -ne 0) {
+        throw "The pinned ADB server did not start:`n$($start.Text)"
+    }
+    $probe = Invoke-AdbCapture -Arguments @('devices', '-l') -WithoutSerial -AllowFailure
+    if ($probe.ExitCode -ne 0) {
+        throw "The pinned ADB server started but did not answer:`n$($probe.Text)"
+    }
+}
+
 function Select-QuestDevice {
     param([string]$RequestedSerial)
-    Invoke-AdbCapture -Arguments @('start-server') -WithoutSerial -AllowFailure | Out-Null
+    Restart-PinnedAdbServer
     $result = Invoke-AdbCapture -Arguments @('devices', '-l') -WithoutSerial
     $devices = @()
     foreach ($line in $result.Lines) {
@@ -1303,9 +1331,29 @@ function Invoke-Main {
     $defaultSdk = Join-Path $resolvedWorkDir '.android-sdk'
     $runsRoot = Join-Path $resolvedWorkDir 'runs'
     $runId = '{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), ([Guid]::NewGuid().ToString('N').Substring(0, 8))
-    $buildRoot = Join-Path $runsRoot $runId
+    if ($PayloadOnly.IsPresent -and [string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
+        throw 'PayloadOnly requires -ExistingBuildRoot so the exact verified payload is known.'
+    }
+    if ($PayloadOnly.IsPresent -and $BuildOnly.IsPresent) {
+        throw 'PayloadOnly and BuildOnly cannot be used together.'
+    }
+    if ([string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
+        $buildRoot = Join-Path $runsRoot $runId
+    }
+    else {
+        $buildRoot = Get-FullPath $ExistingBuildRoot
+        if (-not (Test-IsUnderPath -Candidate $buildRoot -Root $runsRoot)) {
+            throw "ExistingBuildRoot must be inside the managed runs directory: $runsRoot"
+        }
+        if (-not (Test-Path -LiteralPath $buildRoot -PathType Container)) {
+            throw "Existing build directory does not exist: $buildRoot"
+        }
+    }
     $backupRoot = Join-Path (Join-Path $resolvedWorkDir 'device-backups') $runId
-    New-Item -ItemType Directory -Force -Path $downloads, $toolsRoot, $runsRoot, $buildRoot, $backupRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path $downloads, $toolsRoot, $runsRoot, $backupRoot | Out-Null
+    if ([string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
+        New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
+    }
 
     $resolvedLogPath = $LogPath
     if ([string]::IsNullOrWhiteSpace($resolvedLogPath)) {
@@ -1322,69 +1370,74 @@ function Invoke-Main {
     Write-Host "Work directory: $resolvedWorkDir"
     Write-Host "Log: $resolvedLogPath"
 
-    $resolvedGamePackage = Resolve-RequiredInputPath -Value $GamePackage -Name 'GamePackage' `
-        -Prompt 'Select your legally obtained GTA SA APK, split-APK folder, or APK archive' `
-        -Filter 'GTA SA package (*.apk;*.zip;*.apks;*.xapk;*.apkm;*.7z;*.rar)|*.apk;*.zip;*.apks;*.xapk;*.apkm;*.7z;*.rar|All files (*.*)|*.*'
-    Write-Host ''
-    Write-Host 'Required sound archive: gta-sa-ps2-style-mod-pack_1786856007_737162.7z' -ForegroundColor Yellow
-    Write-Host 'Download page: https://libertycity.net/files/gta-san-andreas-ios-android/241069-gta-sa-classic-avanced-mod-pack.html'
-    Write-Host 'On that page select Original plan mod pack (16 August 2026, 1.41 GB), NOT CLASSIC ADVANCED v1.0.' -ForegroundColor Yellow
-    $resolvedAudioSource = Resolve-RequiredInputPath -Value $AudioSource -Name 'AudioSource' `
-        -Prompt 'Select gta-sa-ps2-style-mod-pack_1786856007_737162.7z (Original plan mod pack) or its extracted audio folder' `
-        -Filter 'Sound mod (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*'
+    if ([string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
+        $resolvedGamePackage = Resolve-RequiredInputPath -Value $GamePackage -Name 'GamePackage' `
+            -Prompt 'Select your legally obtained GTA SA APK, split-APK folder, or APK archive' `
+            -Filter 'GTA SA package (*.apk;*.zip;*.apks;*.xapk;*.apkm;*.7z;*.rar)|*.apk;*.zip;*.apks;*.xapk;*.apkm;*.7z;*.rar|All files (*.*)|*.*'
+        Write-Host ''
+        Write-Host 'Required sound archive: gta-sa-ps2-style-mod-pack_1786856007_737162.7z' -ForegroundColor Yellow
+        Write-Host 'Download page: https://libertycity.net/files/gta-san-andreas-ios-android/241069-gta-sa-classic-avanced-mod-pack.html'
+        Write-Host 'On that page select Original plan mod pack (16 August 2026, 1.41 GB), NOT CLASSIC ADVANCED v1.0.' -ForegroundColor Yellow
+        $resolvedAudioSource = Resolve-RequiredInputPath -Value $AudioSource -Name 'AudioSource' `
+            -Prompt 'Select gta-sa-ps2-style-mod-pack_1786856007_737162.7z (Original plan mod pack) or its extracted audio folder' `
+            -Filter 'Sound mod (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*'
 
-    Write-Step 'Preparing pinned build tools'
-    $resolvedJavaHome = Resolve-JavaHome -Requested $JavaHome -DownloadRoot $downloads -ToolsRoot $toolsRoot
-    $python = Resolve-Python -DownloadRoot $downloads -ToolsRoot $toolsRoot
-    $apktool = Resolve-Apktool -DownloadRoot $downloads
-    if ((Test-IsSevenZipArchive -Path $resolvedGamePackage) -or
-        (Test-IsSevenZipArchive -Path $resolvedAudioSource)) {
-        $archiveTool = Resolve-SevenZip -DownloadRoot $downloads
-        $env:SAVR_ARCHIVE_TOOL = $archiveTool
-        Write-Host "Pinned 7-Zip archive tool: $archiveTool"
-    }
-    $openXrLoader = Resolve-OpenXrLoader -DownloadRoot $downloads -ToolsRoot $toolsRoot
-    $resolvedSdk = Resolve-AndroidSdk -Requested $AndroidSdk -DefaultRoot $defaultSdk -DownloadRoot $downloads `
-        -ToolsRoot $toolsRoot -ResolvedJavaHome $resolvedJavaHome
-    if ([string]::IsNullOrWhiteSpace($Keystore)) {
-        $keystore = Get-PersistentKeystorePath -ProjectRoot $projectRoot -ResolvedWorkDir $resolvedWorkDir
+        Write-Step 'Preparing pinned build tools'
+        $resolvedJavaHome = Resolve-JavaHome -Requested $JavaHome -DownloadRoot $downloads -ToolsRoot $toolsRoot
+        $python = Resolve-Python -DownloadRoot $downloads -ToolsRoot $toolsRoot
+        $apktool = Resolve-Apktool -DownloadRoot $downloads
+        if ((Test-IsSevenZipArchive -Path $resolvedGamePackage) -or
+            (Test-IsSevenZipArchive -Path $resolvedAudioSource)) {
+            $archiveTool = Resolve-SevenZip -DownloadRoot $downloads
+            $env:SAVR_ARCHIVE_TOOL = $archiveTool
+            Write-Host "Pinned 7-Zip archive tool: $archiveTool"
+        }
+        $openXrLoader = Resolve-OpenXrLoader -DownloadRoot $downloads -ToolsRoot $toolsRoot
+        $resolvedSdk = Resolve-AndroidSdk -Requested $AndroidSdk -DefaultRoot $defaultSdk -DownloadRoot $downloads `
+            -ToolsRoot $toolsRoot -ResolvedJavaHome $resolvedJavaHome
+        if ([string]::IsNullOrWhiteSpace($Keystore)) {
+            $keystore = Get-PersistentKeystorePath -ProjectRoot $projectRoot -ResolvedWorkDir $resolvedWorkDir
+        }
+        else {
+            $keystore = Get-FullPath $Keystore
+            if (-not (Test-Path -LiteralPath $keystore -PathType Leaf)) {
+                throw "Requested signing key does not exist: $keystore"
+            }
+        }
+        Write-Host "Persistent personal signing key: $keystore"
+
+        Write-Step 'Validating the selected GTA SA package and audio before compilation'
+        $validateArguments = @(
+            $assembleScript,
+            '--game-package', $resolvedGamePackage,
+            '--audio-source', $resolvedAudioSource,
+            '--build-dir', $buildRoot,
+            '--sdk', $resolvedSdk,
+            '--java-home', $resolvedJavaHome,
+            '--apktool', $apktool,
+            '--validate-only'
+        )
+        if ($PersonalUpdate.IsPresent) { $validateArguments += '--personal-update-source' }
+        Invoke-NativeLive -FilePath $python -Arguments $validateArguments
+
+        Write-Step 'Building and assembling the verified personal APK set'
+        & $buildScript `
+            -Configuration RelWithDebInfo `
+            -AndroidSdk $resolvedSdk `
+            -JavaHome $resolvedJavaHome `
+            -OpenXrLoader $openXrLoader `
+            -BuildRoot $buildRoot `
+            -PythonExe $python `
+            -Apktool $apktool `
+            -GamePackage $resolvedGamePackage `
+            -AudioSource $resolvedAudioSource `
+            -Keystore $keystore `
+            -Package `
+            -PersonalUpdateSource:$PersonalUpdate.IsPresent
     }
     else {
-        $keystore = Get-FullPath $Keystore
-        if (-not (Test-Path -LiteralPath $keystore -PathType Leaf)) {
-            throw "Requested signing key does not exist: $keystore"
-        }
+        Write-Step "Reusing existing build without compilation: $buildRoot"
     }
-    Write-Host "Persistent personal signing key: $keystore"
-
-    Write-Step 'Validating the selected GTA SA package and audio before compilation'
-    $validateArguments = @(
-        $assembleScript,
-        '--game-package', $resolvedGamePackage,
-        '--audio-source', $resolvedAudioSource,
-        '--build-dir', $buildRoot,
-        '--sdk', $resolvedSdk,
-        '--java-home', $resolvedJavaHome,
-        '--apktool', $apktool,
-        '--validate-only'
-    )
-    if ($PersonalUpdate.IsPresent) { $validateArguments += '--personal-update-source' }
-    Invoke-NativeLive -FilePath $python -Arguments $validateArguments
-
-    Write-Step 'Building and assembling the verified personal APK set'
-    & $buildScript `
-        -Configuration RelWithDebInfo `
-        -AndroidSdk $resolvedSdk `
-        -JavaHome $resolvedJavaHome `
-        -OpenXrLoader $openXrLoader `
-        -BuildRoot $buildRoot `
-        -PythonExe $python `
-        -Apktool $apktool `
-        -GamePackage $resolvedGamePackage `
-        -AudioSource $resolvedAudioSource `
-        -Keystore $keystore `
-        -Package `
-        -PersonalUpdateSource:$PersonalUpdate.IsPresent
 
     Write-Step 'Hash-checking build outputs and staged Quest payloads'
     $buildInfo = Assert-BuildArtifacts -BuildRoot $buildRoot -PersonalUpdate:$PersonalUpdate.IsPresent
@@ -1403,13 +1456,24 @@ function Invoke-Main {
     Stop-GameAndVerify
     Assert-QuestFreeSpace -BuildInfo $buildInfo
 
-    Write-Step 'Installing the personally signed APK set'
-    $backup = Install-ApkSetSafely -BuildInfo $buildInfo -BackupRootBase $backupRoot
+    $backup = $null
+    if ($PayloadOnly.IsPresent) {
+        Write-Step 'Verifying the already-installed APK set before resuming payload publication'
+        $preVerificationRoot = Join-Path (Join-Path $resolvedWorkDir 'device-verification') ("$runId-pre-payload")
+        Assert-InstalledApks -BuildInfo $buildInfo -VerificationRoot $preVerificationRoot
+    }
+    else {
+        Write-Step 'Installing the personally signed APK set'
+        $backup = Install-ApkSetSafely -BuildInfo $buildInfo -BackupRootBase $backupRoot
+    }
 
     if ($null -ne $backup) {
         Write-Step 'Restoring the verified save/settings backup'
         Restore-QuestSavesAndSettings -Backup $backup
     }
+
+    Write-Step 'Refreshing the ADB connection before the large payload transfer'
+    Select-QuestDevice -RequestedSerial $script:SelectedSerial
 
     Write-Step 'Publishing hash-verified Quest data'
     Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'data_main') `
