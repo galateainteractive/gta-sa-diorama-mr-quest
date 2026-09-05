@@ -276,6 +276,9 @@ struct TabletopMaskState {
     float viewerRadiusM{};
     float bridgeRadiusM{};
     float featherM{};
+    // GTA's depth projection uses game units; convert reconstructed view
+    // distance to OpenXR LOCAL metres before testing the physical boundary.
+    float depthScaleMPerGameUnit{1.0f};
 };
 void SetTabletopMaskState(const TabletopMaskState& state);
 

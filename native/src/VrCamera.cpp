@@ -3011,6 +3011,7 @@ bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     // Four GTA metres at normal scale gives a 16 cm soft edge: wide enough to
     // hide sector pop, narrow enough to retain the crisp tabletop silhouette.
     out.featherM = std::clamp(4.0f * scale, 0.08f, 0.24f);
+    out.depthScaleMPerGameUnit = scale;
     return true;
 }
 

@@ -8660,7 +8660,8 @@ GLint  g_tabletopAlphaEyeLoc = -1, g_tabletopAlphaRightLoc = -1;
 GLint  g_tabletopAlphaUpLoc = -1, g_tabletopAlphaForwardLoc = -1;
 GLint  g_tabletopAlphaPlayerLoc = -1, g_tabletopAlphaViewerLoc = -1;
 GLint  g_tabletopAlphaAxisXLoc = -1, g_tabletopAlphaAxisYLoc = -1;
-GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaModeLoc = -1;
+GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaDepthScaleLoc = -1;
+GLint  g_tabletopAlphaModeLoc = -1;
 GLint  g_tabletopAlphaBridgeLoc = -1;
 int    g_handDepthRetryCountdown = 0;
 int    g_handDepthFailedW = 0, g_handDepthFailedH = 0;
@@ -10556,14 +10557,14 @@ bool EnsureTabletopAlphaProgram() {
                      "uniform vec2 uNearFar; uniform vec2 uTan;\n"
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
-                     "uniform vec4 uRadii; uniform int uMode,uBridge;\n"
+                     "uniform vec4 uRadii; uniform float uDepthScale; uniform int uMode,uBridge;\n"
                      "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
                      "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
                      "void main(){\n"
                      " if(uUseDepth==0){o=vec4(0,0,0,1);return;}\n"
                      " float d=texture(uDepth,vUv).r;if(d>=0.999999)discard;\n"
                      " float n=uNearFar.x,f=uNearFar.y,z=d*2.0-1.0;\n"
-                     " float vz=(2.0*n*f)/max(1e-5,f+n-z*(f-n));\n"
+                     " float vz=((2.0*n*f)/max(1e-5,f+n-z*(f-n)))*uDepthScale;\n"
                      " vec2 ndc=vUv*2.0-1.0;\n"
                      " vec3 p=uEye+uRight*(ndc.x*uTan.x*vz)+uUp*(ndc.y*uTan.y*vz)+uForward*vz;\n"
                      " vec2 pp=plane(p,uPlayer),pv=plane(uViewer,uPlayer);\n"
@@ -10605,6 +10606,8 @@ bool EnsureTabletopAlphaProgram() {
     g_tabletopAlphaAxisXLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisX");
     g_tabletopAlphaAxisYLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisY");
     g_tabletopAlphaRadiiLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uRadii");
+    g_tabletopAlphaDepthScaleLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uDepthScale");
     g_tabletopAlphaModeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uMode");
     g_tabletopAlphaBridgeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uBridge");
     LOGI("[tabletop.passthrough] depth alpha-mask program ready");
@@ -10750,6 +10753,8 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         glUniform3fv(g_tabletopAlphaAxisYLoc, 1, mask.axisY);
         glUniform4f(g_tabletopAlphaRadiiLoc, mask.playerRadiusM,
                     mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
+        glUniform1f(g_tabletopAlphaDepthScaleLoc,
+                    std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
         glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);
         glUniform1i(g_tabletopAlphaBridgeLoc, mask.bridgeEnabled ? 1 : 0);
     }
@@ -10774,17 +10779,19 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     static bool loggedSuccess = false;
     if (!loggedSuccess && maskError == GL_NO_ERROR) {
         loggedSuccess = true;
-        LOGI("[tabletop.passthrough] depth alpha mask active src=%dx%d dst=%dx%d format=0x%x/%d fade=%d radius=%.2fm feather=%.2fm",
+        LOGI("[tabletop.passthrough] depth alpha mask active src=%dx%d dst=%dx%d format=0x%x/%d fade=%d radius=%.2fm feather=%.2fm depthScale=%.4f",
              gameDepthW, gameDepthH, targetW, targetH,
              sourceFormat, sourceBits, useWorldFade ? 1 : 0,
              static_cast<double>(mask.playerRadiusM),
-             static_cast<double>(mask.featherM));
+              static_cast<double>(mask.featherM),
+              static_cast<double>(mask.depthScaleMPerGameUnit));
         __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
             "[tabletop.fade] active=%d profile=%d radius=%.2fm feather=%.2fm "
-            "depth=%dx%d",
+            "depthScale=%.4f depth=%dx%d",
             useWorldFade ? 1 : 0, mask.coverageMode,
             static_cast<double>(mask.playerRadiusM),
-            static_cast<double>(mask.featherM), targetW, targetH);
+            static_cast<double>(mask.featherM),
+            static_cast<double>(mask.depthScaleMPerGameUnit), targetW, targetH);
     }
     return maskError == GL_NO_ERROR;
 }
