@@ -259,6 +259,26 @@ void SetMobileColorState(const MobileColorState& state);
 // the GameThread each stereo frame.
 void SetStereoRenderFov(float tanX, float tanY);
 
+// Physical-space boundary of the miniature world, captured beside the eye
+// textures that it masks. Axes and centres use OpenXR LOCAL metres. The late
+// compositor reconstructs each world fragment from the matching depth image,
+// so the feather follows the map on the floor instead of becoming a
+// screen-space vignette when the player walks around it.
+struct TabletopMaskState {
+    bool active{false};
+    int coverageMode{}; // 0 player circle, 1 connected capsule, 2 islands
+    bool bridgeEnabled{false};
+    float playerCenter[3]{};
+    float viewerCenter[3]{};
+    float axisX[3]{1.0f, 0.0f, 0.0f};
+    float axisY[3]{0.0f, 0.0f, 1.0f};
+    float playerRadiusM{};
+    float viewerRadiusM{};
+    float bridgeRadiusM{};
+    float featherM{};
+};
+void SetTabletopMaskState(const TabletopMaskState& state);
+
 // Count one rendered game frame, for the on-screen FPS readout. Called once per
 // stereo frame by the GameThread.
 void NotifyGameFrame();

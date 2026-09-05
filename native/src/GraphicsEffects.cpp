@@ -180,6 +180,136 @@ thread_local int g_fxEye = -1;
 thread_local bool g_fxCameraPositionValid = false;
 thread_local float g_fxCameraPosition[3]{};
 thread_local bool g_insideLocalFlameProducer = false;
+double MonotonicMs();
+
+// Continuous, bounded stereo witness for intermittent collision sparks. The
+// user can keep playing normally and later report only the clock time: every
+// two seconds this records whether Fx submitted the same batch topology,
+// billboard matrix and vertex payload to both eyes. Small batches are tracked
+// separately because sparks are emitted as short immediate-mode quads/strips.
+constexpr int kFxStereoDiagnosticCapacity = 256;
+constexpr std::size_t kRwIm3DVertexStride = 36;
+struct FxBatchSignature {
+    std::uint32_t count{};
+    std::uint32_t flags{};
+    std::int32_t primitive{-1};
+    std::uintptr_t texture{};
+    std::uint64_t verticesHash{};
+    std::uint64_t matrixHash{};
+    bool matrixNull{};
+};
+thread_local FxBatchSignature
+    g_fxBatchSignatures[2][kFxStereoDiagnosticCapacity]{};
+thread_local int g_fxBatchCount[2]{};
+
+struct FxStereoDiagnosticWindow {
+    std::uint64_t frames{};
+    std::uint64_t calls[2]{};
+    std::uint64_t matchedTopology{};
+    std::uint64_t topologyMismatch{};
+    std::uint64_t geometrySame{};
+    std::uint64_t geometryDifferent{};
+    std::uint64_t matrixSame{};
+    std::uint64_t matrixDifferent{};
+    std::uint64_t textureDifferent{};
+    std::uint64_t smallSame{};
+    std::uint64_t smallDifferent{};
+    std::uint64_t nullMatrix[2]{};
+    double startedMs{};
+};
+thread_local FxStereoDiagnosticWindow g_fxStereoDiagnostic{};
+
+std::uint64_t HashFxBytes(const void* data, std::size_t size) {
+    if (!data || size == 0) return 0;
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (std::size_t i = 0; i < size; ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+void BeginFxStereoDiagnosticEye(int eye) {
+    if (eye < 0 || eye > 1) return;
+    g_fxBatchCount[eye] = 0;
+}
+
+void RecordFxStereoBatch(void* vertices, unsigned int count, void* matrix,
+                         unsigned int flags, void* texture) {
+    if (g_fxEye < 0 || g_fxEye > 1) return;
+    int& batchCount = g_fxBatchCount[g_fxEye];
+    if (batchCount >= kFxStereoDiagnosticCapacity) return;
+    FxBatchSignature& signature =
+        g_fxBatchSignatures[g_fxEye][batchCount++];
+    signature = {};
+    signature.count = count;
+    signature.flags = flags;
+    signature.texture = reinterpret_cast<std::uintptr_t>(texture);
+    signature.matrixNull = matrix == nullptr;
+    signature.primitive = -1;
+    if (count <= 64u && vertices) {
+        const std::size_t sampledVertices = std::min<std::size_t>(count, 16u);
+        signature.verticesHash = HashFxBytes(
+            vertices, sampledVertices * kRwIm3DVertexStride);
+    }
+    if (matrix) signature.matrixHash = HashFxBytes(matrix, 64u);
+}
+
+void FinishFxStereoDiagnosticEye(int eye) {
+    if (eye != 1) return;
+    FxStereoDiagnosticWindow& window = g_fxStereoDiagnostic;
+    const double now = MonotonicMs();
+    if (window.startedMs <= 0.0) window.startedMs = now;
+    ++window.frames;
+    window.calls[0] += static_cast<std::uint64_t>(g_fxBatchCount[0]);
+    window.calls[1] += static_cast<std::uint64_t>(g_fxBatchCount[1]);
+    const int paired = std::min(g_fxBatchCount[0], g_fxBatchCount[1]);
+    window.topologyMismatch += static_cast<std::uint64_t>(
+        std::abs(g_fxBatchCount[0] - g_fxBatchCount[1]));
+    for (int i = 0; i < paired; ++i) {
+        const FxBatchSignature& left = g_fxBatchSignatures[0][i];
+        const FxBatchSignature& right = g_fxBatchSignatures[1][i];
+        window.nullMatrix[0] += left.matrixNull ? 1u : 0u;
+        window.nullMatrix[1] += right.matrixNull ? 1u : 0u;
+        const bool topologySame = left.count == right.count &&
+            left.flags == right.flags && left.primitive == right.primitive;
+        if (!topologySame) {
+            ++window.topologyMismatch;
+            continue;
+        }
+        ++window.matchedTopology;
+        const bool geometrySame = left.verticesHash == right.verticesHash;
+        (geometrySame ? window.geometrySame : window.geometryDifferent)++;
+        const bool matrixSame = left.matrixHash == right.matrixHash;
+        (matrixSame ? window.matrixSame : window.matrixDifferent)++;
+        if (left.texture != right.texture) ++window.textureDifferent;
+        if (left.count > 0u && left.count <= 32u) {
+            (geometrySame ? window.smallSame : window.smallDifferent)++;
+        }
+    }
+    if (now - window.startedMs < 2000.0) return;
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[spark.diag] frames=%llu calls=%llu/%llu topo_ok/bad=%llu/%llu "
+        "geom_same/diff=%llu/%llu small_same/diff=%llu/%llu "
+        "matrix_same/diff=%llu/%llu matrix_null=%llu/%llu tex_diff=%llu",
+        static_cast<unsigned long long>(window.frames),
+        static_cast<unsigned long long>(window.calls[0]),
+        static_cast<unsigned long long>(window.calls[1]),
+        static_cast<unsigned long long>(window.matchedTopology),
+        static_cast<unsigned long long>(window.topologyMismatch),
+        static_cast<unsigned long long>(window.geometrySame),
+        static_cast<unsigned long long>(window.geometryDifferent),
+        static_cast<unsigned long long>(window.smallSame),
+        static_cast<unsigned long long>(window.smallDifferent),
+        static_cast<unsigned long long>(window.matrixSame),
+        static_cast<unsigned long long>(window.matrixDifferent),
+        static_cast<unsigned long long>(window.nullMatrix[0]),
+        static_cast<unsigned long long>(window.nullMatrix[1]),
+        static_cast<unsigned long long>(window.textureDifferent));
+    window = {};
+    window.startedMs = now;
+}
 std::atomic<std::uint64_t> g_fxNearChecks{0};
 std::atomic<std::uint64_t> g_fxNearRescues{0};
 std::atomic<std::uint64_t> g_headlightStoreCalls{0};
@@ -3048,6 +3178,7 @@ void* OnIm3DTransform(void* vertices, unsigned int count, void* matrix,
     } else {
         ++g_aggregate.im3dNullTextureRaster;
     }
+    RecordFxStereoBatch(vertices, count, matrix, flags, textureRaster);
     const int probeMode = FxProbeMode();
     if (probeMode > 0) {
         ApplyFxVisibilityProbe(probeMode);
@@ -3065,6 +3196,10 @@ int OnIm3DRenderPrimitive(int primitiveType) {
     if (g_insideFxRender) {
         ++g_aggregate.im3dPrimitiveCalls;
         if (result) ++g_aggregate.im3dPrimitiveSuccess;
+        if (g_fxEye >= 0 && g_fxEye <= 1 && g_fxBatchCount[g_fxEye] > 0) {
+            g_fxBatchSignatures[g_fxEye][g_fxBatchCount[g_fxEye] - 1]
+                .primitive = primitiveType;
+        }
     }
     return result;
 }
@@ -3883,11 +4018,13 @@ void RenderEye(void* rwCamera, int eye) {
     // facing the centre/previous camera, which reads as a flat or broken spark
     // in stereo (especially with the independent tabletop render camera).
     ScopedEyeViewMatrix fxEyeView(true, eye);
+    BeginFxStereoDiagnosticEye(eye);
     g_insideFxRender = true;
     g_fxEye = eye;
     g_fn.fxRender(g_fn.fx, rwCamera, 0);
     g_fxEye = -1;
     g_insideFxRender = false;
+    FinishFxStereoDiagnosticEye(eye);
     if (probeMode > 0) RestoreRenderState(preProbeState);
     if (profile >= 1) Call(g_fn.waterCannons);
     // Searchlight cones are pure late geometry, but their stock helpers share

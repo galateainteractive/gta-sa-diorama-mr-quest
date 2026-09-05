@@ -606,6 +606,8 @@ XrPosef g_stereoRenderPose[kStereoSets]{};
 bool    g_stereoRenderPoseValid[kStereoSets] = {};
 MobileColorState g_pendingMobileColor{};
 MobileColorState g_stereoMobileColor[kStereoSets]{};
+TabletopMaskState g_pendingTabletopMask{};
+TabletopMaskState g_stereoTabletopMask[kStereoSets]{};
 // Hand poses baked into each set, captured when that set's eye textures were
 // published (the same GameThread sample the weapon was baked from). The present
 // thread builds the hand meshes from the DISPLAYED set's snapshot, so the hands and
@@ -6120,6 +6122,7 @@ void SetStereoEyeTextures(const unsigned int* tex, const unsigned int* depth,
         g_stereoDrivingWheelState[ws] = drivingWheel;
         g_stereoBallHandLock[ws] = g_ballHandLock;
         g_stereoMobileColor[ws] = g_pendingMobileColor;
+        g_stereoTabletopMask[ws] = g_pendingTabletopMask;
         g_stereoThrowableTrajectory[ws][0] = g_throwableTrajectory[0];
         g_stereoThrowableTrajectory[ws][1] = g_throwableTrajectory[1];
         laserHand = g_weaponHand.load(std::memory_order_relaxed);
@@ -6150,6 +6153,11 @@ void SetStereoEyeTextures(const unsigned int* tex, const unsigned int* depth,
     g_stereoEpochPublishedMask.fetch_or(1u << ws,
                                         std::memory_order_release);
     ResolveStereoLatePublication(seq, publishedNs);
+}
+
+void SetTabletopMaskState(const TabletopMaskState& state) {
+    std::lock_guard<std::mutex> lock(g_headPoseMutex);
+    g_pendingTabletopMask = state;
 }
 
 bool StereoEnsure(int width, int height) {
@@ -8643,6 +8651,17 @@ int    g_handDepthW = 0, g_handDepthH = 0;
 GLint  g_handDepthFormat = 0, g_handDepthBits = 0;
 GLuint g_tabletopAlphaProgram = 0, g_tabletopAlphaVao = 0;
 bool   g_tabletopAlphaBuildAttempted = false;
+GLuint g_tabletopMaskDepthTex = 0, g_tabletopMaskDepthFbo = 0;
+int    g_tabletopMaskDepthW = 0, g_tabletopMaskDepthH = 0;
+GLint  g_tabletopMaskDepthFormat = 0;
+GLint  g_tabletopAlphaDepthLoc = -1, g_tabletopAlphaUseDepthLoc = -1;
+GLint  g_tabletopAlphaNearFarLoc = -1, g_tabletopAlphaTanLoc = -1;
+GLint  g_tabletopAlphaEyeLoc = -1, g_tabletopAlphaRightLoc = -1;
+GLint  g_tabletopAlphaUpLoc = -1, g_tabletopAlphaForwardLoc = -1;
+GLint  g_tabletopAlphaPlayerLoc = -1, g_tabletopAlphaViewerLoc = -1;
+GLint  g_tabletopAlphaAxisXLoc = -1, g_tabletopAlphaAxisYLoc = -1;
+GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaModeLoc = -1;
+GLint  g_tabletopAlphaBridgeLoc = -1;
 int    g_handDepthRetryCountdown = 0;
 int    g_handDepthFailedW = 0, g_handDepthFailedH = 0;
 GLint  g_handDepthFailedFormat = 0;
@@ -8792,6 +8811,90 @@ bool EnsureHandDepthStorage(int width, int height, GLint desiredFormat,
     const GLenum restoreError = glGetError();
     if (allocationError == GL_NO_ERROR) allocationError = restoreError;
     return ready && allocationError == GL_NO_ERROR;
+}
+
+bool EnsureTabletopMaskDepthStorage(int width, int height,
+                                    GLint desiredFormat) {
+    if (g_tabletopMaskDepthTex != 0 && g_tabletopMaskDepthFbo != 0 &&
+        g_tabletopMaskDepthW == width && g_tabletopMaskDepthH == height &&
+        g_tabletopMaskDepthFormat == desiredFormat) {
+        return true;
+    }
+
+    GLenum pixelFormat = GL_DEPTH_COMPONENT;
+    GLenum pixelType = GL_UNSIGNED_INT;
+    GLenum attachment = GL_DEPTH_ATTACHMENT;
+    switch (desiredFormat) {
+        case GL_DEPTH_COMPONENT16: pixelType = GL_UNSIGNED_SHORT; break;
+        case GL_DEPTH_COMPONENT24: pixelType = GL_UNSIGNED_INT; break;
+        case GL_DEPTH_COMPONENT32F: pixelType = GL_FLOAT; break;
+        case GL_DEPTH24_STENCIL8:
+            pixelFormat = GL_DEPTH_STENCIL;
+            pixelType = GL_UNSIGNED_INT_24_8;
+            attachment = GL_DEPTH_STENCIL_ATTACHMENT;
+            break;
+        case GL_DEPTH32F_STENCIL8:
+            pixelFormat = GL_DEPTH_STENCIL;
+            pixelType = GL_FLOAT_32_UNSIGNED_INT_24_8_REV;
+            attachment = GL_DEPTH_STENCIL_ATTACHMENT;
+            break;
+        default: return false;
+    }
+
+    GLint savedDraw = 0, savedRead = 0, savedTexture = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &savedDraw);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &savedRead);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTexture);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    GLuint texture = 0, framebuffer = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, desiredFormat, width, height, 0,
+                 pixelFormat, pixelType, nullptr);
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D,
+                           texture, 0);
+    const GLenum none = GL_NONE;
+    glDrawBuffers(1, &none);
+    glReadBuffer(GL_NONE);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    const GLenum error = glGetError();
+    const bool ready = texture != 0 && framebuffer != 0 &&
+        status == GL_FRAMEBUFFER_COMPLETE && error == GL_NO_ERROR;
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(savedDraw));
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(savedRead));
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(savedTexture));
+    if (!ready) {
+        if (framebuffer) glDeleteFramebuffers(1, &framebuffer);
+        if (texture) glDeleteTextures(1, &texture);
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            LOGW("[tabletop.fade] depth texture unavailable status=0x%x err=0x%x",
+                 status, error);
+        }
+        return false;
+    }
+
+    if (g_tabletopMaskDepthFbo)
+        glDeleteFramebuffers(1, &g_tabletopMaskDepthFbo);
+    if (g_tabletopMaskDepthTex)
+        glDeleteTextures(1, &g_tabletopMaskDepthTex);
+    g_tabletopMaskDepthTex = texture;
+    g_tabletopMaskDepthFbo = framebuffer;
+    g_tabletopMaskDepthW = width;
+    g_tabletopMaskDepthH = height;
+    g_tabletopMaskDepthFormat = desiredFormat;
+    LOGI("[tabletop.fade] depth texture %dx%d format=0x%x",
+         width, height, desiredFormat);
+    return true;
 }
 
 GLuint CompileHandShader(GLenum type, const char* src) {
@@ -10441,13 +10544,35 @@ bool EnsureTabletopAlphaProgram() {
     if (g_tabletopAlphaBuildAttempted) return false;
     g_tabletopAlphaBuildAttempted = true;
     const char* vs = "#version 300 es\n"
+                     "out vec2 vUv;\n"
                      "void main(){\n"
                      " vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));\n"
+                     " vUv=p;\n"
                      " gl_Position=vec4(p*2.0-1.0,1.0,1.0);\n"
                      "}\n";
     const char* fs = "#version 300 es\n"
-                     "precision mediump float; out vec4 o;\n"
-                     "void main(){ o=vec4(0.0,0.0,0.0,1.0); }\n";
+                     "precision highp float; in vec2 vUv; out vec4 o;\n"
+                     "uniform sampler2D uDepth; uniform int uUseDepth;\n"
+                     "uniform vec2 uNearFar; uniform vec2 uTan;\n"
+                     "uniform vec3 uEye,uRight,uUp,uForward;\n"
+                     "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
+                     "uniform vec4 uRadii; uniform int uMode,uBridge;\n"
+                     "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
+                     "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
+                     "void main(){\n"
+                     " if(uUseDepth==0){o=vec4(0,0,0,1);return;}\n"
+                     " float d=texture(uDepth,vUv).r;if(d>=0.999999)discard;\n"
+                     " float n=uNearFar.x,f=uNearFar.y,z=d*2.0-1.0;\n"
+                     " float vz=(2.0*n*f)/max(1e-5,f+n-z*(f-n));\n"
+                     " vec2 ndc=vUv*2.0-1.0;\n"
+                     " vec3 p=uEye+uRight*(ndc.x*uTan.x*vz)+uUp*(ndc.y*uTan.y*vz)+uForward*vz;\n"
+                     " vec2 pp=plane(p,uPlayer),pv=plane(uViewer,uPlayer);\n"
+                     " float sd=length(pp)-uRadii.x;\n"
+                     " if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);\n"
+                     " if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}\n"
+                     " float a=1.0-smoothstep(-uRadii.w,0.0,sd);\n"
+                     " o=vec4(0,0,0,a);\n"
+                     "}\n";
     const GLuint vertex = CompileHandShader(GL_VERTEX_SHADER, vs);
     const GLuint fragment = CompileHandShader(GL_FRAGMENT_SHADER, fs);
     g_tabletopAlphaProgram = glCreateProgram();
@@ -10467,6 +10592,21 @@ bool EnsureTabletopAlphaProgram() {
         return false;
     }
     glGenVertexArrays(1, &g_tabletopAlphaVao);
+    g_tabletopAlphaDepthLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uDepth");
+    g_tabletopAlphaUseDepthLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uUseDepth");
+    g_tabletopAlphaNearFarLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uNearFar");
+    g_tabletopAlphaTanLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uTan");
+    g_tabletopAlphaEyeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uEye");
+    g_tabletopAlphaRightLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uRight");
+    g_tabletopAlphaUpLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uUp");
+    g_tabletopAlphaForwardLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uForward");
+    g_tabletopAlphaPlayerLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uPlayer");
+    g_tabletopAlphaViewerLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uViewer");
+    g_tabletopAlphaAxisXLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisX");
+    g_tabletopAlphaAxisYLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisY");
+    g_tabletopAlphaRadiiLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uRadii");
+    g_tabletopAlphaModeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uMode");
+    g_tabletopAlphaBridgeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uBridge");
     LOGI("[tabletop.passthrough] depth alpha-mask program ready");
     return g_tabletopAlphaVao != 0;
 }
@@ -10476,7 +10616,10 @@ bool EnsureTabletopAlphaProgram() {
 // pixels become transparent and every real world fragment becomes opaque.
 bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
                                        int gameDepthW, int gameDepthH,
-                                       int targetW, int targetH) {
+                                       int targetW, int targetH,
+                                       const XrPosef& renderPose, int eye,
+                                       float nearZ, float farZ,
+                                       const TabletopMaskState& mask) {
     if (!vrcam::IsTabletopActive() ||
         !g_passthroughActive.load(std::memory_order_acquire) ||
         !EnsureTabletopAlphaProgram()) return false;
@@ -10496,10 +10639,13 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         }
         return false;
     }
+    const bool useWorldFade = mask.active &&
+        EnsureTabletopMaskDepthStorage(targetW, targetH, sourceFormat);
     GLenum allocationError = GL_NO_ERROR;
-    if (!EnsureHandDepthStorage(targetW, targetH, sourceFormat,
-                                allocationError) ||
-        g_handDepthBits != sourceBits) {
+    if (!useWorldFade &&
+        (!EnsureHandDepthStorage(targetW, targetH, sourceFormat,
+                                 allocationError) ||
+         g_handDepthBits != sourceBits)) {
         static bool loggedDepthAllocation = false;
         if (!loggedDepthAllocation) {
             loggedDepthAllocation = true;
@@ -10515,9 +10661,12 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                               GL_RENDERBUFFER, gameDepthRbo);
     const GLenum readStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s.framebuffer);
-    glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                              GL_RENDERBUFFER, g_handDepthRbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,
+                      useWorldFade ? g_tabletopMaskDepthFbo : s.framebuffer);
+    if (!useWorldFade) {
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, g_handDepthRbo);
+    }
     const GLenum drawStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
     bool copied = false;
     if (readStatus == GL_FRAMEBUFFER_COMPLETE &&
@@ -10531,6 +10680,10 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                               GL_RENDERBUFFER, 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s.framebuffer);
+    if (useWorldFade) {
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, 0);
+    }
     if (!copied) {
         glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                                   GL_RENDERBUFFER, 0);
@@ -10553,15 +10706,63 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_GREATER);
+    if (useWorldFade) {
+        glDisable(GL_DEPTH_TEST);
+    } else {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_GREATER);
+    }
     glDepthMask(GL_FALSE);
     glUseProgram(g_tabletopAlphaProgram);
+    glUniform1i(g_tabletopAlphaUseDepthLoc, useWorldFade ? 1 : 0);
+    if (useWorldFade) {
+        const float saneNear = std::max(0.001f, nearZ);
+        const float saneFar = std::max(saneNear + 1.0f, farZ);
+        const float tanX = g_stereoTanX.load(std::memory_order_relaxed);
+        const float tanY = g_stereoTanY.load(std::memory_order_relaxed);
+        const float sign = eye == 0 ? -1.0f : 1.0f;
+        const XrVector3f eyeOffset = QuatRotate(
+            renderPose.orientation, {sign * kStereoHalfIpd, 0.0f, 0.0f});
+        const XrVector3f eyePosition{
+            renderPose.position.x + eyeOffset.x,
+            renderPose.position.y + eyeOffset.y,
+            renderPose.position.z + eyeOffset.z};
+        const XrVector3f right = QuatRotate(
+            renderPose.orientation, {1.0f, 0.0f, 0.0f});
+        const XrVector3f up = QuatRotate(
+            renderPose.orientation, {0.0f, 1.0f, 0.0f});
+        const XrVector3f forward = QuatRotate(
+            renderPose.orientation, {0.0f, 0.0f, -1.0f});
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, g_tabletopMaskDepthTex);
+        glUniform1i(g_tabletopAlphaDepthLoc, 7);
+        glUniform2f(g_tabletopAlphaNearFarLoc, saneNear, saneFar);
+        glUniform2f(g_tabletopAlphaTanLoc, tanX, tanY);
+        glUniform3f(g_tabletopAlphaEyeLoc, eyePosition.x, eyePosition.y,
+                    eyePosition.z);
+        glUniform3f(g_tabletopAlphaRightLoc, right.x, right.y, right.z);
+        glUniform3f(g_tabletopAlphaUpLoc, up.x, up.y, up.z);
+        glUniform3f(g_tabletopAlphaForwardLoc, forward.x, forward.y,
+                    forward.z);
+        glUniform3fv(g_tabletopAlphaPlayerLoc, 1, mask.playerCenter);
+        glUniform3fv(g_tabletopAlphaViewerLoc, 1, mask.viewerCenter);
+        glUniform3fv(g_tabletopAlphaAxisXLoc, 1, mask.axisX);
+        glUniform3fv(g_tabletopAlphaAxisYLoc, 1, mask.axisY);
+        glUniform4f(g_tabletopAlphaRadiiLoc, mask.playerRadiusM,
+                    mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
+        glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);
+        glUniform1i(g_tabletopAlphaBridgeLoc, mask.bridgeEnabled ? 1 : 0);
+    }
     glBindVertexArray(g_tabletopAlphaVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     const GLenum maskError = glGetError();
 
     glBindVertexArray(0);
+    if (useWorldFade) {
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+    }
     glUseProgram(0);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LEQUAL);
@@ -10573,9 +10774,17 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     static bool loggedSuccess = false;
     if (!loggedSuccess && maskError == GL_NO_ERROR) {
         loggedSuccess = true;
-        LOGI("[tabletop.passthrough] depth alpha mask active src=%dx%d dst=%dx%d format=0x%x/%d",
+        LOGI("[tabletop.passthrough] depth alpha mask active src=%dx%d dst=%dx%d format=0x%x/%d fade=%d radius=%.2fm feather=%.2fm",
              gameDepthW, gameDepthH, targetW, targetH,
-             sourceFormat, sourceBits);
+             sourceFormat, sourceBits, useWorldFade ? 1 : 0,
+             static_cast<double>(mask.playerRadiusM),
+             static_cast<double>(mask.featherM));
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.fade] active=%d profile=%d radius=%.2fm feather=%.2fm "
+            "depth=%dx%d",
+            useWorldFade ? 1 : 0, mask.coverageMode,
+            static_cast<double>(mask.playerRadiusM),
+            static_cast<double>(mask.featherM), targetW, targetH);
     }
     return maskError == GL_NO_ERROR;
 }
@@ -11039,6 +11248,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     driving::WheelVisualState drivingWheel{};
     BallHandLock ballHandLock{};
     MobileColorState mobileColor{};
+    TabletopMaskState tabletopMask{};
     ThrowableTrajectory throwableTrajectory[2]{};
     unsigned int bakedWeaponHandMask = 0;
     bool haveRenderPose = false;
@@ -11054,6 +11264,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         drivingWheel   = g_stereoDrivingWheelState[set];
         ballHandLock   = g_stereoBallHandLock[set];
         mobileColor    = g_stereoMobileColor[set];
+        tabletopMask   = g_stereoTabletopMask[set];
         throwableTrajectory[0] = g_stereoThrowableTrajectory[set][0];
         throwableTrajectory[1] = g_stereoThrowableTrajectory[set][1];
         bakedWeaponHandMask = g_stereoWeaponHandMask[set];
@@ -11183,7 +11394,10 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                          copyCpuStartMs);
         ApplyTabletopPassthroughAlphaMask(
             g_stereoEyeDepth[set][e].load(std::memory_order_relaxed),
-            ew, eh, chain.width, chain.height);
+            ew, eh, chain.width, chain.height, rp, e,
+            g_stereoEyeNear[set][e].load(std::memory_order_relaxed),
+            g_stereoEyeFar[set][e].load(std::memory_order_relaxed),
+            tabletopMask);
         const double overlayWallStartMs = XrStageNowMs();
         const double overlayCpuStartMs = perf::ThreadCpuMs();
         const bool overlayGpuTimer = BeginXrGpuStage(

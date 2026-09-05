@@ -2572,6 +2572,8 @@ struct TabletopTransformState {
 };
 
 TabletopTransformState g_tabletopTransform{};
+CamBasis g_tabletopWorldTransformBase{};
+bool g_tabletopWorldTransformBaseValid{};
 std::atomic<int> g_tabletopCoverageMode{
     static_cast<int>(TabletopCoverageMode::PlayerOnly)};
 V3 g_tabletopRadiusCenter{};
@@ -2892,6 +2894,8 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
         }
     }
     const float yaw = g_tabletopTransform.mapYaw;
+    g_tabletopWorldTransformBase = anchorBase;
+    g_tabletopWorldTransformBaseValid = true;
     const V3 localFwd = Rotate(relOri, {0.0f, 0.0f, -1.0f});
     const V3 localUp = Rotate(relOri, {0.0f, 1.0f, 0.0f});
     V3 forward = Normalized(TrackingToTabletopGame(anchorBase, localFwd, yaw));
@@ -2927,6 +2931,87 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
     g_tabletopPlayerSafetyZ.store(base.pos.z, std::memory_order_relaxed);
     g_tabletopPlayerSafetyValid.store(true, std::memory_order_release);
     return out;
+}
+
+V3 TabletopWorldPointToLocalTracking(V3 world) {
+    const float scale = tabletop::VisualScale();
+    const V3 recentered = g_tabletopTransform.physicalAnchor +
+        TabletopGameToTracking(
+            g_tabletopWorldTransformBase,
+            world - g_tabletopWorldTransformBase.pos,
+            g_tabletopTransform.mapYaw) * scale;
+    return g_origin.pos + Rotate(g_origin.ori, recentered);
+}
+
+bool Finite(V3 v);
+
+bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
+    out = {};
+    if (!tabletop::Enabled() || !g_origin.valid ||
+        !g_tabletopWorldTransformBaseValid ||
+        !g_tabletopRadiusCenterValid ||
+        !g_tabletopViewCoverageCenterValid) {
+        return false;
+    }
+    const float scale = tabletop::VisualScale();
+    const float radius = tabletop::RadiusMeters();
+    if (!std::isfinite(scale) || scale <= 0.0f ||
+        !std::isfinite(radius) || radius <= 0.0f) {
+        return false;
+    }
+    const V3 player = TabletopWorldPointToLocalTracking(
+        g_tabletopRadiusCenter);
+    const V3 viewer = TabletopWorldPointToLocalTracking(
+        g_tabletopViewCoverageCenter);
+    const V3 axisX = Normalized(Rotate(
+        g_origin.ori,
+        TabletopGameToTracking(g_tabletopWorldTransformBase,
+                               {1.0f, 0.0f, 0.0f},
+                               g_tabletopTransform.mapYaw)));
+    const V3 axisY = Normalized(Rotate(
+        g_origin.ori,
+        TabletopGameToTracking(g_tabletopWorldTransformBase,
+                               {0.0f, 1.0f, 0.0f},
+                               g_tabletopTransform.mapYaw)));
+    if (!Finite(player) || !Finite(viewer) || !Finite(axisX) ||
+        !Finite(axisY)) {
+        return false;
+    }
+
+    const TabletopCoverageMode mode = static_cast<TabletopCoverageMode>(
+        g_tabletopCoverageMode.load(std::memory_order_acquire));
+    constexpr float kViewerIslandM = 55.0f;
+    constexpr float kBridgeM = 28.0f;
+    constexpr float kDisconnectBridgeM = 140.0f;
+    const float separationGame = std::hypot(
+        g_tabletopViewCoverageCenter.x - g_tabletopRadiusCenter.x,
+        g_tabletopViewCoverageCenter.y - g_tabletopRadiusCenter.y);
+    out.active = true;
+    out.coverageMode = static_cast<int>(mode);
+    out.bridgeEnabled = mode == TabletopCoverageMode::Connected ||
+        (mode == TabletopCoverageMode::Islands &&
+         std::isfinite(separationGame) &&
+         separationGame <= kDisconnectBridgeM);
+    out.playerCenter[0] = player.x;
+    out.playerCenter[1] = player.y;
+    out.playerCenter[2] = player.z;
+    out.viewerCenter[0] = viewer.x;
+    out.viewerCenter[1] = viewer.y;
+    out.viewerCenter[2] = viewer.z;
+    out.axisX[0] = axisX.x;
+    out.axisX[1] = axisX.y;
+    out.axisX[2] = axisX.z;
+    out.axisY[0] = axisY.x;
+    out.axisY[1] = axisY.y;
+    out.axisY[2] = axisY.z;
+    out.playerRadiusM = radius * scale;
+    out.viewerRadiusM = std::min(radius, kViewerIslandM) * scale;
+    out.bridgeRadiusM = (mode == TabletopCoverageMode::Connected
+        ? radius : std::min(radius, kBridgeM)) * scale;
+    // Four GTA metres at normal scale gives a 16 cm soft edge: wide enough to
+    // hide sector pop, narrow enough to retain the crisp tabletop silhouette.
+    out.featherM = std::clamp(4.0f * scale, 0.08f, 0.24f);
+    return true;
 }
 
 bool Finite(V3 v) {
@@ -2987,6 +3072,68 @@ bool     g_logicalVrCameraValid = false;
 CamBasis g_tabletopRenderCamera{};
 bool     g_tabletopRenderCameraValid = false;
 std::atomic<bool> g_tabletopActive{false};
+
+// GTA already excludes frontend/radio streams before asking this helper for a
+// world-relative position. Redirect only those positional effects through the
+// physical miniature. The original vector length is retained because GTA uses
+// it for its own distance curve; only the direction comes from the real HMD.
+using AudioRelativePositionFn = void (*)(V3*, V3*);
+AudioRelativePositionFn g_origAudioRelativePosition = nullptr;
+
+void OnAudioRelativePosition(V3* output, V3* worldPosition) {
+    if (!g_origAudioRelativePosition) return;
+    g_origAudioRelativePosition(output, worldPosition);
+    if (!output || !worldPosition ||
+        !g_tabletopActive.load(std::memory_order_acquire) ||
+        !g_tabletopWorldTransformBaseValid || !g_origin.valid ||
+        !Finite(*output) || !Finite(*worldPosition)) {
+        return;
+    }
+
+    const float originalLength = std::sqrt(std::max(0.0f, Dot(*output, *output)));
+    float headPositionValues[3]{};
+    float headOrientationValues[4]{};
+    if (!std::isfinite(originalLength) ||
+        !xr::GetHeadPose(headPositionValues, headOrientationValues)) {
+        return;
+    }
+    const V3 headPosition{headPositionValues[0], headPositionValues[1],
+                          headPositionValues[2]};
+    const Q headOrientation{headOrientationValues[0], headOrientationValues[1],
+                            headOrientationValues[2], headOrientationValues[3]};
+    const Q inverseHead{-headOrientation.x, -headOrientation.y,
+                        -headOrientation.z, headOrientation.w};
+    const V3 sourceTracking = TabletopWorldPointToLocalTracking(*worldPosition);
+    const V3 headLocal = Rotate(inverseHead, sourceTracking - headPosition);
+    const float physicalLength = std::sqrt(std::max(0.0f, Dot(headLocal, headLocal)));
+    if (!Finite(sourceTracking) || !Finite(headLocal) ||
+        !std::isfinite(physicalLength) || physicalLength < 0.001f) {
+        return;
+    }
+
+    // OpenAL in mobile SA is initialised Z-up, looking along +Y. OpenXR is
+    // Y-up, looking along -Z. A non-zero unit baseline also spatialises a car
+    // sound whose stock third-person camera happened to sit on its emitter;
+    // AL_NONE means this length cannot introduce a second attenuation curve.
+    const float retainedLength = std::max(1.0f, originalLength);
+    const float gain = retainedLength / physicalLength;
+    *output = {headLocal.x * gain, -headLocal.z * gain,
+               headLocal.y * gain};
+
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true, std::memory_order_acq_rel)) {
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[audio3d] tabletop world audio active source=(%.1f %.1f %.1f) "
+            "listener_vec=(%.2f %.2f %.2f) stock_len=%.2f",
+            static_cast<double>(worldPosition->x),
+            static_cast<double>(worldPosition->y),
+            static_cast<double>(worldPosition->z),
+            static_cast<double>(output->x),
+            static_cast<double>(output->y),
+            static_cast<double>(output->z),
+            static_cast<double>(originalLength));
+    }
+}
 
 // The render-list scan is driven by GTA's monitor camera, while the player can
 // look independently with the headset. Cache one current HMD direction before
@@ -17387,6 +17534,29 @@ bool InstallRetailGotHook(const char* label,
     return true;
 }
 
+bool InstallTabletopSpatialAudio() {
+    void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    g_origAudioRelativePosition = handle
+        ? reinterpret_cast<AudioRelativePositionFn>(dlsym(
+              handle,
+              "_ZN19CAEAudioEnvironment27GetPositionRelativeToCameraEP7CVectorS1_"))
+        : nullptr;
+    static constexpr std::uint32_t kAudioRelativePlt[4] = {
+        0xb0000250u, 0xf9447211u, 0x91238210u, 0xd61f0220u,
+    };
+    const bool active = InstallRetailGotHook(
+        "tabletop spatial audio", 0x377b24u, 0x7f7d40u, 0x8408e0u,
+        kAudioRelativePlt,
+        reinterpret_cast<void*>(g_origAudioRelativePosition),
+        reinterpret_cast<void*>(&OnAudioRelativePosition));
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[audio3d] install active=%d world_only=1 distance_curve=stock "
+        "listener=headset",
+        active ? 1 : 0);
+    if (handle) dlclose(handle);
+    return active;
+}
+
 bool InstallTargetedPropPopulationShell() {
     g_targetedPropPopulationShellActive.store(false, std::memory_order_release);
     const float target = TargetedPropPromotionM();
@@ -22239,6 +22409,9 @@ void OnRenderScene(bool underwater) {
     const float tanX = std::tan(kVrFovX * 0.5f * 3.14159265f / 180.0f);
     const float tanY = tanX * static_cast<float>(g_eyeRasterH) / static_cast<float>(g_eyeRasterW);
     xr::SetStereoRenderFov(tanX, tanY);
+    xr::TabletopMaskState tabletopMask{};
+    BuildTabletopMaskState(tabletopMask);
+    xr::SetTabletopMaskState(tabletopMask);
     xr::SetStereoEyeTextures(&tex[0][0], &depth[0][0], hudTex,
                              renderedNear, renderedFar,
                              g_recordCounter, g_eyeRasterW, g_eyeRasterH);
@@ -30617,6 +30790,7 @@ bool Install() {
     // original retail entry. Their fingerprint checks deliberately fail closed
     // on another APK revision or when another mod already owns either slot.
     InstallStereoReuseHooks();
+    InstallTabletopSpatialAudio();
     InstallTargetedPropPopulationShell();
     InstallPedLifecycleRetentionHook();
 
