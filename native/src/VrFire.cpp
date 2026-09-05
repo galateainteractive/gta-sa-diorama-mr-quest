@@ -40,6 +40,8 @@ std::atomic<bool> g_padTriggerDown[2]{};
 std::atomic<bool> g_directTriggerDown[2]{};
 std::uint32_t g_directNextFireMs[2]{};
 int g_directWeaponType[2]{-1, -1};
+bool g_tabletopAttackPreviously = false;
+int g_tabletopLastLoggedWeapon = -1;
 
 constexpr std::uint32_t kFireInstantHitPrologue[4] = {
     0xFC180FEA, 0x6D0123E9, 0xA9027BFD, 0xA9036FFC,
@@ -266,8 +268,46 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
         const bool attack = locomotion::ActionHeld(
             locomotion::BIND_ACT_ATTACK, input.a, input.b, input.x, input.y,
             input.l3, input.r3, true);
+        int slot = -1;
+        int weaponType = 0;
+        if (playerPed) {
+            const auto* pedBytes = static_cast<const std::uint8_t*>(playerPed);
+            slot = static_cast<int>(*reinterpret_cast<const std::int8_t*>(
+                pedBytes + kPedActiveSlotOffset));
+            if (slot > 0 && slot < 13) {
+                weaponType = *reinterpret_cast<const std::int32_t*>(
+                    pedBytes + kPedWeaponsOffset +
+                    static_cast<std::uintptr_t>(slot) * kWeaponStride);
+            }
+        }
+        if (attack && (!g_tabletopAttackPreviously ||
+                       weaponType != g_tabletopLastLoggedWeapon)) {
+            int cameraMode = -1;
+            if (g.TheCamera) {
+                const auto* camera = static_cast<const std::uint8_t*>(g.TheCamera);
+                const unsigned active = camera[0x5f];
+                if (active < 3u) {
+                    cameraMode = static_cast<int>(
+                        *reinterpret_cast<const std::uint16_t*>(
+                            camera + active * 0x228u + 0x186u));
+                }
+            }
+            const float heading = g.FindPlayerHeading
+                ? g.FindPlayerHeading(0) : 0.0f;
+            LOGI("[tabletop.aim] attack edge weapon=%d slot=%d vanilla=%d "
+                 "buttons=A%d/B%d/X%d/Y%d R2=%.2f camera_mode=%d heading=%.3f "
+                 "route=classic_no_physical_ray",
+                 weaponType, slot, vanilla,
+                 input.a ? 1 : 0, input.b ? 1 : 0,
+                 input.x ? 1 : 0, input.y ? 1 : 0,
+                 static_cast<double>(input.triggers[1]), cameraMode,
+                 static_cast<double>(heading));
+            g_tabletopLastLoggedWeapon = weaponType;
+        }
+        g_tabletopAttackPreviously = attack;
         return std::max(vanilla, attack ? 255 : 0);
     }
+    g_tabletopAttackPreviously = false;
     int weaponType = 0;
     int hand = -1;
     float trigger = 0.0f;

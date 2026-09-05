@@ -1819,6 +1819,13 @@ void ReadMappedGameplaySticks(const xr::InputState& input,
         &moveX,&moveY,&turnX,&turnY);
 }
 
+float TabletopStickSteering(const xr::InputState& input) {
+    float steer=std::clamp(input.leftStick[0],-1.0f,1.0f);
+    if (locomotion::GetStickOption(locomotion::STICK_OPT_MOVE_X_INVERT))
+        steer=-steer;
+    return steer;
+}
+
 int OnGetSteering(void* pad) {
     EnsureInit();
     if (VrGameplayInputAllowed()&&HasPlayerVehicle()) {
@@ -1827,11 +1834,7 @@ int OnGetSteering(void* pad) {
             // stick with a grabbed wheel/controller yaw. In tabletop, use a
             // stable profile: physical LEFT stick X always steers.
             xr::InputState input{}; xr::GetInput(input);
-            float steer=std::clamp(input.leftStick[0],-1.0f,1.0f);
-            if (locomotion::GetStickOption(
-                    locomotion::STICK_OPT_MOVE_X_INVERT))
-                steer=-steer;
-            return static_cast<int>(steer*128.0f);
+            return static_cast<int>(TabletopStickSteering(input)*128.0f);
         }
         const int steerAppearance=GetActiveVehicleAppearance();
         if ((steerAppearance==1||steerAppearance==2)&&
@@ -3788,7 +3791,14 @@ void UpdateInput(const xr::InputState& input,bool gameplay,bool blocked) {
         void* bicycle=nullptr;
         if (GetActivePlayerBike(&bicycle,nullptr) && bicycle) {
             auto* bytes = static_cast<char*>(bicycle);
-            const float steer = std::clamp(visual.steering,-1.0f,1.0f);
+            // CBmx can bypass the ordinary CPad steering query and needs this
+            // direct write for its visible fork. In tabletop the left stick is
+            // authoritative, even if a saved immersive bicycle mode leaves the
+            // ungrabbed physical-handlebar value at zero. Outside tabletop keep
+            // the existing handlebar/motion steering behaviour unchanged.
+            const float steer = vrcam::IsTabletopActive()
+                ? TabletopStickSteering(input)
+                : std::clamp(visual.steering,-1.0f,1.0f);
             *reinterpret_cast<float*>(bytes+0x730) = steer;
             const std::uintptr_t handling =
                 *reinterpret_cast<const std::uintptr_t*>(bytes+0x4a8);

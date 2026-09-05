@@ -5033,6 +5033,7 @@ constexpr int kParachuteDeployWidget = 187;
 // mainV1.scm polls widget 8 via opcode 0A52 right beside the
 // ANSWER0..ANSWER5 / CELSKIP GXT keys — the incoming-call answer flow.
 constexpr int kPhoneAnswerWidget = 8;
+constexpr int kWeaponTargetWidget = 19; // widget_target / enter targeting
 // DrawHelpIcon name map (2.11 chain @0x502270): the world "press to start /
 // quit" prompt widgets scripts poll near mission markers and minigame gear,
 // and the basketball shot button basketb.scm HOLDS (opcode 0A51 maps to
@@ -5263,6 +5264,16 @@ int OnWidgetJustPressed(int widgetId, void* outTouchPos, int touchIndex) {
     const int original = g_origWidgetJustPressed
         ? g_origWidgetJustPressed(widgetId, outTouchPos, touchIndex) : 0;
     LogWidgetPoll("justpressed", widgetId);
+    if (widgetId == kWeaponTargetWidget &&
+        g_tabletopActive.load(std::memory_order_acquire)) {
+        static double lastAimLogMs = 0.0;
+        const double nowMs = NowMs();
+        if (original || nowMs - lastAimLogMs >= 2000.0) {
+            lastAimLogMs = nowMs;
+            LOGI("[tabletop.aim] target widget justpressed=%d bridge=none",
+                 original ? 1 : 0);
+        }
+    }
     if (!original && PromptAnswerableWidget(widgetId) &&
         NowMs() < g_promptPressUntilMs.load(std::memory_order_relaxed)) {
         g_promptPressUntilMs.store(0.0, std::memory_order_relaxed);
@@ -5277,6 +5288,16 @@ int OnWidgetTouchedQuery(int widgetId, void* outTouchPos, int touchIndex) {
     const int original = g_origWidgetTouched
         ? g_origWidgetTouched(widgetId, outTouchPos, touchIndex) : 0;
     LogWidgetPoll("touched", widgetId);
+    if (widgetId == kWeaponTargetWidget &&
+        g_tabletopActive.load(std::memory_order_acquire)) {
+        static double lastAimLogMs = 0.0;
+        const double nowMs = NowMs();
+        if (original || nowMs - lastAimLogMs >= 2000.0) {
+            lastAimLogMs = nowMs;
+            LOGI("[tabletop.aim] target widget held=%d bridge=none",
+                 original ? 1 : 0);
+        }
+    }
     // Basketball shot charge: basketb.scm holds widget_basketball_shoot via
     // opcode 0A51 (= IsTouched) only while CJ carries the ball. Hold the
     // right trigger to wind up, release at the top of the jump — the
@@ -6540,10 +6561,41 @@ using TabletopAtmosphereRenderFn = void (*)();
 TabletopAtmosphereRenderFn g_origRenderBottomFromHeight = nullptr;
 TabletopAtmosphereRenderFn g_origVolumetricCloudsRender = nullptr;
 TabletopAtmosphereRenderFn g_origMovingFogRender = nullptr;
+using RadarCalculateCachedSinCosFn = void (*)();
+RadarCalculateCachedSinCosFn g_origRadarCalculateCachedSinCos = nullptr;
 using CloudsCalcScreenCoorsFn = bool (*)(const V3&, V3*, float*, float*,
                                          bool, bool);
 CloudsCalcScreenCoorsFn g_origCloudsCalcScreenCoors = nullptr;
 bool  g_cloudsSpriteTailHooked = false;
+
+void OnRadarCalculateCachedSinCos() {
+    // The stock minimap rotates from TheCamera.GetHeading(). That is sensible
+    // when the third-person camera follows CJ, but a tabletop camera may orbit
+    // independently and makes the centre arrow wander. Use the actor/vehicle
+    // heading only for the miniature HUD: the centre arrow stays up while the
+    // map turns underneath it. Preserve the stock north-up pause-map branch.
+    const bool drawingFrontendMap = g.FrontEndMenuManager &&
+        *(static_cast<const std::uint8_t*>(g.FrontEndMenuManager) + 0x8c) != 0;
+    if (!g_tabletopActive.load(std::memory_order_acquire) ||
+        drawingFrontendMap || !g.LoadBase || !g.FindPlayerHeading) {
+        if (g_origRadarCalculateCachedSinCos)
+            g_origRadarCalculateCachedSinCos();
+        return;
+    }
+
+    const float heading = g.FindPlayerHeading(0);
+    if (!std::isfinite(heading)) {
+        if (g_origRadarCalculateCachedSinCos)
+            g_origRadarCalculateCachedSinCos();
+        return;
+    }
+
+    // Retail 2.11.311 globals written by CRadar::CalculateCachedSinCos,
+    // disassembly-verified together with the entry fingerprint at install.
+    *reinterpret_cast<float*>(g.LoadBase + 0xa69848u) = heading;
+    *reinterpret_cast<float*>(g.LoadBase + 0xa69880u) = std::sin(heading);
+    *reinterpret_cast<float*>(g.LoadBase + 0xa6987cu) = std::cos(heading);
+}
 // CClouds::Render is a legacy screen-space backdrop: it projects the moon,
 // Rockstar-star pattern, low clouds, rainbow and night streaks through
 // CSprite::CalcScreenCoors.  Those sprites cannot be made head-stable merely by
@@ -14420,12 +14472,23 @@ void ReportStereoDispatchCullWindow() {
 // moving circle to cross it without a load/unload flash. Ground gets a whole
 // extra sector so no admitted pole, car or pedestrian can outlive its floor.
 constexpr float kTabletopObjectOverscanM = 18.0f;
+constexpr float kTabletopLargeRadiusObjectOverscanM = 8.0f;
 constexpr float kTabletopGroundOverscanM = 55.0f;
 constexpr float kTabletopViewerIslandM = 55.0f;
 constexpr float kTabletopViewerGroundIslandM = 80.0f;
 constexpr float kTabletopBridgeM = 28.0f;
 constexpr float kTabletopGroundBridgeM = 42.0f;
 constexpr float kTabletopDisconnectBridgeM = 140.0f;
+
+float TabletopObjectOverscanM() {
+    // Presets 3/4 already expose a much larger disk (90/120 m). Keep every
+    // object inside the visible circle, but spend less GPU work on secondary
+    // opaque/alpha content hidden beyond its fade. The 30/60 m presets retain
+    // the established 18 m residency skirt and therefore remain unchanged.
+    return tabletop::RadiusPresetIndex() >= 2
+        ? kTabletopLargeRadiusObjectOverscanM
+        : kTabletopObjectOverscanM;
+}
 
 float TabletopCoverageSegmentT(float x, float y) {
     if (!g_tabletopViewCoverageCenterValid) return 0.0f;
@@ -14579,7 +14642,7 @@ void OnRenderOneRoad(void* entity) {
 }
 
 void OnRenderOneNonRoad(void* entity) {
-    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
+    if (!TabletopEntityInsideRadius(entity, TabletopObjectOverscanM())) return;
     // The radial gate is already tightly bounded. Re-testing accepted
     // tabletop content against two slightly different eye frusta caused
     // distant objects to alternate between eyes/frames.
@@ -14618,7 +14681,7 @@ void OnRenderOneNonRoad(void* entity) {
 }
 
 void OnRenderAlphaEntity(void* entity, float distance) {
-    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
+    if (!TabletopEntityInsideRadius(entity, TabletopObjectOverscanM())) return;
     if (!g_tabletopActive.load(std::memory_order_acquire) &&
         !StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, true);
@@ -23313,7 +23376,7 @@ bool OnGetIsOnScreen(void* entity) {
     // frustum decisions; the larger selectable tabletop circle remains subject
     // to the normal per-eye dispatch optimization.
     if (stereo &&
-        TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return true;
+        TabletopEntityInsideRadius(entity, TabletopObjectOverscanM())) return true;
     const bool profileCull = stereo && ShouldProfileCullOnCurrentThread();
     const auto* entityBytes = static_cast<const std::uint8_t*>(entity);
     const int entityType = entity ? (entityBytes[0x5a] & 0x7) : 0;
@@ -23818,7 +23881,7 @@ bool OnIsSphereVisible(void* cam, const void* origin, float radius) {
         if (TabletopWorldInsidePlayerSafety(world, allowance) ||
             TabletopWorldInsideCoverage(
                 world, tabletop::RadiusMeters() +
-                           kTabletopObjectOverscanM + allowance)) return true;
+                           TabletopObjectOverscanM() + allowance)) return true;
     }
     const bool profileCull = stereo && ShouldProfileCullOnCurrentThread();
     if (stereo && origin && g.TheCamera) {
@@ -26401,7 +26464,13 @@ void OnTabletopPlantUpdate(const void* cameraPosition) {
             // player-to-headset bridge and leave bare terrain beside CJ. Player
             // ground is authoritative; the bounded viewer island is handled by
             // ordinary sector geometry rather than stealing the plant centre.
-            const float farM = tabletop::RadiusMeters() + 18.0f;
+            // Large tabletop disks keep their ground, roads and structural
+            // silhouettes, but do not multiply the expensive procedural grass
+            // footprint with the radius squared. Presets 3/4 reuse preset 2's
+            // proven 60 m detail budget plus its established 18 m fade skirt.
+            const float detailedRadiusM = tabletop::RadiusPresetIndex() >= 2
+                ? 60.0f : tabletop::RadiusMeters();
+            const float farM = detailedRadiusM + 18.0f;
             const float closeM = std::max(20.0f, farM - 24.0f);
             g_setGrassAlphaDistance(closeM, farM);
         }
@@ -26447,6 +26516,31 @@ void InstallTabletopPlantCoverage() {
          g_origTabletopPlantUpdate ? 1 : 0, updateFingerprint ? 1 : 0,
          distanceFingerprint ? 1 : 0,
          static_cast<double>(tabletop::RadiusMeters()));
+    dlclose(gameHandle);
+}
+
+void InstallTabletopRadarHeading() {
+    if (!tabletop::Enabled() || !g.LoadBase) return;
+    void* const gameHandle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!gameHandle) {
+        LOGW("[tabletop.radar] libGame handle unavailable");
+        return;
+    }
+    void* const target = dlsym(
+        gameHandle, "_ZN6CRadar21CalculateCachedSinCosEv");
+    static constexpr std::uint32_t kPrologue[4] = {
+        0xd10143ffu, 0xfd0013e8u, 0xa902fbfdu, 0xf9001ff5u,
+    };
+    const bool fingerprint = target &&
+        reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == 0x518724u &&
+        std::memcmp(target, kPrologue, sizeof(kPrologue)) == 0;
+    if (fingerprint) {
+        g_origRadarCalculateCachedSinCos =
+            reinterpret_cast<RadarCalculateCachedSinCosFn>(InstallTrampoline(
+                target, reinterpret_cast<void*>(&OnRadarCalculateCachedSinCos)));
+    }
+    LOGI("[tabletop.radar] actor-up hook=%d fingerprint=%d globals=0xA69848/7C/80",
+         g_origRadarCalculateCachedSinCos ? 1 : 0, fingerprint ? 1 : 0);
     dlclose(gameHandle);
 }
 
@@ -30751,6 +30845,7 @@ bool Install() {
     InstallRenderQueueFinishDeferHook();
     InstallRenderQueueEyeSetBackingHooks();
     InstallTabletopPlantCoverage();
+    InstallTabletopRadarHeading();
 #ifdef SAVR_DEV
     InstallGameUpdateHitchProfiler();
 #endif
