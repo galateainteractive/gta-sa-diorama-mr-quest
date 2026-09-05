@@ -1909,10 +1909,15 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         // it the same head-relative vector as the native hook, otherwise these
         // raw axes overwrite room-scale locomotion and movement follows CJ.
         if (!driving) {
-            float localHeadYaw=0.0f;
-            if (savr::vrcam::GetLocalHeadYaw(&localHeadYaw))
-                savr::locomotion::TransformMoveStick(
-                    localHeadYaw,&gameMoveX,&gameMoveY);
+            if (savr::tabletop::Enabled()) {
+                savr::vrcam::TransformTabletopMoveStick(
+                    &gameMoveX, &gameMoveY);
+            } else {
+                float localHeadYaw=0.0f;
+                if (savr::vrcam::GetLocalHeadYaw(&localHeadYaw))
+                    savr::locomotion::TransformMoveStick(
+                        localHeadYaw,&gameMoveX,&gameMoveY);
+            }
         }
         // Thumbrest D-pad mode: the provider must not see the raw right
         // stick while it acts as the D-pad.

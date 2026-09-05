@@ -4,6 +4,7 @@
 
 #include "Calib.h"
 #include "Driving.h"
+#include "Locomotion.h"
 #include "Log.h"
 #include "ScopeAim.h"
 #include "Symbols.h"
@@ -254,6 +255,19 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
     // here; otherwise moving while firing can prematurely end the task.
     if (!g.CPad_GetPad || pad != g.CPad_GetPad(0)) return vanilla;
     void* const playerPed = ped ? ped : (g.FindPlayerPed ? g.FindPlayerPed(-1) : nullptr);
+    // The Android game does not reliably consume NewState.ButtonCircle for
+    // this action: melee and weapon tasks poll CPad::GetWeapon directly. The
+    // physical weapon system is intentionally disabled for the miniature
+    // tabletop view, so merge its classic ATTACK binding here instead.
+    if (vrcam::IsTabletopActive() &&
+        (!g.FindPlayerVehicle || g.FindPlayerVehicle(-1, false) == nullptr)) {
+        xr::InputState input{};
+        xr::GetInput(input);
+        const bool attack = locomotion::ActionHeld(
+            locomotion::BIND_ACT_ATTACK, input.a, input.b, input.x, input.y,
+            input.l3, input.r3, true);
+        return std::max(vanilla, attack ? 255 : 0);
+    }
     int weaponType = 0;
     int hand = -1;
     float trigger = 0.0f;

@@ -2494,9 +2494,6 @@ void RelativePose(V3 headPos, const Q& headOri, V3& relPos, Q& relOri) {
 }
 
 float CurrentLocalHeadYaw() {
-    // In Tabletop, stick directions stay aligned to the captured player/vehicle
-    // frame instead of rotating every time the user looks around the model.
-    if (tabletop::Enabled()) return 0.0f;
     if (!g_origin.valid) return 0.0f;
     float hp[3]{},hq[4]{};
     if (!xr::GetHeadPose(hp,hq)) return 0.0f;
@@ -2525,7 +2522,34 @@ CamBasis BuildVrCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
     return out;
 }
 
-enum class TabletopViewMode : int { Follow = 0, Fixed = 1 };
+// FOLLOW rotates and translates with CJ/vehicle. TRACK translates with the
+// player but retains the heading captured when the mode was entered (the
+// tabletop "conveyor belt" view). FIXED retains both position and heading.
+enum class TabletopViewMode : int { Follow = 0, Track = 1, Fixed = 2 };
+
+// R3 keeps selecting the visual radius. Right-grip + R3 independently
+// selects how much world exists outside CJ's authoritative circle.
+enum class TabletopCoverageMode : int {
+    PlayerOnly = 0,
+    Connected = 1,
+    Islands = 2,
+};
+
+const char* TabletopCoverageModeName(TabletopCoverageMode mode) {
+    switch (mode) {
+        case TabletopCoverageMode::Connected: return "connected";
+        case TabletopCoverageMode::Islands: return "islands";
+        default: return "player-only";
+    }
+}
+
+const char* TabletopViewModeName(TabletopViewMode mode) {
+    switch (mode) {
+        case TabletopViewMode::Track: return "track";
+        case TabletopViewMode::Fixed: return "fixed";
+        default: return "follow";
+    }
+}
 
 struct TabletopTransformState {
     TabletopViewMode mode{TabletopViewMode::Follow};
@@ -2541,11 +2565,36 @@ struct TabletopTransformState {
     float gestureStartAngle{};
     float gestureStartScale{};
     float gestureStartYaw{};
+    bool gesturePlayerPivot{};
+    V3 gesturePivotGame{};
+    V3 gestureStartPivotPhysical{};
+    bool recenterOnNextCamera{};
 };
 
 TabletopTransformState g_tabletopTransform{};
+std::atomic<int> g_tabletopCoverageMode{
+    static_cast<int>(TabletopCoverageMode::PlayerOnly)};
 V3 g_tabletopRadiusCenter{};
 bool g_tabletopRadiusCenterValid{};
+V3 g_tabletopViewCoverageCenter{};
+bool g_tabletopViewCoverageCenterValid{};
+std::atomic<float> g_tabletopPlayerSafetyX{0.0f};
+std::atomic<float> g_tabletopPlayerSafetyY{0.0f};
+std::atomic<float> g_tabletopPlayerSafetyZ{0.0f};
+std::atomic<bool> g_tabletopPlayerSafetyValid{false};
+// While a two-hand gesture is held the coverage endpoint stays at its last
+// settled position. This preserves the scene already on screen without asking
+// GTA to discover the kilometre-long sweep traced by a fast tabletop turn.
+std::atomic<bool> g_tabletopCoverageFrozen{false};
+std::atomic<int> g_tabletopCoverageWarmupFrames{0};
+// Every focus/recenter operation also invalidates the on-foot movement frame.
+// The camera-local locomotion state consumes this serial at its next safe ped
+// matrix and seeds both body yaw and HMD-relative joystick direction together.
+std::atomic<std::uint32_t> g_tabletopDirectionRelatchSerial{0};
+std::atomic<float> g_tabletopDiagnosticBodyYaw{0.0f};
+std::atomic<float> g_tabletopDiagnosticAuthoredYaw{0.0f};
+std::atomic<int> g_tabletopDiagnosticPedState{-1};
+std::atomic<int> g_tabletopDiagnosticLifecycle{0}; // 0 foot, 1 entering, 2 vehicle, 3 dead
 
 V3 RotateTrackingYaw(V3 v, float yaw) {
     const float c = std::cos(yaw);
@@ -2555,6 +2604,38 @@ V3 RotateTrackingYaw(V3 v, float yaw) {
 
 V3 TrackingToTabletopGame(const CamBasis& base, V3 v, float yaw) {
     return TrackingToGame(base, RotateTrackingYaw(v, yaw));
+}
+
+V3 TabletopGameToTracking(const CamBasis& base, V3 worldVector, float yaw) {
+    const V3 yawRotatedTracking{
+        -Dot(worldVector, base.right),
+         Dot(worldVector, base.up),
+        -Dot(worldVector, base.forward)};
+    return RotateTrackingYaw(yawRotatedTracking, -yaw);
+}
+
+// The stock third-person basis may carry road, vehicle or transient camera
+// roll. A tabletop can inherit its heading, but never its pitch/roll: world Z
+// is the physical "up" of the miniature. This also keeps a mountain from
+// tilting the whole map when the view mode changes near a steep surface.
+CamBasis LevelTabletopBasis(const CamBasis& source) {
+    constexpr float kEpsilonSq = 0.000001f;
+    const V3 worldUp{0.0f, 0.0f, 1.0f};
+    V3 forward{source.forward.x, source.forward.y, 0.0f};
+    float lengthSq = Dot(forward, forward);
+    if (!std::isfinite(lengthSq) || lengthSq < kEpsilonSq) {
+        V3 left{source.right.x, source.right.y, 0.0f};
+        lengthSq = Dot(left, left);
+        if (!std::isfinite(lengthSq) || lengthSq < kEpsilonSq)
+            left = {-1.0f, 0.0f, 0.0f};
+        else
+            left = left * (1.0f / std::sqrt(lengthSq));
+        forward = Normalized(Cross(left, worldUp));
+    } else {
+        forward = forward * (1.0f / std::sqrt(lengthSq));
+    }
+    const V3 left = Normalized(Cross(worldUp, forward));
+    return {left, forward, worldUp, source.pos};
 }
 
 V3 RelativeTrackingPosition(V3 localPosition) {
@@ -2576,10 +2657,33 @@ void ResetTabletopTransform(bool keepMode) {
     g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
     tabletop::ResetVisualScale();
     tabletop::ResetRadiusPreset();
+    g_origin.valid = false;
+    g_tabletopCoverageFrozen.store(false, std::memory_order_release);
+    g_tabletopCoverageWarmupFrames.store(0, std::memory_order_release);
+    g_tabletopDirectionRelatchSerial.fetch_add(1, std::memory_order_acq_rel);
     LOGI("[tabletop.controls] reset mode=%s scale=%.3f radius=%.0fm",
-         mode == TabletopViewMode::Fixed ? "fixed" : "follow",
+         TabletopViewModeName(mode),
          static_cast<double>(tabletop::VisualScale()),
          static_cast<double>(tabletop::RadiusMeters()));
+}
+
+void RequestTabletopRecenter(const char* reason) {
+    if (!tabletop::Enabled()) return;
+    g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
+    g_tabletopTransform.fixedBaseValid = false;
+    g_tabletopTransform.gestureActive = false;
+    g_tabletopTransform.recenterOnNextCamera = true;
+    // Rebase room-space facing as well as the miniature transform. Without
+    // this, a respawn/mode switch could centre CJ visually while the game's
+    // camera-relative movement still used the previous car/interior heading.
+    g_origin.valid = false;
+    g_tabletopCoverageFrozen.store(false, std::memory_order_release);
+    g_tabletopCoverageWarmupFrames.store(0, std::memory_order_release);
+    g_tabletopDirectionRelatchSerial.fetch_add(1, std::memory_order_acq_rel);
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.diag.event] recenter reason=%s serial=%u",
+        reason ? reason : "unknown",
+        g_tabletopDirectionRelatchSerial.load(std::memory_order_relaxed));
 }
 
 void UpdateTabletopControls(xr::InputState& input, bool blocked) {
@@ -2598,19 +2702,30 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
 
     if (!tabletop::Enabled()) return;
 
+    const bool coverageChord = input.grip[1] >= 0.65f && r3Edge;
     if (!blocked && input.l3 && input.r3 && (l3Edge || r3Edge)) {
         ResetTabletopTransform(true);
         xr::TriggerHaptic(0, 0.65f, 90.0f, 70.0f);
         xr::TriggerHaptic(1, 0.65f, 90.0f, 70.0f);
+    } else if (!blocked && coverageChord) {
+        const int next = (g_tabletopCoverageMode.load(
+            std::memory_order_relaxed) + 1) % 3;
+        g_tabletopCoverageMode.store(next, std::memory_order_release);
+        g_tabletopCoverageWarmupFrames.store(45, std::memory_order_release);
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.diag.event] coverage=%s",
+            TabletopCoverageModeName(static_cast<TabletopCoverageMode>(next)));
+        xr::TriggerHaptic(1, 0.72f, 115.0f, 75.0f);
     } else if (!blocked && l3Edge) {
-        g_tabletopTransform.mode =
-            g_tabletopTransform.mode == TabletopViewMode::Follow
-                ? TabletopViewMode::Fixed : TabletopViewMode::Follow;
-        g_tabletopTransform.fixedBaseValid = false;
-        g_tabletopTransform.gestureActive = false;
-        LOGI("[tabletop.controls] view=%s",
-             g_tabletopTransform.mode == TabletopViewMode::Fixed
-                 ? "fixed" : "follow");
+        const int next = (static_cast<int>(g_tabletopTransform.mode) + 1) % 3;
+        g_tabletopTransform.mode = static_cast<TabletopViewMode>(next);
+        // A mode change deliberately focuses the live player and re-latches
+        // joystick/HMD direction instead of carrying a stale vehicle or drag
+        // frame into the next camera mode.
+        RequestTabletopRecenter("view-mode-change");
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.diag.event] view=%s",
+            TabletopViewModeName(g_tabletopTransform.mode));
         xr::TriggerHaptic(0, 0.55f, 80.0f, 55.0f);
     } else if (!blocked && r3Edge) {
         const float radius = tabletop::CycleRadiusPreset();
@@ -2622,10 +2737,11 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     // L3/R3 are tabletop test controls and must not leak into GTA bindings.
     input.l3 = false;
     input.r3 = false;
+    if (coverageChord) input.grip[1] = 0.0f;
 
-    if (blocked || g_tabletopTransform.mode != TabletopViewMode::Fixed ||
-        !g_origin.valid) {
+    if (blocked || !g_origin.valid) {
         g_tabletopTransform.gestureActive = false;
+        g_tabletopCoverageFrozen.store(false, std::memory_order_release);
         return;
     }
 
@@ -2635,9 +2751,16 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
                        hands[1].valid && input.grip[1] >= 0.65f};
     const int handCount = static_cast<int>(held[0]) + static_cast<int>(held[1]);
     if (handCount == 0) {
+        const bool wasFrozen = g_tabletopCoverageFrozen.exchange(
+            false, std::memory_order_acq_rel);
+        if (wasFrozen)
+            g_tabletopCoverageWarmupFrames.store(45,
+                                                  std::memory_order_release);
         g_tabletopTransform.gestureActive = false;
         return;
     }
+    g_tabletopCoverageFrozen.store(handCount == 2,
+                                    std::memory_order_release);
 
     V3 positions[2]{};
     for (int hand = 0; hand < 2; ++hand) {
@@ -2663,26 +2786,75 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
         g_tabletopTransform.gestureStartAngle = angle;
         g_tabletopTransform.gestureStartScale = tabletop::VisualScale();
         g_tabletopTransform.gestureStartYaw = g_tabletopTransform.mapYaw;
+        g_tabletopTransform.gesturePlayerPivot = handCount == 2 &&
+            g_tabletopTransform.mode == TabletopViewMode::Fixed &&
+            g_tabletopTransform.fixedBaseValid &&
+            g_tabletopRadiusCenterValid;
+        if (g_tabletopTransform.gesturePlayerPivot) {
+            g_tabletopTransform.gesturePivotGame = g_tabletopRadiusCenter;
+            const V3 gameOffset = g_tabletopTransform.gesturePivotGame -
+                g_tabletopTransform.fixedBase.pos;
+            g_tabletopTransform.gestureStartPivotPhysical =
+                g_tabletopTransform.gestureStartAnchor +
+                TabletopGameToTracking(
+                    g_tabletopTransform.fixedBase, gameOffset,
+                    g_tabletopTransform.gestureStartYaw) *
+                g_tabletopTransform.gestureStartScale;
+        }
     } else {
         constexpr float kTranslationGain = 3.0f;
-        g_tabletopTransform.physicalAnchor =
-            g_tabletopTransform.gestureStartAnchor +
+        const V3 translatedMidpoint =
+            g_tabletopTransform.gestureStartMidpoint +
             (midpoint - g_tabletopTransform.gestureStartMidpoint) *
                 kTranslationGain;
+        float scaleRatio = 1.0f;
+        float rotationDelta = 0.0f;
         if (handCount == 2 &&
             g_tabletopTransform.gestureStartDistance > 0.04f) {
             tabletop::SetVisualScale(
                 g_tabletopTransform.gestureStartScale *
                 distance / g_tabletopTransform.gestureStartDistance);
-            float delta = angle - g_tabletopTransform.gestureStartAngle;
-            while (delta > 3.14159265f) delta -= 6.28318531f;
-            while (delta < -3.14159265f) delta += 6.28318531f;
+            scaleRatio = tabletop::VisualScale() /
+                std::max(0.0001f, g_tabletopTransform.gestureStartScale);
+            rotationDelta = angle - g_tabletopTransform.gestureStartAngle;
+            while (rotationDelta > 3.14159265f)
+                rotationDelta -= 6.28318531f;
+            while (rotationDelta < -3.14159265f)
+                rotationDelta += 6.28318531f;
             g_tabletopTransform.mapYaw =
-                g_tabletopTransform.gestureStartYaw + delta;
+                g_tabletopTransform.gestureStartYaw + rotationDelta;
+        }
+        if (g_tabletopTransform.gesturePlayerPivot &&
+            g_tabletopTransform.fixedBaseValid) {
+            // In FIXED mode CJ can be far from the old captured camera anchor.
+            // Scaling around the hand midpoint magnified that offset and made
+            // the map fly away. Keep CJ's physical point invariant instead;
+            // moving both hands together still drags that pivot normally.
+            const V3 translatedPivot =
+                g_tabletopTransform.gestureStartPivotPhysical +
+                (midpoint - g_tabletopTransform.gestureStartMidpoint) *
+                    kTranslationGain;
+            const V3 gameOffset = g_tabletopTransform.gesturePivotGame -
+                g_tabletopTransform.fixedBase.pos;
+            const V3 currentTrackingOffset = TabletopGameToTracking(
+                g_tabletopTransform.fixedBase, gameOffset,
+                g_tabletopTransform.mapYaw);
+            g_tabletopTransform.physicalAnchor = translatedPivot -
+                currentTrackingOffset * tabletop::VisualScale();
+        } else {
+            // FOLLOW mode already keeps CJ at the game anchor. Retain the
+            // natural grab-centred behaviour that is working well there.
+            const V3 startOffset =
+                (g_tabletopTransform.gestureStartAnchor -
+                 g_tabletopTransform.gestureStartMidpoint) * scaleRatio;
+            g_tabletopTransform.physicalAnchor = translatedMidpoint +
+                RotateTrackingYaw(startOffset, rotationDelta);
         }
     }
 
-    // In fixed-table mode the grips manipulate the model, not weapons/vehicles.
+    // In either tabletop view the grips manipulate the model, not
+    // weapons/vehicles. FOLLOW keeps its live player anchor while applying the
+    // same translation, scale and yaw controls as FIXED.
     input.grip[0] = 0.0f;
     input.grip[1] = 0.0f;
 }
@@ -2692,23 +2864,34 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
 // The game anchor follows the normal player/vehicle base while the physical
 // anchor remains fixed in front of and below the recentered headset origin.
 CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
-    if (g_tabletopTransform.mode == TabletopViewMode::Fixed &&
-        !g_tabletopTransform.fixedBaseValid) {
-        g_tabletopTransform.fixedBase = base;
-        g_tabletopTransform.fixedBaseValid = true;
+    const CamBasis liveLevelBase = LevelTabletopBasis(base);
+    if (g_tabletopTransform.recenterOnNextCamera) {
         g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
-        g_tabletopTransform.mapYaw = 0.0f;
+        g_tabletopTransform.recenterOnNextCamera = false;
+    }
+    if (g_tabletopTransform.mode != TabletopViewMode::Follow &&
+        !g_tabletopTransform.fixedBaseValid) {
+        g_tabletopTransform.fixedBase = liveLevelBase;
+        g_tabletopTransform.fixedBaseValid = true;
         g_tabletopTransform.gestureActive = false;
-        LOGI("[tabletop.controls] fixed anchor captured world=(%.1f %.1f %.1f)",
+        LOGI("[tabletop.controls] %s anchor captured world=(%.1f %.1f %.1f)",
+             TabletopViewModeName(g_tabletopTransform.mode),
              static_cast<double>(base.pos.x), static_cast<double>(base.pos.y),
              static_cast<double>(base.pos.z));
     }
-    const CamBasis& anchorBase =
-        g_tabletopTransform.mode == TabletopViewMode::Fixed &&
-                g_tabletopTransform.fixedBaseValid
-            ? g_tabletopTransform.fixedBase : base;
-    const float yaw = g_tabletopTransform.mode == TabletopViewMode::Fixed
-        ? g_tabletopTransform.mapYaw : 0.0f;
+    CamBasis anchorBase = liveLevelBase;
+    if (g_tabletopTransform.fixedBaseValid) {
+        if (g_tabletopTransform.mode == TabletopViewMode::Fixed) {
+            anchorBase = g_tabletopTransform.fixedBase;
+        } else if (g_tabletopTransform.mode == TabletopViewMode::Track) {
+            // Conveyor-belt view: freeze only the horizontal orientation. The
+            // player/root position stays live, so a turning car is seen side-on.
+            anchorBase.right = g_tabletopTransform.fixedBase.right;
+            anchorBase.forward = g_tabletopTransform.fixedBase.forward;
+            anchorBase.up = g_tabletopTransform.fixedBase.up;
+        }
+    }
+    const float yaw = g_tabletopTransform.mapYaw;
     const V3 localFwd = Rotate(relOri, {0.0f, 0.0f, -1.0f});
     const V3 localUp = Rotate(relOri, {0.0f, 1.0f, 0.0f});
     V3 forward = Normalized(TrackingToTabletopGame(anchorBase, localFwd, yaw));
@@ -2717,13 +2900,32 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
     up = Normalized(Cross(forward, left));
     CamBasis out{left, forward, up, {}};
     const float scale = tabletop::VisualScale();
-    const V3 physicalAnchor = g_tabletopTransform.mode == TabletopViewMode::Fixed
-        ? g_tabletopTransform.physicalAnchor : DefaultTabletopPhysicalAnchor();
+    const V3 physicalAnchor = g_tabletopTransform.physicalAnchor;
     const V3 scaledTranslation = (relPos - physicalAnchor) * (1.0f / scale);
     out.pos = anchorBase.pos +
         TrackingToTabletopGame(anchorBase, scaledTranslation, yaw);
-    g_tabletopRadiusCenter = anchorBase.pos;
+    // Visibility must always follow the live player/vehicle. In FIXED view the
+    // visual camera deliberately keeps anchorBase frozen, but using that old
+    // point for sectors, occlusion and plants made the ground under CJ vanish
+    // after he walked away from it.
+    g_tabletopRadiusCenter = base.pos;
     g_tabletopRadiusCenterValid = true;
+    // The second endpoint is the headset camera reprojected into game space.
+    // All radial tabletop tests use the 2D capsule between these endpoints,
+    // so height never shrinks coverage and the space between player and viewer
+    // remains populated.
+    if (!g_tabletopCoverageFrozen.load(std::memory_order_acquire) ||
+        !g_tabletopViewCoverageCenterValid) {
+        g_tabletopViewCoverageCenter = out.pos;
+        g_tabletopViewCoverageCenterValid = true;
+    }
+    // `base` continues following the live player/vehicle even after FIXED mode
+    // captures anchorBase. Publish it atomically for culling on both game and
+    // RenderQueue threads.
+    g_tabletopPlayerSafetyX.store(base.pos.x, std::memory_order_relaxed);
+    g_tabletopPlayerSafetyY.store(base.pos.y, std::memory_order_relaxed);
+    g_tabletopPlayerSafetyZ.store(base.pos.z, std::memory_order_relaxed);
+    g_tabletopPlayerSafetyValid.store(true, std::memory_order_release);
     return out;
 }
 
@@ -2780,6 +2982,8 @@ Mat34 SetRotate34(float x, float y, float z) {
 // matrix uses this, not the pitched head camera, so the gun never inherits head tilt.
 CamBasis g_vrBase{};
 bool     g_vrBaseValid = false;
+CamBasis g_logicalVrCamera{};
+bool     g_logicalVrCameraValid = false;
 CamBasis g_tabletopRenderCamera{};
 bool     g_tabletopRenderCameraValid = false;
 std::atomic<bool> g_tabletopActive{false};
@@ -3667,6 +3871,11 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
             // IS the view (VC DEFAULT behaviour), so keep a copy before `base`
             // gets rebuilt around the first-person anchor below.
             const CamBasis stockCamera = base;
+            // Tabletop owns a separate player/root anchor. It must never inherit
+            // the first-person head bone, calibrated seat, chase-camera cuts or
+            // enter/exit animation offsets assembled into `base` below.
+            CamBasis tabletopPlayerBase{};
+            bool tabletopPlayerBaseValid = false;
 
             // First-person cutscenes ride the DIRECTOR camera: the cutscene
             // system parks the real player ped in a staging spot, so the
@@ -4044,7 +4253,96 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                         static bool  g_bodyYawSet = false;
                         static bool  g_snapLatched = false;
                         static bool  g_wasDriving = false;
+                        static bool  g_onFootAnchorValid = false;
+                        static V3    g_lastOnFootAnchor{};
+                        static bool  g_headRelatchPending = false;
+                        static bool  g_yawReseedPending = false;
+                        static bool  g_lifecycleInitialized = false;
+                        static bool  g_playerDeathActive = false;
+                        static void* g_lifecyclePed = nullptr;
+                        static std::uint32_t g_directionRelatchSeen = 0;
+                        static bool g_respawnRecenterPending = false;
+                        static int g_respawnStableFrames = 0;
+                        // Android 2.11 CPed::m_nPedState is verified at +0x54c.
+                        // ePedState 54/55 are DIE/DEAD respectively.
+                        const int pedState = *reinterpret_cast<const int*>(
+                            static_cast<const std::uint8_t*>(ped) + 0x54c);
+                        const bool playerDeathActive =
+                            pedState == 54 || pedState == 55;
+                        const bool pedReplaced = g_lifecycleInitialized &&
+                            g_lifecyclePed != nullptr &&
+                            g_lifecyclePed != ped;
+                        const bool deathStarted = g_lifecycleInitialized &&
+                            !g_playerDeathActive && playerDeathActive;
+                        const bool respawned = g_lifecycleInitialized &&
+                            ((g_playerDeathActive && !playerDeathActive) ||
+                             pedReplaced);
+                        if (deathStarted) {
+                            g_onFootAnchorValid = false;
+                            g_respawnRecenterPending = false;
+                            g_respawnStableFrames = 0;
+                            __android_log_print(
+                                ANDROID_LOG_INFO, SAVR_TAG,
+                                "[tabletop.lifecycle] death-start state=%d ped=%p",
+                                pedState, ped);
+                        }
+                        if (respawned) {
+                            g_onFootAnchorValid = false;
+                            g_respawnRecenterPending = true;
+                            g_respawnStableFrames = 0;
+                            __android_log_print(
+                                ANDROID_LOG_INFO, SAVR_TAG,
+                                "[tabletop.lifecycle] respawn-detected state=%d replaced=%d",
+                                pedState, pedReplaced ? 1 : 0);
+                        }
+                        if (g_respawnRecenterPending) {
+                            const bool stableRespawn = !playerDeathActive &&
+                                !enteringVehicle && vehicle == nullptr &&
+                                pedMatrixValid && anchorReady;
+                            g_respawnStableFrames = stableRespawn
+                                ? g_respawnStableFrames + 1 : 0;
+                            if (g_respawnStableFrames >= 8) {
+                                RequestTabletopRecenter("player-respawn-stable");
+                                g_yawReseedPending = true;
+                                // Tabletop movement uses the live HMD direction;
+                                // do not add the generic first-person exit relatch.
+                                g_headRelatchPending = !tabletop::Enabled();
+                                g_respawnRecenterPending = false;
+                                g_respawnStableFrames = 0;
+                                __android_log_print(
+                                    ANDROID_LOG_INFO, SAVR_TAG,
+                                    "[tabletop.lifecycle] respawn-stable ped=%p",
+                                    ped);
+                            }
+                        }
+                        g_lifecycleInitialized = true;
+                        g_playerDeathActive = playerDeathActive;
+                        g_lifecyclePed = ped;
                         const float authoredYaw = std::atan2(-anchorFx, anchorFy);
+                        g_tabletopDiagnosticAuthoredYaw.store(
+                            authoredYaw, std::memory_order_relaxed);
+                        g_tabletopDiagnosticPedState.store(
+                            pedState, std::memory_order_relaxed);
+                        g_tabletopDiagnosticLifecycle.store(
+                            playerDeathActive ? 3 :
+                            (vehicle ? 2 : (enteringVehicle ? 1 : 0)),
+                            std::memory_order_relaxed);
+                        if (tabletop::Enabled()) {
+                            static int previousLifecycle = -1;
+                            const int currentLifecycle = playerDeathActive ? 3 :
+                                (vehicle ? 2 : (enteringVehicle ? 1 : 0));
+                            if (currentLifecycle != previousLifecycle) {
+                                __android_log_print(
+                                    ANDROID_LOG_INFO, SAVR_TAG,
+                                    "[tabletop.diag.event] lifecycle=%d->%d "
+                                    "ped=%p vehicle=%p state=%d origin=%d serial=%u",
+                                    previousLifecycle, currentLifecycle, ped,
+                                    vehicle, pedState, g_origin.valid ? 1 : 0,
+                                    g_tabletopDirectionRelatchSerial.load(
+                                        std::memory_order_relaxed));
+                                previousLifecycle = currentLifecycle;
+                            }
+                        }
                         // Keep the animated CJ head as the positional anchor
                         // during entry, and follow the BODY yaw through the
                         // whole enter animation: anchorFx/Fy stay the ped's
@@ -4054,16 +4352,65 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                         // enteringVehicle term the yaw froze at the on-foot
                         // frame and the camera never turned with the model —
                         // Vice City turns it, and now this port does too.
-                        const bool useVehicleFrame =
-                            vehicle != nullptr || enteringVehicle;
+                        // The regular first-person camera follows CJ's authored
+                        // enter animation. A tabletop should not inherit that
+                        // transient camera turn: keep its on-foot frame until
+                        // the vehicle pointer proves the transition is seated.
+                        const bool useVehicleFrame = vehicle != nullptr ||
+                            (enteringVehicle && !tabletop::Enabled());
+                        static bool tabletopVehicleFrameLatched = false;
+                        if (tabletop::Enabled() && vehicle != nullptr) {
+                            tabletopVehicleFrameLatched = true;
+                        } else if (tabletop::Enabled() &&
+                                   tabletopVehicleFrameLatched &&
+                                   !enteringVehicle && pedMatrixValid) {
+                            // The log capture proved g_wasDriving can be
+                            // consumed by a matrix-less transition frame before
+                            // CJ's usable exit matrix arrives. Keep a dedicated
+                            // latch until a real ped yaw is available.
+                            g_bodyYaw = std::atan2(-pedFx, pedFy);
+                            g_bodyYawSet = true;
+                            g_yawReseedPending = false;
+                            g_headRelatchPending = false;
+                            tabletopVehicleFrameLatched = false;
+                            __android_log_print(
+                                ANDROID_LOG_INFO, SAVR_TAG,
+                                "[tabletop.diag.event] exit-yaw-reseed yaw=%.3f",
+                                static_cast<double>(g_bodyYaw));
+                        }
+                        const std::uint32_t directionRelatchSerial =
+                            g_tabletopDirectionRelatchSerial.load(
+                                std::memory_order_acquire);
+                        if (g_directionRelatchSeen != directionRelatchSerial) {
+                            g_directionRelatchSeen = directionRelatchSerial;
+                            g_onFootAnchorValid = false;
+                            g_snapLatched = false;
+                            if (useVehicleFrame) {
+                                g_bodyYaw = authoredYaw;
+                                g_bodyYawSet = true;
+                                g_yawReseedPending = false;
+                                g_headRelatchPending = false;
+                            } else {
+                                // Consume only when a real ped matrix is ready.
+                                // This covers manual recenter, camera-mode change,
+                                // death/respawn and interior/mission warps through
+                                // the same direction-reset path.
+                                g_yawReseedPending = true;
+                                g_headRelatchPending = !tabletop::Enabled();
+                            }
+                            LOGI("[camera] tabletop direction relatch serial=%u frame=%s",
+                                 directionRelatchSerial,
+                                 useVehicleFrame ? "vehicle" : "on-foot");
+                        }
                         if (useVehicleFrame) {
+                            g_onFootAnchorValid = false;
                             // Vice City re-latches the physical head yaw when
                             // first-person switches from the ped frame to the
                             // vehicle frame. Do the equivalent here: the pose
                             // at the moment of entry becomes straight ahead in
                             // the cockpit instead of preserving an arbitrary
                             // room-space yaw from on-foot play.
-                            if (!g_wasDriving) {
+                            if (!g_wasDriving && !tabletop::Enabled()) {
                                 g_origin.valid = false;
                                 LOGI("[camera] vehicle entry relatching physical facing");
                             }
@@ -4079,13 +4426,42 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                             // The ped matrix can be null right through an
                             // air bail-out — defer the reseed until it is
                             // valid instead of snapping the yaw to north.
-                            static bool g_yawReseedPending = false;
-                            if (!g_bodyYawSet || g_wasDriving)
+                            if (!g_bodyYawSet || g_wasDriving) {
                                 g_yawReseedPending = true;
+                                if (g_wasDriving)
+                                    g_headRelatchPending = !tabletop::Enabled();
+                            }
+                            // Interior doors, mission warps and respawns can
+                            // change the player anchor while remaining "on
+                            // foot". Treat a large discontinuity as a new
+                            // locomotion frame, just like leaving a vehicle.
+                            bool onFootAnchorJump = false;
+                            if (g_onFootAnchorValid) {
+                                const V3 delta = anchorPosition -
+                                    g_lastOnFootAnchor;
+                                onFootAnchorJump =
+                                    Dot(delta, delta) > 12.0f * 12.0f;
+                            }
+                            g_lastOnFootAnchor = anchorPosition;
+                            g_onFootAnchorValid = true;
+                            if (onFootAnchorJump) {
+                                g_yawReseedPending = true;
+                                g_headRelatchPending = true;
+                                RequestTabletopRecenter("on-foot-anchor-jump");
+                            }
                             if (g_yawReseedPending && pedMatrixValid) {
                                 g_bodyYaw = std::atan2(-pedFx, pedFy);
                                 g_bodyYawSet = true;
                                 g_yawReseedPending = false;
+                                if (g_headRelatchPending) {
+                                    // The current physical HMD facing becomes
+                                    // the clean forward reference again. This
+                                    // prevents a car/interior yaw from leaking
+                                    // into subsequent on-foot movement.
+                                    g_origin.valid = false;
+                                    g_headRelatchPending = false;
+                                    LOGI("[camera] on-foot headset facing relatched");
+                                }
                             }
                             // Skydive/canopy: the parachute script turns the
                             // ped, so follow its live heading like a vehicle —
@@ -4146,6 +4522,8 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                         }
                         g_wasDriving = useVehicleFrame;
                         const float yaw = g_bodyYaw;
+                        g_tabletopDiagnosticBodyYaw.store(
+                            yaw, std::memory_order_relaxed);
                         const float sy = std::sin(yaw), cy = std::cos(yaw);
                         const V3 fwd { -sy, cy, 0.0f };
                         const V3 left{ -cy, -sy, 0.0f };
@@ -4279,6 +4657,18 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                         base.pos = anchorPosition + heightAxis * seatHeight +
                                    fwd * (eyeForward + seatDistance) +
                                    right * seatSide;
+                        tabletopPlayerBase = LevelTabletopBasis(base);
+                        if (vehicle != nullptr && vehiclePositionValid) {
+                            tabletopPlayerBase.pos = vehiclePosition;
+                        } else if (pedMatrixValid) {
+                            tabletopPlayerBase.pos = pedPosition;
+                        } else {
+                            // Matrix-less bail-outs/transitions still use the
+                            // authoritative coordinate fallback, minus only the
+                            // synthetic standing eye height when applicable.
+                            tabletopPlayerBase.pos = anchorPosition;
+                        }
+                        tabletopPlayerBaseValid = Finite(tabletopPlayerBase.pos);
                         static void* loggedVehicle = nullptr;
                         static bool loggedHead = false;
                         if (vehicle != loggedVehicle || usedSeatedHead != loggedHead) {
@@ -4419,7 +4809,10 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
             const bool tabletopRequested = tabletop::Enabled() &&
                 playerAnchorReady && !cutsceneRunning && !gameplayCinematic;
             const CamBasis tabletopCamera = tabletopRequested
-                ? BuildTabletopCamera(base, relPos, relOri) : CamBasis{};
+                ? BuildTabletopCamera(
+                      tabletopPlayerBaseValid ? tabletopPlayerBase : base,
+                      relPos, relOri)
+                : CamBasis{};
             const bool tabletopCameraValid = tabletopRequested &&
                 Finite(tabletopCamera.right) && Finite(tabletopCamera.forward) &&
                 Finite(tabletopCamera.up) && Finite(tabletopCamera.pos);
@@ -4428,6 +4821,8 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
             // whole view black. Fall back to the game camera if anything is off.
             if (Finite(vr.right) && Finite(vr.forward) && Finite(vr.up) &&
                 Finite(vr.pos)) {
+                g_logicalVrCamera = vr;
+                g_logicalVrCameraValid = true;
                 if (tabletopCameraValid) {
                     g_tabletopRenderCamera = tabletopCamera;
                     g_tabletopRenderCameraValid = true;
@@ -4926,7 +5321,10 @@ void OnUpdatePads() {
     const bool bothGrips = in.grip[0] >= 0.75f && in.grip[1] >= 0.75f;
     const bool openChord = bothGrips && (in.menu || in.y);   // B is weapon fire now
     const bool stereo = ShouldRunStereo();
-    driving::UpdateInput(in, stereo, inputBlocked || tabletop::Enabled());
+    // Tabletop changes the camera and consumes grips only while the fixed map
+    // is being manipulated. It must not block the ordinary vehicle queries:
+    // R2/L2 and the left stick remain authoritative accelerate/brake/steer.
+    driving::UpdateInput(in, stereo, inputBlocked);
 
     const bool vehicleButtonAllowed =
         stereo && !inputBlocked && !bothGrips && !openChord;
@@ -4942,8 +5340,16 @@ void OnUpdatePads() {
     // NewState is the first member of CPad; LeftStickX at +0x00, LeftStickY at
     // +0x02, both int16 in [-128,127]. Forward (stick pushed up) must be negative.
     auto* ns = reinterpret_cast<int16_t*>(pad);
+    void* vehicle = g.FindPlayerVehicle ? g.FindPlayerVehicle(-1, false)
+                                        : nullptr;
     float moveX=mappedMoveX,moveY=mappedMoveY;
-    locomotion::TransformMoveStick(CurrentLocalHeadYaw(),&moveX,&moveY);
+    // Tabletop on-foot locomotion is always HMD-relative, regardless of a
+    // BODY mode left over from the regular first-person VR configuration.
+    // The game's camera-relative path already contains the composed head yaw.
+    if (tabletop::Enabled() && vehicle == nullptr)
+        TransformTabletopMoveStick(&moveX, &moveY);
+    else
+        locomotion::TransformMoveStick(CurrentLocalHeadYaw(),&moveX,&moveY);
     ns[0] = static_cast<int16_t>(std::clamp(moveX,-1.0f,1.0f) *  127.0f);
     ns[1] = static_cast<int16_t>(std::clamp(moveY,-1.0f,1.0f) * -127.0f);
 
@@ -4954,8 +5360,6 @@ void OnUpdatePads() {
     // driving instead fires the physically held weapon through VrFire, so
     // this classic mapping stays out of its way. Both grips = the VR menu
     // chord and never reach the game.
-    void* vehicle = g.FindPlayerVehicle ? g.FindPlayerVehicle(-1, false)
-                                        : nullptr;
     if (vehicle && !driving::VehicleWeaponsImmersive() && !bothGrips) {
         const bool left  = in.b && in.grip[0] >= 0.55f && in.grip[1] < 0.55f;
         const bool right = in.b && in.grip[1] >= 0.55f && in.grip[0] < 0.55f;
@@ -5359,20 +5763,22 @@ void OnUpdatePads() {
         g_promptHudUntilMs.store(0.0, std::memory_order_relaxed);
     }
 
-    // Diagnostics for the reported body-turn movement bug: while walking,
-    // dump the movement frame every two seconds so a log capture shows where
-    // the rotation chain breaks (raw stick -> transformed NewState ->
-    // physical head yaw -> resulting ped heading).
-    if (vehicle == nullptr &&
-        (std::abs(in.leftStick[0]) > 0.3f ||
-         std::abs(in.leftStick[1]) > 0.3f)) {
+    // Low-volume tabletop flight recorder. It is intentionally useful from a
+    // plain long-running logcat window: whenever the left stick moves it shows
+    // the complete direction chain and all state needed to identify the first
+    // frame that changed after a car, door, death or respawn transition.
+    if (tabletop::Enabled() &&
+        (std::abs(in.leftStick[0]) > 0.22f ||
+         std::abs(in.leftStick[1]) > 0.22f)) {
         static double lastMoveLog = 0.0;
         const double nowMoveMs = NowMs();
-        if (nowMoveMs - lastMoveLog > 2000.0) {
+        if (nowMoveMs - lastMoveLog > 1000.0) {
             lastMoveLog = nowMoveMs;
             float pedFx = 0.0f, pedFy = 1.0f;
-            if (void* movePed = g.FindPlayerPed ? g.FindPlayerPed(-1)
-                                                : nullptr) {
+            float vehicleFx = 0.0f, vehicleFy = 1.0f;
+            void* const movePed = g.FindPlayerPed
+                ? g.FindPlayerPed(-1) : nullptr;
+            if (movePed) {
                 const std::uintptr_t m = *reinterpret_cast<std::uintptr_t*>(
                     static_cast<char*>(movePed) + 0x18);
                 if (m) {
@@ -5380,11 +5786,57 @@ void OnUpdatePads() {
                     pedFy = *reinterpret_cast<float*>(m + 0x14);
                 }
             }
-            LOGI("[vr.move] stick=(%.2f,%.2f) ns=(%d,%d) headYaw=%.2f "
-                 "ped=(%.2f,%.2f)",
-                 in.leftStick[0], in.leftStick[1],
-                 static_cast<int>(ns[0]), static_cast<int>(ns[1]),
-                 CurrentLocalHeadYaw(), pedFx, pedFy);
+            if (vehicle) {
+                const std::uintptr_t m = *reinterpret_cast<std::uintptr_t*>(
+                    static_cast<char*>(vehicle) + 0x18);
+                if (m) {
+                    vehicleFx = *reinterpret_cast<float*>(m + 0x10);
+                    vehicleFy = *reinterpret_cast<float*>(m + 0x14);
+                }
+            }
+            const auto basisYaw = [](const CamBasis& camera, bool valid) {
+                return valid
+                    ? std::atan2(-camera.forward.x, camera.forward.y)
+                    : 999.0f;
+            };
+            const int lifecycle = g_tabletopDiagnosticLifecycle.load(
+                std::memory_order_relaxed);
+            const char* const lifecycleName = lifecycle == 3 ? "dead" :
+                (lifecycle == 2 ? "vehicle" :
+                 (lifecycle == 1 ? "entering" : "foot"));
+            const TabletopCoverageMode coverageMode =
+                static_cast<TabletopCoverageMode>(g_tabletopCoverageMode.load(
+                    std::memory_order_relaxed));
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.diag] state=%s pedState=%d view=%s coverage=%s "
+                "serial=%u raw=(%.2f,%.2f) mapped=(%.2f,%.2f) "
+                "final=(%d,%d) hmd=%.3f body=%.3f authored=%.3f "
+                 "pedYaw=%.3f vehicleYaw=%.3f baseYaw=%.3f logicalYaw=%.3f "
+                 "tableYaw=%.3f "
+                "mapYaw=%.3f origin=%d frozen=%d",
+                lifecycleName,
+                g_tabletopDiagnosticPedState.load(std::memory_order_relaxed),
+                TabletopViewModeName(g_tabletopTransform.mode),
+                TabletopCoverageModeName(coverageMode),
+                g_tabletopDirectionRelatchSerial.load(
+                    std::memory_order_relaxed),
+                in.leftStick[0], in.leftStick[1],
+                mappedMoveX, mappedMoveY,
+                static_cast<int>(ns[0]), static_cast<int>(ns[1]),
+                CurrentLocalHeadYaw(),
+                g_tabletopDiagnosticBodyYaw.load(std::memory_order_relaxed),
+                g_tabletopDiagnosticAuthoredYaw.load(
+                    std::memory_order_relaxed),
+                std::atan2(-pedFx, pedFy),
+                std::atan2(-vehicleFx, vehicleFy),
+                basisYaw(g_vrBase, g_vrBaseValid),
+                basisYaw(g_logicalVrCamera, g_logicalVrCameraValid),
+                basisYaw(g_tabletopRenderCamera,
+                         g_tabletopRenderCameraValid),
+                g_tabletopTransform.mapYaw, g_origin.valid ? 1 : 0,
+                g_tabletopCoverageFrozen.load(
+                    std::memory_order_relaxed) ? 1 : 0);
         }
     }
 
@@ -5733,6 +6185,8 @@ struct DynamicShadowDiagnostics {
 DynamicShadowDiagnostics g_dynamicShadowDiagnostics{};
 
 bool ReadEntityWorldPosition(const void* entity, V3* out);
+bool TabletopWorldInsidePlayerSafety(const V3& world, float allowance = 0.0f);
+bool TabletopEntityInsidePlayerSafety(const void* entity);
 
 bool MobileShadowSettingsInitialized() {
     // Initialize fills two descriptor pointers at the head of each 0x28-byte
@@ -5934,6 +6388,10 @@ private:
 using CloudsRenderFn = void (*)();
 CloudsRenderFn g_origCloudsRender = nullptr;
 bool  g_cloudsHooked     = false;
+using TabletopAtmosphereRenderFn = void (*)();
+TabletopAtmosphereRenderFn g_origRenderBottomFromHeight = nullptr;
+TabletopAtmosphereRenderFn g_origVolumetricCloudsRender = nullptr;
+TabletopAtmosphereRenderFn g_origMovingFogRender = nullptr;
 using CloudsCalcScreenCoorsFn = bool (*)(const V3&, V3*, float*, float*,
                                          bool, bool);
 CloudsCalcScreenCoorsFn g_origCloudsCalcScreenCoors = nullptr;
@@ -8944,7 +9402,15 @@ public:
             !g.CVisibilityPlugins_ms_vehicleLod0Dist) {
             return;
         }
-        const float target = VehicleLod0TargetM();
+        float target = VehicleLod0TargetM();
+        if (g_tabletopActive.load(std::memory_order_acquire) &&
+            g_tabletopRadiusCenterValid &&
+            g_tabletopViewCoverageCenterValid) {
+            target = std::max(target,
+                DistanceBetween(g_tabletopRadiusCenter,
+                                g_tabletopViewCoverageCenter) +
+                tabletop::RadiusMeters() + 20.0f);
+        }
         float* const value = g.CVisibilityPlugins_ms_vehicleLod0Dist;
         if (!std::isfinite(target) || target <= 0.0f ||
             !std::isfinite(*value) || *value <= 0.0f) {
@@ -8974,7 +9440,15 @@ public:
             !g.CVisibilityPlugins_ms_pedLodDist) {
             return;
         }
-        const float target = PedRenderTargetM();
+        float target = PedRenderTargetM();
+        if (g_tabletopActive.load(std::memory_order_acquire) &&
+            g_tabletopRadiusCenterValid &&
+            g_tabletopViewCoverageCenterValid) {
+            target = std::max(target,
+                DistanceBetween(g_tabletopRadiusCenter,
+                                g_tabletopViewCoverageCenter) +
+                tabletop::RadiusMeters() + 20.0f);
+        }
         float* const value = g.CVisibilityPlugins_ms_pedLodDist;
         if (!std::isfinite(target) || target <= 0.0f ||
             !std::isfinite(*value) || *value <= 0.0f) {
@@ -13747,6 +14221,7 @@ bool StereoDispatchVisibleForCurrentEye(void* entity) {
             ++g_stereoDispatchCullWindow.failOpen;
         return true;
     }
+    if (TabletopEntityInsidePlayerSafety(entity)) return true;
 
     // g_origGetIsOnScreen is the retail trampoline.  Its internal BL reaches
     // our IsSphereVisible hook, where this exact scope immediately delegates
@@ -13793,15 +14268,97 @@ void ReportStereoDispatchCullWindow() {
     window.startMs = nowMs;
 }
 
-bool TabletopEntityInsideRadius(const void* entity) {
+// Keep content outside the visible design radius resident long enough for the
+// moving circle to cross it without a load/unload flash. Ground gets a whole
+// extra sector so no admitted pole, car or pedestrian can outlive its floor.
+constexpr float kTabletopObjectOverscanM = 18.0f;
+constexpr float kTabletopGroundOverscanM = 55.0f;
+constexpr float kTabletopViewerIslandM = 55.0f;
+constexpr float kTabletopViewerGroundIslandM = 80.0f;
+constexpr float kTabletopBridgeM = 28.0f;
+constexpr float kTabletopGroundBridgeM = 42.0f;
+constexpr float kTabletopDisconnectBridgeM = 140.0f;
+
+float TabletopCoverageSegmentT(float x, float y) {
+    if (!g_tabletopViewCoverageCenterValid) return 0.0f;
+    const float abX = g_tabletopViewCoverageCenter.x - g_tabletopRadiusCenter.x;
+    const float abY = g_tabletopViewCoverageCenter.y - g_tabletopRadiusCenter.y;
+    const float lengthSq = abX * abX + abY * abY;
+    if (!std::isfinite(lengthSq) || lengthSq < 0.0001f) return 0.0f;
+    return std::clamp(
+        ((x - g_tabletopRadiusCenter.x) * abX +
+         (y - g_tabletopRadiusCenter.y) * abY) / lengthSq,
+        0.0f, 1.0f);
+}
+
+float TabletopCoverageDistanceSq2D(float x, float y) {
+    const float t = TabletopCoverageSegmentT(x, y);
+    const float closestX = g_tabletopRadiusCenter.x +
+        (g_tabletopViewCoverageCenter.x - g_tabletopRadiusCenter.x) * t;
+    const float closestY = g_tabletopRadiusCenter.y +
+        (g_tabletopViewCoverageCenter.y - g_tabletopRadiusCenter.y) * t;
+    const float dx = x - closestX;
+    const float dy = y - closestY;
+    return dx * dx + dy * dy;
+}
+
+float TabletopPointDistanceSq2D(float x, float y, const V3& centre) {
+    const float dx = x - centre.x;
+    const float dy = y - centre.y;
+    return dx * dx + dy * dy;
+}
+
+// Three testable coverage profiles. CJ always owns the complete selected
+// radius. PLAYER ONLY is the pure tabletop slice; CONNECTED fills a capsule
+// from the viewer to CJ; ISLANDS keeps a small viewer island and only bridges
+// short separations. During a two-hand gesture the viewer endpoint is frozen,
+// so this admission never chases the swept map.
+bool TabletopCoverageContains2D(float x, float y, float playerRadius) {
+    if (TabletopPointDistanceSq2D(x, y, g_tabletopRadiusCenter) <=
+        playerRadius * playerRadius) return true;
+    if (!g_tabletopViewCoverageCenterValid) return false;
+
+    const TabletopCoverageMode mode = static_cast<TabletopCoverageMode>(
+        g_tabletopCoverageMode.load(std::memory_order_acquire));
+    if (mode == TabletopCoverageMode::PlayerOnly) return false;
+    if (mode == TabletopCoverageMode::Connected) {
+        return TabletopCoverageDistanceSq2D(x, y) <=
+            playerRadius * playerRadius;
+    }
+
+    const float separation = std::hypot(
+        g_tabletopViewCoverageCenter.x - g_tabletopRadiusCenter.x,
+        g_tabletopViewCoverageCenter.y - g_tabletopRadiusCenter.y);
+    const bool groundPass = playerRadius >=
+        tabletop::RadiusMeters() + 30.0f;
+    const float viewerRadius = std::min(
+        playerRadius, groundPass ? kTabletopViewerGroundIslandM
+                                 : kTabletopViewerIslandM);
+    if (TabletopPointDistanceSq2D(x, y, g_tabletopViewCoverageCenter) <=
+        viewerRadius * viewerRadius) return true;
+    if (!std::isfinite(separation) ||
+        separation > kTabletopDisconnectBridgeM) return false;
+    const float bridgeRadius = std::min(
+        playerRadius, groundPass ? kTabletopGroundBridgeM : kTabletopBridgeM);
+    return TabletopCoverageDistanceSq2D(x, y) <=
+        bridgeRadius * bridgeRadius;
+}
+
+bool TabletopWorldInsideCoverage(const V3& world, float radius) {
+    if (!g_tabletopRadiusCenterValid || !std::isfinite(world.x) ||
+        !std::isfinite(world.y) || !std::isfinite(radius) || radius < 0.0f)
+        return false;
+    return TabletopCoverageContains2D(world.x, world.y, radius);
+}
+
+bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     if (!g_tabletopActive.load(std::memory_order_acquire) ||
         !g_tabletopRadiusCenterValid || entity == nullptr) {
         return true;
     }
+    if (TabletopEntityInsidePlayerSafety(entity)) return true;
     V3 world{};
     if (!ReadEntityWorldPosition(entity, &world)) return true;
-    const float dx = world.x - g_tabletopRadiusCenter.x;
-    const float dy = world.y - g_tabletopRadiusCenter.y;
     // Entity pivots are often far from the visible centre of a long building or
     // road tile. Use its collision bound as the edge allowance when available,
     // then retain six metres as a conservative fallback for small props.
@@ -13822,18 +14379,64 @@ bool TabletopEntityInsideRadius(const void* entity) {
                 allowance = std::clamp(bound, 6.0f, 80.0f);
         }
     }
-    const float radius = tabletop::RadiusMeters() + allowance;
-    return dx * dx + dy * dy <= radius * radius;
+    const float radius = tabletop::RadiusMeters() + allowance +
+        std::max(0.0f, extraRadiusM);
+    return TabletopWorldInsideCoverage(world, radius);
 }
 
 void OnRenderOneRoad(void* entity) {
-    if (!TabletopEntityInsideRadius(entity)) return;
+    if (g_tabletopActive.load(std::memory_order_acquire)) {
+        // ScanWorld has already bounded and ordered the tabletop sector set.
+        // Do not apply a second pivot-based radius test to ground: large SA
+        // road/terrain meshes often have their origin well outside the piece
+        // under CJ, which produced an invisible floor with a visible car on it.
+        // Non-road objects keep the strict radial gate below.
+        static thread_local double reportStartMs = 0.0;
+        static thread_local int roadCalls = 0;
+        static thread_local int nearestModel = -1;
+        static thread_local float nearestDistanceSq =
+            std::numeric_limits<float>::max();
+        ++roadCalls;
+        V3 world{};
+        if (entity && g_tabletopRadiusCenterValid &&
+            ReadEntityWorldPosition(entity, &world)) {
+            const float dx = world.x - g_tabletopRadiusCenter.x;
+            const float dy = world.y - g_tabletopRadiusCenter.y;
+            const float distanceSq = dx * dx + dy * dy;
+            if (std::isfinite(distanceSq) && distanceSq < nearestDistanceSq) {
+                nearestDistanceSq = distanceSq;
+                nearestModel = static_cast<int>(
+                    *reinterpret_cast<const std::int16_t*>(
+                        static_cast<const std::uint8_t*>(entity) + 0x32));
+            }
+        }
+        const double nowMs = NowMs();
+        if (reportStartMs == 0.0) reportStartMs = nowMs;
+        if (nowMs - reportStartMs >= 1000.0) {
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.ground] roads=%d nearestModel=%d nearestPivot=%.1fm gate=bypass",
+                roadCalls, nearestModel,
+                nearestDistanceSq < std::numeric_limits<float>::max()
+                    ? static_cast<double>(std::sqrt(nearestDistanceSq)) : -1.0);
+            reportStartMs = nowMs;
+            roadCalls = 0;
+            nearestModel = -1;
+            nearestDistanceSq = std::numeric_limits<float>::max();
+        }
+    } else if (!TabletopEntityInsideRadius(entity, kTabletopGroundOverscanM)) {
+        return;
+    }
     if (g_origRenderOneRoad) g_origRenderOneRoad(entity);
 }
 
 void OnRenderOneNonRoad(void* entity) {
-    if (!TabletopEntityInsideRadius(entity)) return;
-    if (!StereoDispatchVisibleForCurrentEye(entity)) return;
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
+    // The radial gate is already tightly bounded. Re-testing accepted
+    // tabletop content against two slightly different eye frusta caused
+    // distant objects to alternate between eyes/frames.
+    if (!g_tabletopActive.load(std::memory_order_acquire) &&
+        !StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, false);
     const traffic_census::AtomicRenderProbe atomicProbe =
         MarkTrafficVehicleRendered(entity);
@@ -13867,8 +14470,9 @@ void OnRenderOneNonRoad(void* entity) {
 }
 
 void OnRenderAlphaEntity(void* entity, float distance) {
-    if (!TabletopEntityInsideRadius(entity)) return;
-    if (!StereoDispatchVisibleForCurrentEye(entity)) return;
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
+    if (!g_tabletopActive.load(std::memory_order_acquire) &&
+        !StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, true);
     if (VisibilityWitnessEnabled()) TraceEntityRender(entity, "alpha");
     if (!g_origRenderAlphaEntity) return;
@@ -17819,6 +18423,34 @@ void OnCloudsRender() {
         DrawNpcWeaponSnapshots();
 }
 
+bool SuppressTabletopAtmosphereLayer(const char* layer) {
+    if (!g_renderingStereoEye ||
+        !g_tabletopActive.load(std::memory_order_acquire)) return false;
+    static std::atomic<std::uint32_t> loggedMask{0u};
+    const std::uint32_t bit = std::strcmp(layer, "moving_fog") == 0 ? 1u
+        : (std::strcmp(layer, "volumetric_clouds") == 0 ? 2u : 4u);
+    const std::uint32_t previous = loggedMask.fetch_or(bit,
+        std::memory_order_relaxed);
+    if ((previous & bit) == 0u)
+        LOGI("[tabletop.atmosphere] suppressed %s in stereo eyes", layer);
+    return true;
+}
+
+void OnTabletopRenderBottomFromHeight() {
+    if (!SuppressTabletopAtmosphereLayer("height_cloud_floor") &&
+        g_origRenderBottomFromHeight) g_origRenderBottomFromHeight();
+}
+
+void OnTabletopVolumetricCloudsRender() {
+    if (!SuppressTabletopAtmosphereLayer("volumetric_clouds") &&
+        g_origVolumetricCloudsRender) g_origVolumetricCloudsRender();
+}
+
+void OnTabletopMovingFogRender() {
+    if (!SuppressTabletopAtmosphereLayer("moving_fog") &&
+        g_origMovingFogRender) g_origMovingFogRender();
+}
+
 bool OnCloudsCalcScreenCoors(const V3& world, V3* screen,
                              float* screenX, float* screenY,
                              bool checkFar, bool checkNear) {
@@ -21184,8 +21816,25 @@ void OnRenderScene(bool underwater) {
         (aircraftLod.coarseShellActive ||
          aircraftLod.flightRangeOverrideActive)
         ? aircraftLod.farClipM : 0.0f;
+    float tabletopEyeFarClip = 0.0f;
+    if (tabletopFrame && g_tabletopRadiusCenterValid) {
+        const float dx = base.pos.x - g_tabletopRadiusCenter.x;
+        const float dy = base.pos.y - g_tabletopRadiusCenter.y;
+        const float dz = base.pos.z - g_tabletopRadiusCenter.z;
+        const float playerSlant = std::sqrt(dx * dx + dy * dy + dz * dz);
+        // The design radius is horizontal. Elevating the miniature must not
+        // push CJ or the ground through a camera-depth far plane, so include
+        // the complete player-to-viewer slant plus the ground-first margin.
+        if (std::isfinite(playerSlant)) {
+            tabletopEyeFarClip = std::clamp(
+                playerSlant + tabletop::RadiusMeters() +
+                    kTabletopGroundOverscanM + 40.0f,
+                200.0f, 2500.0f);
+        }
+    }
     float eyeFarClip = g.RwCameraSetFarClipPlane
-        ? std::max({savedFarClip, requestedFarClip, aircraftEyeFarClip})
+        ? std::max({savedFarClip, requestedFarClip, aircraftEyeFarClip,
+                    tabletopEyeFarClip})
         : savedFarClip;
     // A camera-depth fog plane necessarily rotates with HMD yaw and pitch.
     // During every stereo world pass, neutralise that plane at the far edge and
@@ -21220,7 +21869,7 @@ void OnRenderScene(bool underwater) {
                  aircraftLod.altitudeM,mobileFog.start,mobileFog.end);
     }
     g_aircraftFogWasActive=aircraftFogFlight;
-    const bool groundFogActive=aircraftFogFlight&&
+    const bool groundFogActive=!tabletopFrame&&aircraftFogFlight&&
         g_aircraftGroundFogBaseline.valid;
     const MobileDistanceFogSnapshot fogForEyes=mobileFog.valid
         ?mobileFog:g_aircraftGroundFogBaseline;
@@ -21247,12 +21896,15 @@ void OnRenderScene(bool underwater) {
     const bool worldFogNeutralActive = !groundFogActive&&mobileFog.valid &&
         std::isfinite(savedFogPlane) && savedFogPlane > eyeNearClip + 5.0f &&
         std::isfinite(eyeFarClip) && eyeFarClip > savedFogPlane + 10.0f;
+    const bool tabletopFogOverride = tabletopFrame && mobileFog.valid;
     // The layered cylinder was world-locked, but its twelve full-screen alpha
     // shells exposed visible rings and consumed the flight GPU budget.  Keep
     // the cheap mobile fog plane neutral at the projection edge and do not draw
     // any replacement geometry.  HLOD remains the distant colour underlay.
     const bool aircraftRadialFogActive = false;
-    const float eyeFogPlane=groundFogActive
+    const float eyeFogPlane=tabletopFrame
+        ?eyeFarClip-aircraftFogFarMargin
+        :groundFogActive
         ?g_aircraftGroundFogBaseline.start
         :(worldFogNeutralActive
             ?(aircraftRadialFogActive
@@ -21358,9 +22010,10 @@ void OnRenderScene(bool underwater) {
         // Reassert the compensated start after BeginUpdate so the GLES shaders,
         // rather than only the RwCamera struct, observe the aircraft ring.
         const bool mobileFogApplied =
-            (worldFogNeutralActive||groundFogActive) &&
+            (worldFogNeutralActive||groundFogActive||tabletopFogOverride) &&
             ApplyMobileDistanceFog(fogForEyes,eyeFogPlane,eyeFogEnd);
-        if (e == 0 && (worldFogNeutralActive||groundFogActive)) {
+        if (e == 0 &&
+            (worldFogNeutralActive||groundFogActive||tabletopFogOverride)) {
             static unsigned int mobileFogLogCounter = 0;
             if ((++mobileFogLogCounter % 144u) == 1u) {
                 const auto& fogApi = DistanceFogApi();
@@ -21428,14 +22081,15 @@ void OnRenderScene(bool underwater) {
                 if (g.DefinedState) g.DefinedState();
             }
             g_aircraftFogSceneOverridePending =
-                worldFogNeutralActive||groundFogActive;
+                worldFogNeutralActive||groundFogActive||tabletopFogOverride;
             if (g_aircraftFogSceneOverridePending) {
                 g_aircraftFogSceneSnapshot = fogForEyes;
                 g_aircraftFogSceneStart = eyeFogPlane;
                 g_aircraftFogSceneEnd = eyeFogEnd;
             }
             g_origRenderScene(underwater);                   // world -> eye raster[set][e]
-            if (e == 0 && (worldFogNeutralActive||groundFogActive)) {
+            if (e == 0 &&
+                (worldFogNeutralActive||groundFogActive||tabletopFogOverride)) {
                 static unsigned int postSceneFogLogCounter = 0;
                 if ((++postSceneFogLogCounter % 144u) == 1u) {
                     const auto& fogApi = DistanceFogApi();
@@ -22437,6 +23091,39 @@ void OnRenderScene(bool underwater) {
 // BUILDING/DUMMY entities get a separate render-only safety radius, because the
 // single mono frustum was proven to cut even 150 m palm models at about 45 m.
 
+constexpr float kTabletopPlayerSafetyRadiusM = 30.0f;
+
+bool ReadTabletopPlayerSafetyCenter(V3* out) {
+    if (!out || !g_tabletopActive.load(std::memory_order_acquire) ||
+        !g_tabletopPlayerSafetyValid.load(std::memory_order_acquire))
+        return false;
+    *out = {
+        g_tabletopPlayerSafetyX.load(std::memory_order_relaxed),
+        g_tabletopPlayerSafetyY.load(std::memory_order_relaxed),
+        g_tabletopPlayerSafetyZ.load(std::memory_order_relaxed),
+    };
+    return Finite(*out);
+}
+
+bool TabletopWorldInsidePlayerSafety(const V3& world, float allowance) {
+    V3 player{};
+    if (!ReadTabletopPlayerSafetyCenter(&player)) return false;
+    const float dx = world.x - player.x;
+    const float dy = world.y - player.y;
+    const float radius = kTabletopPlayerSafetyRadiusM +
+        std::clamp(allowance, 0.0f, 30.0f);
+    return std::isfinite(dx) && std::isfinite(dy) &&
+        dx * dx + dy * dy <= radius * radius;
+}
+
+bool TabletopEntityInsidePlayerSafety(const void* entity) {
+    if (!entity || !g_tabletopActive.load(std::memory_order_acquire))
+        return false;
+    V3 world{};
+    return ReadEntityWorldPosition(entity, &world) &&
+        TabletopWorldInsidePlayerSafety(world);
+}
+
 bool OnGetIsOnScreen(void* entity) {
     const bool stereo = g_stereoActive.load(std::memory_order_relaxed);
     if (stereo && entity &&
@@ -22447,6 +23134,12 @@ bool OnGetIsOnScreen(void* entity) {
         // invisible vehicle permanently occupying a traffic slot.
         return false;
     }
+    // A miniature character or car must never disappear while its shadow
+    // remains. Keep one bounded, player-centred island out of all phone-camera
+    // frustum decisions; the larger selectable tabletop circle remains subject
+    // to the normal per-eye dispatch optimization.
+    if (stereo &&
+        TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return true;
     const bool profileCull = stereo && ShouldProfileCullOnCurrentThread();
     const auto* entityBytes = static_cast<const std::uint8_t*>(entity);
     const int entityType = entity ? (entityBytes[0x5a] & 0x7) : 0;
@@ -22751,15 +23444,14 @@ bool OnIsEntityOccluded(void* entity) {
     // occlusion was calculated for the logical phone camera and can hide a
     // building that is plainly visible from above or from the opposite side.
     // Keep the bypass bounded by the selected render radius.
+    if (TabletopEntityInsidePlayerSafety(entity)) return false;
     if (g_tabletopActive.load(std::memory_order_acquire) && entity &&
         g_tabletopRadiusCenterValid) {
         V3 world{};
         if (ReadEntityWorldPosition(entity, &world)) {
-            const float dx = world.x - g_tabletopRadiusCenter.x;
-            const float dy = world.y - g_tabletopRadiusCenter.y;
-            const float radius = tabletop::RadiusMeters() + 6.0f;
-            if (std::isfinite(dx) && std::isfinite(dy) &&
-                dx * dx + dy * dy <= radius * radius) {
+            const float radius = tabletop::RadiusMeters() + 6.0f +
+                kTabletopGroundOverscanM;
+            if (TabletopWorldInsideCoverage(world, radius)) {
                 return false;
             }
         }
@@ -22943,6 +23635,17 @@ bool OnIsSphereVisible(void* cam, const void* origin, float radius) {
             ? g_origIsSphereVisible(cam, origin, radius) : true;
     }
     const bool stereo = g_stereoActive.load(std::memory_order_relaxed);
+    if (stereo && origin &&
+        g_tabletopActive.load(std::memory_order_acquire)) {
+        const float* point = reinterpret_cast<const float*>(origin);
+        const V3 world{point[0], point[1], point[2]};
+        const float allowance = std::isfinite(radius)
+            ? std::max(0.0f, radius) : 0.0f;
+        if (TabletopWorldInsidePlayerSafety(world, allowance) ||
+            TabletopWorldInsideCoverage(
+                world, tabletop::RadiusMeters() +
+                           kTabletopObjectOverscanM + allowance)) return true;
+    }
     const bool profileCull = stereo && ShouldProfileCullOnCurrentThread();
     if (stereo && origin && g.TheCamera) {
         const float* o = reinterpret_cast<const float*>(origin);
@@ -23001,14 +23704,14 @@ bool OnIsSphereVisible(void* cam, const void* origin, float radius) {
         if (auditedStaticCall &&
             g_tabletopActive.load(std::memory_order_acquire) &&
             g_tabletopRadiusCenterValid) {
-            const float tx = o[0] - g_tabletopRadiusCenter.x;
-            const float ty = o[1] - g_tabletopRadiusCenter.y;
             const float extent = std::isfinite(radius)
                 ? std::max(0.0f, radius) : 0.0f;
-            const float tabletopRadius = tabletop::RadiusMeters();
-            if (std::isfinite(tx) && std::isfinite(ty) &&
-                std::isfinite(tabletopRadius) && tabletopRadius > 0.0f &&
-                std::hypot(tx, ty) - extent <= tabletopRadius) {
+            const float tabletopRadius = tabletop::RadiusMeters() +
+                kTabletopGroundOverscanM;
+            const V3 tabletopPoint{o[0], o[1], o[2]};
+            if (std::isfinite(tabletopRadius) && tabletopRadius > 0.0f &&
+                TabletopWorldInsideCoverage(
+                    tabletopPoint, tabletopRadius + extent)) {
                 return true;
             }
         }
@@ -24343,7 +25046,8 @@ void OnScanWorld() {
         g_tabletopActive.load(std::memory_order_acquire) &&
         g_tabletopRadiusCenterValid;
     const float configuredNearbyRadius = tabletopRadialScan
-        ? std::max(EffectiveNearbySectorScanM(), tabletop::RadiusMeters())
+        ? std::max(EffectiveNearbySectorScanM(),
+                   tabletop::RadiusMeters() + kTabletopGroundOverscanM)
         : EffectiveNearbySectorScanM();
     // Aircraft max-gaze admission relies on phase 2 visiting the complete
     // ordinary 300 m disk.  TreesPalmsM currently supplies that radius, but a
@@ -24391,10 +25095,20 @@ void OnScanWorld() {
             static_cast<int>(std::floor((world - kWorldMin) / kSectorM)),
             0, kSectorCount - 1);
     };
-    const int minX = sectorIndex(cameraX - radius);
-    const int maxX = sectorIndex(cameraX + radius);
-    const int minY = sectorIndex(cameraY - radius);
-    const int maxY = sectorIndex(cameraY + radius);
+    const TabletopCoverageMode coverageMode = static_cast<TabletopCoverageMode>(
+        g_tabletopCoverageMode.load(std::memory_order_acquire));
+    const bool playerOnlyCoverage = tabletopRadialScan &&
+        coverageMode == TabletopCoverageMode::PlayerOnly;
+    const float coverageX = tabletopRadialScan &&
+            g_tabletopViewCoverageCenterValid && !playerOnlyCoverage
+        ? g_tabletopViewCoverageCenter.x : cameraX;
+    const float coverageY = tabletopRadialScan &&
+            g_tabletopViewCoverageCenterValid && !playerOnlyCoverage
+        ? g_tabletopViewCoverageCenter.y : cameraY;
+    const int minX = sectorIndex(std::min(cameraX, coverageX) - radius);
+    const int maxX = sectorIndex(std::max(cameraX, coverageX) + radius);
+    const int minY = sectorIndex(std::min(cameraY, coverageY) - radius);
+    const int maxY = sectorIndex(std::max(cameraY, coverageY) + radius);
     const float radiusSq = radius * radius;
     // Keep a small omnidirectional safety island for head translation and rapid
     // turns. Outside it, visit only sectors intersecting the deliberately wide
@@ -24427,6 +25141,14 @@ void OnScanWorld() {
     const double cpuStart = perf::ThreadCpuMs();
     int sectors = 0;
     int coneRejectedSectors = 0;
+    struct TabletopSectorCandidate {
+        int x{};
+        int y{};
+        float playerDistanceSq{};
+        float coverageT{};
+    };
+    std::vector<TabletopSectorCandidate> tabletopSectors;
+    if (tabletopRadialScan) tabletopSectors.reserve(192);
 
     const float savedRendererCameraX = g.CRenderer_ms_vecCameraPosition[0];
     const float savedRendererCameraY = g.CRenderer_ms_vecCameraPosition[1];
@@ -24445,7 +25167,15 @@ void OnScanWorld() {
             const float sectorMaxX = sectorMinX + kSectorM;
             const float closestX = std::clamp(cameraX, sectorMinX, sectorMaxX);
             const float dx = closestX - cameraX;
-            if (dx * dx + dy * dy > radiusSq) continue;
+            if (tabletopRadialScan) {
+                const float centreX = sectorMinX + 0.5f * kSectorM;
+                const float centreY = sectorMinY + 0.5f * kSectorM;
+                const float conservativeRadius = radius + kSectorHalfDiagonalM;
+                if (!TabletopCoverageContains2D(
+                        centreX, centreY, conservativeRadius)) continue;
+            } else if (dx * dx + dy * dy > radiusSq) {
+                continue;
+            }
             const bool intersectsNearSafety =
                 dx * dx + dy * dy <=
                     kUnconditionalNearbyM * kUnconditionalNearbyM;
@@ -24466,13 +25196,77 @@ void OnScanWorld() {
                     continue;
                 }
             }
+            if (tabletopRadialScan) {
+                // Distance/LOD tests inside ScanSectorList should measure from
+                // the nearest point on the player-to-headset bridge, not from
+                // one endpoint with a large height-dependent slant distance.
+                const float centreX = sectorMinX + 0.5f * kSectorM;
+                const float centreY = sectorMinY + 0.5f * kSectorM;
+                const float t = playerOnlyCoverage
+                    ? 0.0f : TabletopCoverageSegmentT(centreX, centreY);
+                const float playerDx = centreX - cameraX;
+                const float playerDy = centreY - cameraY;
+                tabletopSectors.push_back({sectorX, sectorY,
+                    playerDx * playerDx + playerDy * playerDy, t});
+                continue;
+            }
             g.CRenderer_ScanSectorList(sectorX, sectorY);
             ++sectors;
         }
     }
     if (tabletopRadialScan) {
+        // GTA's visible lists are capacity limited. Visit player sectors first
+        // so terrain/roads under CJ win over viewer-island props if a busy frame
+        // fills that capacity. This is also the ground-before-floating-detail
+        // policy for the adaptive tabletop scan.
+        std::stable_sort(tabletopSectors.begin(), tabletopSectors.end(),
+            [](const TabletopSectorCandidate& a,
+               const TabletopSectorCandidate& b) {
+                return a.playerDistanceSq < b.playerDistanceSq;
+            });
+        const bool frozen = g_tabletopCoverageFrozen.load(
+            std::memory_order_acquire);
+        const int warmup = g_tabletopCoverageWarmupFrames.load(
+            std::memory_order_acquire);
+        const float playerSectorRadius = radius + kSectorHalfDiagonalM;
+        const float playerSectorRadiusSq =
+            playerSectorRadius * playerSectorRadius;
+        int remoteScanned = 0;
+        const int remoteBudget = frozen ? 0 :
+            (warmup > 0 ? 8 + (45 - std::min(45, warmup)) * 4
+                        : std::numeric_limits<int>::max());
+        for (const TabletopSectorCandidate& candidate : tabletopSectors) {
+            const bool playerSector =
+                candidate.playerDistanceSq <= playerSectorRadiusSq;
+            if (!playerSector && remoteScanned >= remoteBudget) continue;
+            g.CRenderer_ms_vecCameraPosition[0] = cameraX +
+                (coverageX - cameraX) * candidate.coverageT;
+            g.CRenderer_ms_vecCameraPosition[1] = cameraY +
+                (coverageY - cameraY) * candidate.coverageT;
+            g.CRenderer_ScanSectorList(candidate.x, candidate.y);
+            ++sectors;
+            if (!playerSector) ++remoteScanned;
+        }
+        if (!frozen && warmup > 0)
+            g_tabletopCoverageWarmupFrames.fetch_sub(
+                1, std::memory_order_acq_rel);
         g.CRenderer_ms_vecCameraPosition[0] = savedRendererCameraX;
         g.CRenderer_ms_vecCameraPosition[1] = savedRendererCameraY;
+
+        static double lastTabletopScanLogMs = 0.0;
+        const double tabletopNowMs = NowMs();
+        if (tabletopNowMs - lastTabletopScanLogMs >= 1000.0) {
+            lastTabletopScanLogMs = tabletopNowMs;
+            const float separation = g_tabletopViewCoverageCenterValid
+                ? std::hypot(coverageX - cameraX, coverageY - cameraY) : 0.0f;
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.scan] profile=%s frozen=%d warmup=%d "
+                "separation=%.1f candidates=%zu scanned=%d remote=%d",
+                TabletopCoverageModeName(coverageMode), frozen ? 1 : 0,
+                warmup, static_cast<double>(separation),
+                tabletopSectors.size(), sectors, remoteScanned);
+        }
     }
 
     // Phase 2 deliberately keeps the proven retail 300 m footprint. Once all
@@ -25413,6 +26207,74 @@ void InstallGameUpdateHitchProfiler() {
     dlclose(gameHandle);
 }
 #endif
+
+using TabletopPlantUpdateFn = void (*)(const void*);
+using SetGrassAlphaDistanceFn = void (*)(float, float);
+TabletopPlantUpdateFn g_origTabletopPlantUpdate = nullptr;
+SetGrassAlphaDistanceFn g_setGrassAlphaDistance = nullptr;
+
+void OnTabletopPlantUpdate(const void* cameraPosition) {
+    ScopedGameUpdateTiming timing(GameUpdateSubsystem::Plants);
+    const void* effectivePosition = cameraPosition;
+    V3 tabletopCenter{};
+    if (g_tabletopActive.load(std::memory_order_acquire) &&
+        g_tabletopRadiusCenterValid) {
+        tabletopCenter = g_tabletopRadiusCenter;
+        effectivePosition = &tabletopCenter;
+        if (g_setGrassAlphaDistance) {
+            // CPlantMgr accepts only one centre. The old midpoint/giant-circle
+            // compromise could spend the grass budget halfway down a long
+            // player-to-headset bridge and leave bare terrain beside CJ. Player
+            // ground is authoritative; the bounded viewer island is handled by
+            // ordinary sector geometry rather than stealing the plant centre.
+            const float farM = tabletop::RadiusMeters() + 18.0f;
+            const float closeM = std::max(20.0f, farM - 24.0f);
+            g_setGrassAlphaDistance(closeM, farM);
+        }
+    }
+    if (g_origTabletopPlantUpdate)
+        g_origTabletopPlantUpdate(effectivePosition);
+}
+
+void InstallTabletopPlantCoverage() {
+    if (!tabletop::Enabled() || !g.LoadBase) return;
+    void* const gameHandle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!gameHandle) {
+        LOGW("[tabletop.plants] libGame handle unavailable");
+        return;
+    }
+    void* const update = dlsym(
+        gameHandle, "_ZN9CPlantMgr6UpdateERK7CVector");
+    void* const distances = dlsym(
+        gameHandle, "_ZN14CGrassRenderer20SetCloseFarAlphaDistEff");
+    static constexpr std::uint32_t kUpdatePrologue[4] = {
+        0x6dbc23e9u, 0xa9017bfdu, 0xf90013f5u, 0xa9034ff4u,
+    };
+    static constexpr std::uint32_t kDistancePrologue[4] = {
+        0xb00026c8u, 0xb00026c9u, 0xf942f908u, 0xf942fd29u,
+    };
+    const bool updateFingerprint = update &&
+        reinterpret_cast<std::uintptr_t>(update) - g.LoadBase == 0x35f898u &&
+        std::memcmp(update, kUpdatePrologue, sizeof(kUpdatePrologue)) == 0;
+    const bool distanceFingerprint = distances &&
+        reinterpret_cast<std::uintptr_t>(distances) - g.LoadBase == 0x35e51cu &&
+        std::memcmp(distances, kDistancePrologue,
+                    sizeof(kDistancePrologue)) == 0;
+    if (distanceFingerprint) {
+        g_setGrassAlphaDistance =
+            reinterpret_cast<SetGrassAlphaDistanceFn>(distances);
+    }
+    if (updateFingerprint) {
+        g_origTabletopPlantUpdate = reinterpret_cast<TabletopPlantUpdateFn>(
+            InstallTrampoline(update,
+                reinterpret_cast<void*>(&OnTabletopPlantUpdate)));
+    }
+    LOGI("[tabletop.plants] update_hook=%d update_fp=%d distance_fp=%d radius=%.0fm",
+         g_origTabletopPlantUpdate ? 1 : 0, updateFingerprint ? 1 : 0,
+         distanceFingerprint ? 1 : 0,
+         static_cast<double>(tabletop::RadiusMeters()));
+    dlclose(gameHandle);
+}
 
 void InstallDynamicShadowSupport() {
     void* const gameHandle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
@@ -29528,6 +30390,33 @@ bool GetLocalHeadYaw(float* yawOut) {
     return std::isfinite(*yawOut);
 }
 
+bool TransformTabletopMoveStick(float* x, float* y) {
+    if (!x || !y || !tabletop::Enabled() ||
+        !g_tabletopActive.load(std::memory_order_acquire) ||
+        !g_logicalVrCameraValid || !g_tabletopRenderCameraValid) {
+        return false;
+    }
+    const float gameYaw = std::atan2(-g_logicalVrCamera.forward.x,
+                                      g_logicalVrCamera.forward.y);
+    const float visibleYaw = std::atan2(-g_tabletopRenderCamera.forward.x,
+                                         g_tabletopRenderCamera.forward.y);
+    if (!std::isfinite(gameYaw) || !std::isfinite(visibleYaw)) return false;
+
+    float delta = gameYaw - visibleYaw;
+    while (delta > 3.14159265f) delta -= 6.28318531f;
+    while (delta < -3.14159265f) delta += 6.28318531f;
+    const float oldX = *x;
+    const float oldY = *y;
+    const float c = std::cos(delta);
+    const float s = std::sin(delta);
+    // This is inverse(cameraGame) * cameraVisible in GTA's right/forward
+    // stick convention. Feeding it to the hidden camera reconstructs exactly
+    // the world direction shown by the tabletop camera.
+    *x = oldX * c + oldY * s;
+    *y = oldY * c - oldX * s;
+    return std::isfinite(*x) && std::isfinite(*y);
+}
+
 bool GetWeaponFireRay(int hand, int weaponType,
                       float originOut[3], float directionOut[3]) {
     if (!originOut || !directionOut || hand < 0 || hand > 1 || weaponType == 0 ||
@@ -29615,6 +30504,9 @@ bool GetHolsterAnchorTracking(int point, float positionOut[3]) {
 }
 
 void RequestRecenter() {
+    if (tabletop::Enabled()) {
+        RequestTabletopRecenter("manual-recenter");
+    }
     g_origin.valid=false;
     g_vrBaseValid=false;
     g_staticCullCone = {};
@@ -29684,6 +30576,7 @@ bool Install() {
     InstallTextureUploadBatchHook();
     InstallRenderQueueFinishDeferHook();
     InstallRenderQueueEyeSetBackingHooks();
+    InstallTabletopPlantCoverage();
 #ifdef SAVR_DEV
     InstallGameUpdateHitchProfiler();
 #endif
@@ -30031,6 +30924,53 @@ bool Install() {
     } else {
         LOGW("[wpn] _ZN7CClouds6RenderEv unresolved - opaque-weapon reorder disabled");
     }
+
+    // Passthrough already replaces the sky in tabletop mode. GTA also draws
+    // three separate translucent atmospheric layers from the elevated camera:
+    // a high-altitude cloud floor, volumetric clouds and moving fog. Hook their
+    // verified retail entries and omit them only while recording tabletop eyes;
+    // reflections, ordinary VR and the flat phone pass remain stock.
+    void* const atmosphereHandle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    const auto installAtmosphereLayer = [&](const char* label,
+                                            const char* symbol,
+                                            std::uintptr_t offset,
+                                            const std::uint32_t (&prologue)[4],
+                                            void* replacement,
+                                            TabletopAtmosphereRenderFn* original) {
+        void* const target = atmosphereHandle ? dlsym(atmosphereHandle, symbol)
+                                              : nullptr;
+        const bool fingerprint = target && g.LoadBase &&
+            reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == offset &&
+            std::memcmp(target, prologue, sizeof(prologue)) == 0;
+        if (fingerprint) {
+            *original = reinterpret_cast<TabletopAtmosphereRenderFn>(
+                InstallTrampoline(target, replacement));
+        }
+        LOGI("[tabletop.atmosphere] %s hook=%d fingerprint=%d",
+             label, *original ? 1 : 0, fingerprint ? 1 : 0);
+    };
+    static constexpr std::uint32_t kHeightCloudFloorPrologue[4] = {
+        0xd10383ffu, 0x6d043befu, 0x6d0533edu, 0x6d062bebu};
+    static constexpr std::uint32_t kVolumetricCloudPrologue[4] = {
+        0xd10443ffu, 0x6d073befu, 0x6d0833edu, 0x6d092bebu};
+    static constexpr std::uint32_t kMovingFogPrologue[4] = {
+        0xd10383ffu, 0x6d043befu, 0x6d0533edu, 0x6d062bebu};
+    installAtmosphereLayer(
+        "height_cloud_floor", "_ZN7CClouds22RenderBottomFromHeightEv",
+        0x5cc0c8u, kHeightCloudFloorPrologue,
+        reinterpret_cast<void*>(&OnTabletopRenderBottomFromHeight),
+        &g_origRenderBottomFromHeight);
+    installAtmosphereLayer(
+        "volumetric_clouds", "_ZN7CClouds22VolumetricCloudsRenderEv",
+        0x5ccbdcu, kVolumetricCloudPrologue,
+        reinterpret_cast<void*>(&OnTabletopVolumetricCloudsRender),
+        &g_origVolumetricCloudsRender);
+    installAtmosphereLayer(
+        "moving_fog", "_ZN7CClouds15MovingFogRenderEv",
+        0x5cd7ecu, kMovingFogPrologue,
+        reinterpret_cast<void*>(&OnTabletopMovingFogRender),
+        &g_origMovingFogRender);
+    if (atmosphereHandle) dlclose(atmosphereHandle);
 
     // At aircraft altitude retail RenderBottomFromHeight first draws a valid
     // 16-segment world-space cloud ring, then appends up to thirty legacy

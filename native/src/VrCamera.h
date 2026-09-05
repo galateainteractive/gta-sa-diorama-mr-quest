@@ -54,6 +54,12 @@ void SetStereoBaseSize(int width, int height);
 // uses it as the steering input, matching the PC GTA SA VR implementation.
 bool GetLocalHeadYaw(float* yawOut);
 
+// Convert a mapped on-foot stick from the visible tabletop camera frame into
+// the hidden logical GTA camera frame that ultimately interprets CPad. This
+// keeps push-forward aligned with what the player sees after map rotation,
+// vehicle exits, camera-mode changes and respawns.
+bool TransformTabletopMoveStick(float* x, float* y);
+
 // While true, the pad hook stops writing the left stick into CPad::NewState, so
 // the stick drives a VR menu instead of walking the player. Set by the input
 // layer whenever a VR menu (cheats or calibration) is open.

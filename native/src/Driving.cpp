@@ -1769,6 +1769,12 @@ bool HasPlayerVehicle() {
 int OnGetAccelerate(void* pad) {
     if (VrGameplayInputAllowed()&&HasPlayerVehicle()) {
         xr::InputState input{}; xr::GetInput(input);
+        // Tabletop is deliberately a conventional third-person control
+        // profile. Do not inherit a saved cockpit/handlebar throttle mode:
+        // the miniature vehicle always accelerates with the right trigger.
+        if (vrcam::IsTabletopActive())
+            return static_cast<int>(
+                std::clamp(input.triggers[1],0.0f,1.0f)*255.0f);
         const int appearance=GetActiveVehicleAppearance();
         if (appearance==2&&ModeForAppearance(appearance)==MODE_IMMERSIVE) {
             std::lock_guard<std::mutex> lock(g_stateMutex);
@@ -1816,6 +1822,17 @@ void ReadMappedGameplaySticks(const xr::InputState& input,
 int OnGetSteering(void* pad) {
     EnsureInit();
     if (VrGameplayInputAllowed()&&HasPlayerVehicle()) {
+        if (vrcam::IsTabletopActive()) {
+            // A saved IMMERSIVE/MOTION vehicle mode normally replaces the
+            // stick with a grabbed wheel/controller yaw. In tabletop, use a
+            // stable profile: physical LEFT stick X always steers.
+            xr::InputState input{}; xr::GetInput(input);
+            float steer=std::clamp(input.leftStick[0],-1.0f,1.0f);
+            if (locomotion::GetStickOption(
+                    locomotion::STICK_OPT_MOVE_X_INVERT))
+                steer=-steer;
+            return static_cast<int>(steer*128.0f);
+        }
         const int steerAppearance=GetActiveVehicleAppearance();
         if ((steerAppearance==1||steerAppearance==2)&&
             ModeForAppearance(steerAppearance)==MODE_MOTION) {

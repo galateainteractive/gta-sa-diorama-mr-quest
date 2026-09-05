@@ -1012,7 +1012,9 @@ def patch_manifest(text: str) -> str:
         '    <uses-feature android:name="android.hardware.vr.headtracking" '
         'android:required="true" android:version="1"/>\n'
         '    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" '
-        'android:required="false"/>\n    <application',
+        # Meta's native OpenXR runtime only exposes XR_FB_passthrough when the
+        # app declares passthrough as a required feature.
+        'android:required="true"/>\n    <application',
         1,
     )
     return text

@@ -46,5 +46,136 @@ $physicalIpd = 0.064
 $gameIpd = $physicalIpd / $scale
 Assert-Close ($gameIpd * $scale) $physicalIpd 'stereo IPD'
 
+function Get-CapsuleDistanceSquared {
+    param(
+        [double]$PointX, [double]$PointY,
+        [double]$StartX, [double]$StartY,
+        [double]$EndX, [double]$EndY
+    )
+    $abX = $EndX - $StartX
+    $abY = $EndY - $StartY
+    $lengthSquared = $abX * $abX + $abY * $abY
+    $t = if ($lengthSquared -lt 0.0001) { 0.0 } else {
+        [Math]::Max(0.0, [Math]::Min(1.0,
+            (($PointX - $StartX) * $abX +
+             ($PointY - $StartY) * $abY) / $lengthSquared))
+    }
+    $closestX = $StartX + $abX * $t
+    $closestY = $StartY + $abY * $t
+    $dx = $PointX - $closestX
+    $dy = $PointY - $closestY
+    return $dx * $dx + $dy * $dy
+}
+
+# Coverage is a horizontal capsule from the player to the reprojected headset.
+# Height is deliberately absent: the same X/Y must remain admitted whether the
+# miniature is ten centimetres or two metres below the viewer.
+Assert-Close (Get-CapsuleDistanceSquared 50 8 0 0 100 0) 64 `
+    'capsule corridor'
+Assert-Close (Get-CapsuleDistanceSquared -3 4 0 0 100 0) 25 `
+    'capsule start cap'
+Assert-Close (Get-CapsuleDistanceSquared 103 4 0 0 100 0) 25 `
+    'capsule end cap'
+
+function Test-CoverageProfile {
+    param(
+        [double]$PointX, [double]$PointY,
+        [double]$PlayerX, [double]$PlayerY,
+        [double]$ViewerX, [double]$ViewerY,
+        [double]$PlayerRadius,
+        [ValidateSet('player-only','connected','islands')]
+        [string]$Profile
+    )
+    $playerDx = $PointX - $PlayerX
+    $playerDy = $PointY - $PlayerY
+    if ($playerDx * $playerDx + $playerDy * $playerDy -le
+        $PlayerRadius * $PlayerRadius) { return $true }
+    if ($Profile -eq 'player-only') { return $false }
+    if ($Profile -eq 'connected') {
+        return (Get-CapsuleDistanceSquared $PointX $PointY `
+            $PlayerX $PlayerY $ViewerX $ViewerY) -le
+            $PlayerRadius * $PlayerRadius
+    }
+    $viewerRadius = [Math]::Min($PlayerRadius, 55.0)
+    $viewerDx = $PointX - $ViewerX
+    $viewerDy = $PointY - $ViewerY
+    if ($viewerDx * $viewerDx + $viewerDy * $viewerDy -le
+        $viewerRadius * $viewerRadius) { return $true }
+    $separation = [Math]::Sqrt(
+        ($ViewerX - $PlayerX) * ($ViewerX - $PlayerX) +
+        ($ViewerY - $PlayerY) * ($ViewerY - $PlayerY))
+    if ($separation -gt 140.0) { return $false }
+    $bridgeRadius = [Math]::Min($PlayerRadius, 28.0)
+    return (Get-CapsuleDistanceSquared $PointX $PointY `
+        $PlayerX $PlayerY $ViewerX $ViewerY) -le
+        $bridgeRadius * $bridgeRadius
+}
+
+# Package 10 profiles: pure player circle, a complete connected capsule, and
+# the bounded Package 9 islands. A two-hand manipulation freezes the endpoint
+# rather than deleting already visible remote content.
+if (Test-CoverageProfile 100 0 0 0 100 0 80 'player-only') {
+    throw 'player-only profile retained the viewer island'
+}
+if (-not (Test-CoverageProfile 100 60 0 0 100 0 80 'connected')) {
+    throw 'connected profile did not retain the full-radius capsule'
+}
+if (-not (Test-CoverageProfile 75 0 0 0 100 0 80 'islands')) {
+    throw 'near bridge rejected an admitted corridor point'
+}
+if (Test-CoverageProfile 100 60 0 0 100 0 80 'islands') {
+    throw 'viewer island exceeded its bounded radius'
+}
+if (Test-CoverageProfile 100 0 0 0 200 0 80 'islands') {
+    throw 'far disconnected islands accidentally retained the giant bridge'
+}
+if (-not (Test-CoverageProfile 200 40 0 0 200 0 80 'islands')) {
+    throw 'far viewer island was not retained'
+}
+
+# A high camera requires its full slant distance plus the horizontal radius;
+# otherwise a 2D-visible player can still be removed by the 3D far plane.
+$verticalSeparation = 180.0
+$horizontalSeparation = 40.0
+$playerSlant = [Math]::Sqrt(
+    $verticalSeparation * $verticalSeparation +
+    $horizontalSeparation * $horizontalSeparation)
+if (($playerSlant + 80.0) -le $verticalSeparation) {
+    throw 'height-independent far clip did not include horizontal coverage'
+}
+
+# Fixed-camera zoom keeps the player at the same physical point. The anchor
+# moves by exactly the inverse scale delta instead of scaling around an old
+# hand midpoint that may be far away from CJ.
+$startAnchor = 0.20
+$playerOffsetGame = 25.0
+$startPlayerPhysical = $startAnchor + $playerOffsetGame * $scale
+$newScale = $scale * 1.75
+$newAnchor = $startPlayerPhysical - $playerOffsetGame * $newScale
+Assert-Close ($newAnchor + $playerOffsetGame * $newScale) `
+    $startPlayerPhysical 'fixed player zoom pivot'
+
+# CPad interprets its local stick in the hidden logical-camera basis. Rotate
+# that vector by inverse(game) * visible-tabletop and prove that GTA reconstructs
+# the same world vector the player sees. This is the Package 11 exit/respawn
+# direction fix.
+$gameYaw = 2.219
+$visibleYaw = -0.101
+$delta = $gameYaw - $visibleYaw
+$rawX = -0.35
+$rawY = 0.94
+$padX = $rawX * [Math]::Cos($delta) + $rawY * [Math]::Sin($delta)
+$padY = $rawY * [Math]::Cos($delta) - $rawX * [Math]::Sin($delta)
+$worldFromGameX = [Math]::Cos($gameYaw) * $padX -
+                  [Math]::Sin($gameYaw) * $padY
+$worldFromGameY = [Math]::Sin($gameYaw) * $padX +
+                  [Math]::Cos($gameYaw) * $padY
+$worldVisibleX = [Math]::Cos($visibleYaw) * $rawX -
+                 [Math]::Sin($visibleYaw) * $rawY
+$worldVisibleY = [Math]::Sin($visibleYaw) * $rawX +
+                 [Math]::Cos($visibleYaw) * $rawY
+Assert-Close $worldFromGameX $worldVisibleX 'tabletop stick world X'
+Assert-Close $worldFromGameY $worldVisibleY 'tabletop stick world Y'
+
 Write-Output ("PASS scale={0:F3} neutral_back={1:F2}gu neutral_up={2:F2}gu game_ipd={3:F2}gu" -f `
     $scale, $neutralGameBack, $neutralGameUp, $gameIpd)

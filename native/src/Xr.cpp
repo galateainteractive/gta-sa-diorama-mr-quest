@@ -2214,6 +2214,7 @@ bool InitializePassthrough() {
         return false;
     }
     XrPassthroughCreateInfoFB create{XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
+    create.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
     const XrResult createResult =
         g_xrCreatePassthroughFB(s.session, &create, &g_passthrough);
     if (XR_FAILED(createResult)) {
@@ -2225,6 +2226,7 @@ bool InitializePassthrough() {
         XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB};
     layer.passthrough = g_passthrough;
     layer.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+    layer.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
     const XrResult layerResult = g_xrCreatePassthroughLayerFB(
         s.session, &layer, &g_passthroughLayer);
     if (XR_FAILED(layerResult)) {
@@ -2238,6 +2240,7 @@ bool InitializePassthrough() {
     style.textureOpacityFactor = 1.0f;
     style.edgeColor = {0.0f, 0.0f, 0.0f, 0.0f};
     g_xrPassthroughLayerSetStyleFB(g_passthroughLayer, &style);
+    g_passthroughActive.store(true, std::memory_order_release);
     LOGI("[tabletop.passthrough] XR_FB_passthrough initialized");
     return true;
 }
@@ -8638,6 +8641,8 @@ GLuint g_handProg = 0, g_handVbo = 0, g_handEbo = 0, g_handDepthRbo = 0;
 GLint  g_handMvpLoc = -1, g_handTexLoc = -1, g_handSkinLoc = -1;
 int    g_handDepthW = 0, g_handDepthH = 0;
 GLint  g_handDepthFormat = 0, g_handDepthBits = 0;
+GLuint g_tabletopAlphaProgram = 0, g_tabletopAlphaVao = 0;
+bool   g_tabletopAlphaBuildAttempted = false;
 int    g_handDepthRetryCountdown = 0;
 int    g_handDepthFailedW = 0, g_handDepthFailedH = 0;
 GLint  g_handDepthFailedFormat = 0;
@@ -9034,7 +9039,9 @@ void DrawWristPanel(int element, int panelIndex, bool calibrating, int slot,
                     const XrVector3f& alongAxis, const XrVector3f& acrossAxis,
                     const XrVector3f& liftAxis,
                     XrVector3f right, XrVector3f up, XrVector3f normal,
-                    const XrPosef& rp, float gazeRange) {
+                    const XrPosef& rp, float gazeRange,
+                    bool forceVisible, bool facePlayer,
+                    float presentationScale) {
     const hud::ElementSettings settings = hud::GetElementSettings(element);
     if ((!settings.enabled && !calibrating) || settings.sourceWidth <= 0 ||
         settings.sourceHeight <= 0) return;
@@ -9054,12 +9061,24 @@ void DrawWristPanel(int element, int panelIndex, bool calibrating, int slot,
     if (wrist.rollDeg)
         RotateWristAxes(right, up, wrist.rollDeg * kToRadians);
 
-    const float opacity =
-        calibrating ? 1.0f : WristPanelGazeOpacity(rp, centre, gazeRange);
+    if (facePlayer) {
+        const XrVector3f eye{rp.position.x, rp.position.y, rp.position.z};
+        normal = vnorm(vsub(eye, centre));
+        const XrVector3f headUp = QuatRotate(
+            rp.orientation, {0.0f, 1.0f, 0.0f});
+        right = vnorm(vcross(headUp, normal));
+        if (vdot(right, right) < 0.25f)
+            right = QuatRotate(rp.orientation, {1.0f, 0.0f, 0.0f});
+        up = vnorm(vcross(normal, right));
+    }
+
+    const float opacity = (calibrating || forceVisible)
+        ? 1.0f : WristPanelGazeOpacity(rp, centre, gazeRange);
     if (opacity <= 0.0f) return;
 
     const float w = kWristPanelWidthMetres[panelIndex] *
-                    static_cast<float>(wrist.scaleTenths) / 10.0f;
+                    static_cast<float>(wrist.scaleTenths) / 10.0f *
+                    presentationScale;
     const float h = w * static_cast<float>(settings.sourceHeight) /
                     static_cast<float>(settings.sourceWidth);
     const float u0 = static_cast<float>(settings.sourceX) /
@@ -9177,9 +9196,12 @@ void DrawWristPanelsForEye(const float* mvp, const HandPose hands[2],
                            const TwoHandVisualState& twoHand,
                            const driving::WheelVisualState& drivingWheel,
                            unsigned int hudTex, const XrPosef& rp,
-                           unsigned int weaponHandMask) {
+                           unsigned int weaponHandMask,
+                           bool forceEnabled = false,
+                           bool forceControllerAnchors = false) {
     const bool calibrating = g_hudActive.load(std::memory_order_relaxed);
-    if (!hudTex || (!hud::ShouldRenderWristHud() && !calibrating)) return;
+    if (!hudTex || (!hud::GameplayHudEnabled() && !calibrating) ||
+        (!forceEnabled && !hud::ShouldRenderWristHud() && !calibrating)) return;
     EnsureWristProgram();
     if (!g_wristProg) return;
     glUseProgram(g_wristProg);
@@ -9201,7 +9223,8 @@ void DrawWristPanelsForEye(const float* mvp, const HandPose hands[2],
                           reinterpret_cast<void*>(3 * sizeof(float)));
 
     const int panelElements[2] = {hud::RADAR, hud::HEALTH};
-    if (drivingWheel.active || drivingWheel.dashAnchorValid) {
+    if (!forceControllerAnchors &&
+        (drivingWheel.active || drivingWheel.dashAnchorValid)) {
         // Dashboard: one shared anchor at the wheel/handlebar centre, facing
         // the driver, in BOTH driving modes (the geometry frame is published
         // even when the immersive wheel interaction is off).
@@ -9234,7 +9257,7 @@ void DrawWristPanelsForEye(const float* mvp, const HandPose hands[2],
                            base,
                            panelNormal, panelRight, panelUp,
                            panelRight, panelUp, panelNormal, rp,
-                           kDashGazeRange);
+                           kDashGazeRange, false, false, 1.0f);
         }
     } else {
         // Per-panel slot selection: normal wrist, one-hand weapon grip
@@ -9267,7 +9290,12 @@ void DrawWristPanelsForEye(const float* mvp, const HandPose hands[2],
             DrawWristPanel(panelElements[panel], anchorHand, calibrating,
                            slot, -1, base,
                            alongAxis, acrossAxis, liftAxis,
-                           right, up, normal, rp, kWristGazeRange);
+                           right, up, normal, rp,
+                           forceControllerAnchors ? kDashGazeRange
+                                                  : kWristGazeRange,
+                           forceControllerAnchors,
+                           forceControllerAnchors,
+                           forceControllerAnchors ? 1.5f : 1.0f);
         }
     }
     glDisableVertexAttribArray(0);
@@ -9280,6 +9308,65 @@ void DrawWristPanelsForEye(const float* mvp, const HandPose hands[2],
         logged = true;
         LOGI("[wrist] panels active (radar=LEFT/dash-left, status=RIGHT/dash-right)");
     }
+}
+
+// Direct mission/help strings do not exist inside the captured phone HUD, so
+// give their live raster textures their own small controller cards. Help/brief
+// rides above the left control and timers/radio above the right; large mission
+// titles remain centred in the view because they are transient scene messages.
+void DrawTabletopControllerTextPanel(const float* mvp, const HandPose& handPose,
+                                     int hand, const HudTextTexture& text,
+                                     float panelWidth, const XrPosef& rp) {
+    if (!text.visible || !text.texture || !handPose.valid) return;
+    EnsureWristProgram();
+    if (!g_wristProg) return;
+    const TwoHandVisualState noWeaponGrip{};
+    XrVector3f base, alongAxis, acrossAxis, liftAxis, right, up, normal;
+    if (!BuildHandPanelAnchor(handPose, hand, noWeaponGrip,
+                              base, alongAxis, acrossAxis, liftAxis,
+                              right, up, normal)) return;
+    const XrVector3f centre = vadd(base, vscale(up, 0.13f));
+    const float opacity = WristPanelGazeOpacity(rp, centre, kDashGazeRange);
+    if (opacity <= 0.0f) return;
+    const float panelHeight = panelWidth *
+        static_cast<float>(text.height) / static_cast<float>(text.width);
+    const XrVector3f rHalf = vscale(right, panelWidth * 0.5f);
+    const XrVector3f uHalf = vscale(up, panelHeight * 0.5f);
+    const XrVector3f tl = vadd(vsub(centre, rHalf), uHalf);
+    const XrVector3f tr = vadd(vadd(centre, rHalf), uHalf);
+    const XrVector3f bl = vsub(vsub(centre, rHalf), uHalf);
+    const XrVector3f br = vsub(vadd(centre, rHalf), uHalf);
+    const float vertices[4 * 5] = {
+        tl.x, tl.y, tl.z, 0.0f, 0.0f,
+        bl.x, bl.y, bl.z, 0.0f, 1.0f,
+        tr.x, tr.y, tr.z, 1.0f, 0.0f,
+        br.x, br.y, br.z, 1.0f, 1.0f,
+    };
+    glUseProgram(g_wristProg);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, text.texture);
+    glBindSampler(0, g_wristSampler);
+    glUniform1i(g_wristTexLoc, 0);
+    glUniformMatrix4fv(g_wristMvpLoc, 1, GL_FALSE, mvp);
+    glUniform1f(g_wristOpacityLoc, opacity);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glBindBuffer(GL_ARRAY_BUFFER, g_wristVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+                          reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glBindSampler(0, 0);
 }
 
 // Procedural per-eye sniper mask. The target port does not yet expose a safe
@@ -10349,6 +10436,186 @@ void DrawWeaponForEye(const float* mvp) {
     if (!logged) { LOGI("[wpn] mesh drawn %d verts %d idx", g_wVc, g_wIc); logged = true; }
 }
 
+bool EnsureTabletopAlphaProgram() {
+    if (g_tabletopAlphaProgram != 0) return true;
+    if (g_tabletopAlphaBuildAttempted) return false;
+    g_tabletopAlphaBuildAttempted = true;
+    const char* vs = "#version 300 es\n"
+                     "void main(){\n"
+                     " vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));\n"
+                     " gl_Position=vec4(p*2.0-1.0,1.0,1.0);\n"
+                     "}\n";
+    const char* fs = "#version 300 es\n"
+                     "precision mediump float; out vec4 o;\n"
+                     "void main(){ o=vec4(0.0,0.0,0.0,1.0); }\n";
+    const GLuint vertex = CompileHandShader(GL_VERTEX_SHADER, vs);
+    const GLuint fragment = CompileHandShader(GL_FRAGMENT_SHADER, fs);
+    g_tabletopAlphaProgram = glCreateProgram();
+    glAttachShader(g_tabletopAlphaProgram, vertex);
+    glAttachShader(g_tabletopAlphaProgram, fragment);
+    glLinkProgram(g_tabletopAlphaProgram);
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+    GLint linked = GL_FALSE;
+    glGetProgramiv(g_tabletopAlphaProgram, GL_LINK_STATUS, &linked);
+    if (linked == GL_FALSE) {
+        char log[512]{};
+        glGetProgramInfoLog(g_tabletopAlphaProgram, sizeof(log), nullptr, log);
+        LOGE("[tabletop.passthrough] alpha-mask link failed: %s", log);
+        glDeleteProgram(g_tabletopAlphaProgram);
+        g_tabletopAlphaProgram = 0;
+        return false;
+    }
+    glGenVertexArrays(1, &g_tabletopAlphaVao);
+    LOGI("[tabletop.passthrough] depth alpha-mask program ready");
+    return g_tabletopAlphaVao != 0;
+}
+
+// RenderWare's post-effects do not preserve a trustworthy alpha channel. Build
+// the compositor mask from the scene depth instead: untouched clear-depth
+// pixels become transparent and every real world fragment becomes opaque.
+bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
+                                       int gameDepthW, int gameDepthH,
+                                       int targetW, int targetH) {
+    if (!vrcam::IsTabletopActive() ||
+        !g_passthroughActive.load(std::memory_order_acquire) ||
+        !EnsureTabletopAlphaProgram()) return false;
+
+    GLint sourceFormat = 0;
+    GLint sourceBits = 0;
+    GLenum queryError = GL_NO_ERROR;
+    if (gameDepthRbo == 0 ||
+        glIsRenderbuffer(gameDepthRbo) != GL_TRUE ||
+        !QueryGameDepthFormat(gameDepthRbo, sourceFormat, sourceBits,
+                              queryError)) {
+        static bool loggedMissingDepth = false;
+        if (!loggedMissingDepth) {
+            loggedMissingDepth = true;
+            LOGW("[tabletop.passthrough] source depth unavailable rbo=%u err=0x%x",
+                 gameDepthRbo, queryError);
+        }
+        return false;
+    }
+    GLenum allocationError = GL_NO_ERROR;
+    if (!EnsureHandDepthStorage(targetW, targetH, sourceFormat,
+                                allocationError) ||
+        g_handDepthBits != sourceBits) {
+        static bool loggedDepthAllocation = false;
+        if (!loggedDepthAllocation) {
+            loggedDepthAllocation = true;
+            LOGW("[tabletop.passthrough] mask depth allocation failed src=0x%x/%d dst=0x%x/%d err=0x%x",
+                 sourceFormat, sourceBits, g_handDepthFormat,
+                 g_handDepthBits, allocationError);
+        }
+        return false;
+    }
+
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s.eyeReadFramebuffer);
+    glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, gameDepthRbo);
+    const GLenum readStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s.framebuffer);
+    glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, g_handDepthRbo);
+    const GLenum drawStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+    bool copied = false;
+    if (readStatus == GL_FRAMEBUFFER_COMPLETE &&
+        drawStatus == GL_FRAMEBUFFER_COMPLETE) {
+        glBlitFramebuffer(0, 0, gameDepthW, gameDepthH,
+                          0, 0, targetW, targetH,
+                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        copied = glGetError() == GL_NO_ERROR;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s.eyeReadFramebuffer);
+    glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s.framebuffer);
+    if (!copied) {
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, 0);
+        static bool loggedCopyFailure = false;
+        if (!loggedCopyFailure) {
+            loggedCopyFailure = true;
+            LOGW("[tabletop.passthrough] depth mask copy failed read=0x%x draw=0x%x",
+                 readStatus, drawStatus);
+        }
+        return false;
+    }
+
+    GLfloat savedClear[4]{};
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, savedClear);
+    glViewport(0, 0, targetW, targetH);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GREATER);
+    glDepthMask(GL_FALSE);
+    glUseProgram(g_tabletopAlphaProgram);
+    glBindVertexArray(g_tabletopAlphaVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    const GLenum maskError = glGetError();
+
+    glBindVertexArray(0);
+    glUseProgram(0);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_DEPTH_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(savedClear[0], savedClear[1], savedClear[2], savedClear[3]);
+    glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                              GL_RENDERBUFFER, 0);
+    static bool loggedSuccess = false;
+    if (!loggedSuccess && maskError == GL_NO_ERROR) {
+        loggedSuccess = true;
+        LOGI("[tabletop.passthrough] depth alpha mask active src=%dx%d dst=%dx%d format=0x%x/%d",
+             gameDepthW, gameDepthH, targetW, targetH,
+             sourceFormat, sourceBits);
+    }
+    return maskError == GL_NO_ERROR;
+}
+
+// Tabletop keeps the game character/vehicles at miniature scale, but its HUD
+// belongs to the real controllers. Draw only the radar/status panels in a late
+// depth-free pass: they stay attached to the tracked grips and can never be
+// hidden behind a building, terrain tile or the passthrough depth mask.
+void DrawTabletopControllerHudForEye(const XrPosef& rp, int eye,
+                                     int targetWidth, int targetHeight,
+                                     const HandPose hands[2],
+                                     unsigned int hudSourceTex) {
+    if (!hudSourceTex || (!hands[0].valid && !hands[1].valid)) return;
+    const float sign = eye == 0 ? -1.0f : 1.0f;
+    const XrVector3f rr = QuatRotate(
+        rp.orientation, {sign * kStereoHalfIpd, 0.0f, 0.0f});
+    const XrVector3f eyePos{rp.position.x + rr.x, rp.position.y + rr.y,
+                            rp.position.z + rr.z};
+    float view[16], projection[16], mvp[16];
+    MatView(view, rp.orientation, eyePos);
+    MatPersp(projection,
+             g_stereoTanX.load(std::memory_order_relaxed),
+             g_stereoTanY.load(std::memory_order_relaxed),
+             0.01f, 20.0f);
+    MatMul(mvp, projection, view);
+
+    glViewport(0, 0, targetWidth, targetHeight);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    const TwoHandVisualState noWeaponGrip{};
+    const driving::WheelVisualState noDashboard{};
+    DrawWristPanelsForEye(mvp, hands, noWeaponGrip, noDashboard,
+                          hudSourceTex, rp, 0u, true, true);
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 // Draw the built hand meshes into the currently-bound swapchain framebuffer for
 // one eye. rp = the presented set's render pose; e = 0 left / 1 right.
 void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
@@ -10364,10 +10631,14 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
                      const HandPose bakedHands[2],
                      const TwoHandVisualState& bakedTwoHand,
                      unsigned int hudSourceTex) {
-    // Tabletop uses the game's own character/vehicle rendering and classic HUD.
-    // Tracked hands, held weapons, cockpit controls and wrist panels are authored
-    // at human scale, so do not composite them over the miniature world.
-    if (vrcam::IsTabletopActive()) return;
+    // The miniature keeps the game's own character/vehicle rendering, while
+    // radar/status remain human-scale controller instruments above the map.
+    // Weapons, hand meshes and cockpit geometry still stay out of this pass.
+    if (vrcam::IsTabletopActive()) {
+        DrawTabletopControllerHudForEye(
+            rp, e, fbW, fbH, bakedHands, hudSourceTex);
+        return;
+    }
     const bool trackedVisuals = !scope.active && drivingWheel.trackedHandsEnabled;
     bool chuteVisuals = false, chuteRingVisual = false;
     {
@@ -10910,6 +11181,9 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         EndXrGpuStage(copyGpuTimer);
         RecordXrCpuStage(e, XrCpuStage::CopySubmit, copyWallStartMs,
                          copyCpuStartMs);
+        ApplyTabletopPassthroughAlphaMask(
+            g_stereoEyeDepth[set][e].load(std::memory_order_relaxed),
+            ew, eh, chain.width, chain.height);
         const double overlayWallStartMs = XrStageNowMs();
         const double overlayCpuStartMs = perf::ThreadCpuMs();
         const bool overlayGpuTimer = BeginXrGpuStage(
@@ -10918,7 +11192,9 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         // CLASSIC hides phone-HUD crops, not text or calibration samples.
         if (hudSource)
             DrawHudComposite(hudSource,chain.width,chain.height,
-                             hud::ShouldRenderClassicHud(),e);
+                             hud::ShouldRenderClassicHud() &&
+                                 !vrcam::IsTabletopActive(),
+                             e);
         DrawHandsForEye(
             rp, e, chain.width, chain.height,
             g_stereoEyeDepth[set][e].load(std::memory_order_relaxed),

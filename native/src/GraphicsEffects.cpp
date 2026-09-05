@@ -3877,6 +3877,12 @@ void RenderEye(void* rwCamera, int eye) {
     const RenderStateSnapshot preProbeState = probeMode > 0
         ? CaptureRenderState()
         : RenderStateSnapshot{};
+    // Vehicle collision sparks are camera-facing Fx billboards. Refresh the
+    // attached CCamera view cache at the last possible point for each eye;
+    // intervening world/effect passes can otherwise leave their vertices
+    // facing the centre/previous camera, which reads as a flat or broken spark
+    // in stereo (especially with the independent tabletop render camera).
+    ScopedEyeViewMatrix fxEyeView(true, eye);
     g_insideFxRender = true;
     g_fxEye = eye;
     g_fn.fxRender(g_fn.fx, rwCamera, 0);
