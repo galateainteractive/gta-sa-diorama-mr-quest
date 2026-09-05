@@ -189,6 +189,9 @@ double MonotonicMs();
 // separately because sparks are emitted as short immediate-mode quads/strips.
 constexpr int kFxStereoDiagnosticCapacity = 256;
 constexpr std::size_t kRwIm3DVertexStride = 36;
+constexpr std::uint32_t kFxStereoStableMaxVertices = 32;
+constexpr std::size_t kFxStereoStableBatchBytes =
+    kFxStereoStableMaxVertices * kRwIm3DVertexStride;
 struct FxBatchSignature {
     std::uint32_t count{};
     std::uint32_t flags{};
@@ -201,6 +204,12 @@ struct FxBatchSignature {
 thread_local FxBatchSignature
     g_fxBatchSignatures[2][kFxStereoDiagnosticCapacity]{};
 thread_local int g_fxBatchCount[2]{};
+// Collision sparks are small, matrix-null world-space Im3D strips. Keep the
+// left-eye source vertices until the matching right-eye submission so both
+// eyes see one physical strip instead of independently rebuilt billboards.
+alignas(16) thread_local std::uint8_t
+    g_fxStableLeftVertices[kFxStereoDiagnosticCapacity]
+                          [kFxStereoStableBatchBytes]{};
 
 struct FxStereoDiagnosticWindow {
     std::uint64_t frames{};
@@ -214,6 +223,7 @@ struct FxStereoDiagnosticWindow {
     std::uint64_t textureDifferent{};
     std::uint64_t smallSame{};
     std::uint64_t smallDifferent{};
+    std::uint64_t smallStabilized{};
     std::uint64_t nullMatrix[2]{};
     double startedMs{};
 };
@@ -254,6 +264,32 @@ void RecordFxStereoBatch(void* vertices, unsigned int count, void* matrix,
             vertices, sampledVertices * kRwIm3DVertexStride);
     }
     if (matrix) signature.matrixHash = HashFxBytes(matrix, 64u);
+    if (g_fxEye == 0 && matrix == nullptr && vertices && count > 0u &&
+        count <= kFxStereoStableMaxVertices) {
+        std::memcpy(g_fxStableLeftVertices[batchCount - 1], vertices,
+                    static_cast<std::size_t>(count) * kRwIm3DVertexStride);
+    }
+}
+
+void* StabilizeFxStereoBatch(void* vertices, unsigned int count, void* matrix,
+                             unsigned int flags, void* texture) {
+    if (g_fxEye != 1 || matrix != nullptr || !vertices || count == 0u ||
+        count > kFxStereoStableMaxVertices || g_fxBatchCount[1] <= 0) {
+        return vertices;
+    }
+    const int index = g_fxBatchCount[1] - 1;
+    if (index >= g_fxBatchCount[0] || index >= kFxStereoDiagnosticCapacity) {
+        return vertices;
+    }
+    const FxBatchSignature& left = g_fxBatchSignatures[0][index];
+    const FxBatchSignature& right = g_fxBatchSignatures[1][index];
+    if (left.count != count || left.flags != flags ||
+        left.texture != reinterpret_cast<std::uintptr_t>(texture) ||
+        !left.matrixNull || left.verticesHash == right.verticesHash) {
+        return vertices;
+    }
+    ++g_fxStereoDiagnostic.smallStabilized;
+    return g_fxStableLeftVertices[index];
 }
 
 void FinishFxStereoDiagnosticEye(int eye) {
@@ -292,7 +328,8 @@ void FinishFxStereoDiagnosticEye(int eye) {
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
         "[spark.diag] frames=%llu calls=%llu/%llu topo_ok/bad=%llu/%llu "
         "geom_same/diff=%llu/%llu small_same/diff=%llu/%llu "
-        "matrix_same/diff=%llu/%llu matrix_null=%llu/%llu tex_diff=%llu",
+        "matrix_same/diff=%llu/%llu matrix_null=%llu/%llu tex_diff=%llu "
+        "small_stable=%llu",
         static_cast<unsigned long long>(window.frames),
         static_cast<unsigned long long>(window.calls[0]),
         static_cast<unsigned long long>(window.calls[1]),
@@ -306,7 +343,8 @@ void FinishFxStereoDiagnosticEye(int eye) {
         static_cast<unsigned long long>(window.matrixDifferent),
         static_cast<unsigned long long>(window.nullMatrix[0]),
         static_cast<unsigned long long>(window.nullMatrix[1]),
-        static_cast<unsigned long long>(window.textureDifferent));
+        static_cast<unsigned long long>(window.textureDifferent),
+        static_cast<unsigned long long>(window.smallStabilized));
     window = {};
     window.startedMs = now;
 }
@@ -3179,12 +3217,15 @@ void* OnIm3DTransform(void* vertices, unsigned int count, void* matrix,
         ++g_aggregate.im3dNullTextureRaster;
     }
     RecordFxStereoBatch(vertices, count, matrix, flags, textureRaster);
+    void* const stereoStableVertices = StabilizeFxStereoBatch(
+        vertices, count, matrix, flags, textureRaster);
     const int probeMode = FxProbeMode();
     if (probeMode > 0) {
         ApplyFxVisibilityProbe(probeMode);
         ++g_aggregate.probeApplications;
     }
-    void* const result = g_origIm3DTransform(vertices, count, matrix, flags);
+    void* const result = g_origIm3DTransform(
+        stereoStableVertices, count, matrix, flags);
     if (result) ++g_aggregate.im3dTransformSuccess;
     return result;
 }
