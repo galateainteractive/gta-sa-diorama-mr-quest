@@ -264,7 +264,6 @@ void SetStereoRenderFov(float tanX, float tanY);
 // compositor reconstructs each world fragment from the matching depth image,
 // so the feather follows the map on the floor instead of becoming a
 // screen-space vignette when the player walks around it.
-inline constexpr int kTabletopCompletionSphereLimit = 8;
 struct TabletopMaskState {
     bool active{false};
     int coverageMode{}; // 0 player circle, 1 connected capsule, 2 islands
@@ -277,12 +276,6 @@ struct TabletopMaskState {
     float viewerRadiusM{};
     float bridgeRadiusM{};
     float featherM{};
-    // A small set of collision-bound volumes for large non-road objects that
-    // cross the edge. The compositor may complete their visible silhouette,
-    // but never farther than completionMaxExtensionM beyond the base mask.
-    int completionSphereCount{};
-    float completionSpheres[kTabletopCompletionSphereLimit][4]{};
-    float completionMaxExtensionM{};
     // GTA's depth projection uses game units; convert reconstructed view
     // distance to OpenXR LOCAL metres before testing the physical boundary.
     float depthScaleMPerGameUnit{1.0f};

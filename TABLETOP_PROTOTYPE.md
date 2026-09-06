@@ -23,6 +23,10 @@ Runtime controls:
 - `R3`: cycle the visible map radius through 30, 60, 75 and 120 metres;
 - `L3 + R3`: reset scale, placement and radius while keeping the current view.
 
+Red mission areas and coloured objective cones follow the same miniature-world
+transform as CJ. Their presentation has a physical minimum size and is drawn as
+navigation UI, so shrinking the model does not hide them in the ground.
+
 The fixed view captures the current player/vehicle frame once. Character and
 vehicle controls continue to use the stock gameplay path while the physical
 table stays in place.

@@ -2944,11 +2944,6 @@ V3 TabletopWorldPointToLocalTracking(V3 world) {
 }
 
 bool Finite(V3 v);
-void ResetTabletopBoundaryCompleters();
-void RegisterTabletopBoundaryCompleter(
-    const void* entity, int entityType, int modelId,
-    const std::uint8_t* collision, float bound);
-void SnapshotTabletopBoundaryCompleters(xr::TabletopMaskState& out);
 
 bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     out = {};
@@ -3016,7 +3011,6 @@ bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     // Four GTA metres at normal scale gives a 16 cm soft edge: wide enough to
     // hide sector pop, narrow enough to retain the crisp tabletop silhouette.
     out.featherM = std::clamp(4.0f * scale, 0.08f, 0.24f);
-    SnapshotTabletopBoundaryCompleters(out);
     out.depthScaleMPerGameUnit = scale;
     return true;
 }
@@ -9369,6 +9363,34 @@ void OnMarkersRender() {
     if (g_origMarkersRender) g_origMarkersRender();
 }
 
+bool ObjectiveMarkerWorldToTracking(const GameSymbols::Vec3& world,
+                                    float tracking[3]) {
+    if (!tracking || !std::isfinite(world.x) || !std::isfinite(world.y) ||
+        !std::isfinite(world.z)) {
+        return false;
+    }
+    if (!g_tabletopActive.load(std::memory_order_acquire)) {
+        const float point[3]{world.x, world.y, world.z};
+        return WorldPointToTracking(point, tracking);
+    }
+    if (!g_tabletopWorldTransformBaseValid || !g_origin.valid) return false;
+    const V3 tabletopPoint = TabletopWorldPointToLocalTracking(
+        {world.x, world.y, world.z});
+    if (!Finite(tabletopPoint)) return false;
+    tracking[0] = tabletopPoint.x;
+    tracking[1] = tabletopPoint.y;
+    tracking[2] = tabletopPoint.z;
+    return true;
+}
+
+float ObjectiveMarkerPresentationScale() {
+    // Mission guidance must remain readable when the user shrinks the model.
+    // Preserve authored growth above the default 1:25 scale, but never shrink
+    // marker geometry below its default physical presentation size.
+    return g_tabletopActive.load(std::memory_order_acquire)
+        ? std::max(0.04f, tabletop::VisualScale()) : 1.0f;
+}
+
 __attribute__((noinline)) void* OnPlaceMarker(
     std::uint64_t id, std::uint16_t type, GameSymbols::Vec3* point, float size,
     std::uint8_t red, std::uint8_t green, std::uint8_t blue,
@@ -9396,10 +9418,11 @@ __attribute__((noinline)) void* OnPlaceMarker(
 
     const float worldScale = tabletop::VisualScale();
     if (!std::isfinite(worldScale) || worldScale <= 0.0f) return marker;
+    const float presentationScale = std::max(0.04f, worldScale);
     const float markerRadius = std::clamp(
-        size * worldScale * 0.55f, 0.035f, 0.30f);
+        size * presentationScale * 0.55f, 0.055f, 0.30f);
     const float markerHeight = std::clamp(
-        size * worldScale * 1.45f, 0.10f, 0.48f);
+        size * presentationScale * 1.45f, 0.16f, 0.48f);
     const V3 centerWorld{
         point->x, point->y, point->z + markerHeight / worldScale * 0.5f};
     const V3 centerTracking = TabletopWorldPointToLocalTracking(centerWorld);
@@ -9451,13 +9474,20 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
     // Replay the stock diamond_3 silhouette.  Unlike ordinary red script
     // cylinders, PlaceMarkerCone already supplies the arrow's corrected centre.
     if (hud::ObjectiveMarkersIncludeOriginal()) {
-        const float markerHeight = std::clamp(size * 1.0f, 0.9f, 3.0f);
-        const float markerRadius = std::clamp(size * 0.45f, 0.35f, 1.3f);
+        const float markerHeightGame = std::clamp(size * 1.0f, 0.9f, 3.0f);
+        const float markerRadiusGame = std::clamp(size * 0.45f, 0.35f, 1.3f);
+        const float presentationScale = ObjectiveMarkerPresentationScale();
+        const float markerHeight = g_tabletopActive.load(
+            std::memory_order_acquire)
+            ? std::clamp(markerHeightGame * presentationScale, 0.12f, 0.48f)
+            : markerHeightGame;
+        const float markerRadius = g_tabletopActive.load(
+            std::memory_order_acquire)
+            ? std::clamp(markerRadiusGame * presentationScale, 0.045f, 0.22f)
+            : markerRadiusGame;
         const GameSymbols::Vec3 markerCenter = *point;
-        const float markerWorld[3]{
-            markerCenter.x, markerCenter.y, markerCenter.z};
         float markerTracking[3]{};
-        if (WorldPointToTracking(markerWorld, markerTracking)) {
+        if (ObjectiveMarkerWorldToTracking(markerCenter, markerTracking)) {
             xr::UpdateObjectiveMarker(id ^ 0x8000000000000000ULL,
                                       markerTracking, markerRadius, markerHeight,
                                       red, green, blue, true);
@@ -9469,11 +9499,19 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
         return;
     }
 
-    const float height = std::clamp(size * 1.8f, 1.2f, 4.0f);
-    const float radius = std::clamp(size * 0.62f, 0.5f, 1.6f);
-    const float world[3]{source.x, source.y, source.z - height * 0.55f};
+    const float heightGame = std::clamp(size * 1.8f, 1.2f, 4.0f);
+    const float radiusGame = std::clamp(size * 0.62f, 0.5f, 1.6f);
+    const float presentationScale = ObjectiveMarkerPresentationScale();
+    const float height = g_tabletopActive.load(std::memory_order_acquire)
+        ? std::clamp(heightGame * presentationScale, 0.14f, 0.55f)
+        : heightGame;
+    const float radius = g_tabletopActive.load(std::memory_order_acquire)
+        ? std::clamp(radiusGame * presentationScale, 0.055f, 0.26f)
+        : radiusGame;
+    const GameSymbols::Vec3 world{
+        source.x, source.y, source.z - heightGame * 0.55f};
     float tracking[3]{};
-    if (WorldPointToTracking(world, tracking)) {
+    if (ObjectiveMarkerWorldToTracking(world, tracking)) {
         xr::UpdateObjectiveMarker(id, tracking, radius, height,
                                   red, green, blue, false);
     }
@@ -9504,16 +9542,25 @@ __attribute__((noinline)) void OnPlaceMarkerSet(
 
     constexpr float kStockArrowRadius = 0.443975f;
     constexpr float kStockArrowTipY = -1.021123f;
-    const float markerHeight = std::clamp(size * 1.0f, 0.9f, 4.0f);
-    const float markerRadius = std::clamp(size * 0.52f, 0.5f, 2.6f);
-    const float markerScale = markerRadius / kStockArrowRadius;
+    const float markerHeightGame = std::clamp(size * 1.0f, 0.9f, 4.0f);
+    const float markerRadiusGame = std::clamp(size * 0.52f, 0.5f, 2.6f);
+    const float markerScale = markerRadiusGame / kStockArrowRadius;
     // PlaceMarkerSet's cylinder position is on the ground. Move the replacement
     // arrow centre up so the exact diamond_3 tip, rather than its centre, lands
     // on that point.
-    const float markerWorld[3]{
+    const GameSymbols::Vec3 markerWorld{
         source.x, source.y, source.z - kStockArrowTipY * markerScale};
+    const float presentationScale = ObjectiveMarkerPresentationScale();
+    const float markerHeight = g_tabletopActive.load(
+        std::memory_order_acquire)
+        ? std::clamp(markerHeightGame * presentationScale, 0.12f, 0.55f)
+        : markerHeightGame;
+    const float markerRadius = g_tabletopActive.load(
+        std::memory_order_acquire)
+        ? std::clamp(markerRadiusGame * presentationScale, 0.045f, 0.28f)
+        : markerRadiusGame;
     float markerTracking[3]{};
-    if (WorldPointToTracking(markerWorld, markerTracking)) {
+    if (ObjectiveMarkerWorldToTracking(markerWorld, markerTracking)) {
         xr::UpdateObjectiveMarker(id ^ 0x4000000000000000ULL,
                                   markerTracking, markerRadius, markerHeight,
                                   red, green, blue, true);
@@ -14636,130 +14683,7 @@ bool TabletopWorldInsideCoverage(const V3& world, float radius) {
     return TabletopCoverageContains2D(world.x, world.y, radius);
 }
 
-struct TabletopBoundaryCompleter {
-    const void* entity{};
-    V3 centerWorld{};
-    float radiusGame{};
-    float edgeScore{};
-};
-
-std::mutex g_tabletopBoundaryCompleterMutex;
-std::array<TabletopBoundaryCompleter,
-           xr::kTabletopCompletionSphereLimit> g_tabletopBoundaryCompleters{};
-int g_tabletopBoundaryCompleterCount = 0;
-
-void ResetTabletopBoundaryCompleters() {
-    std::lock_guard<std::mutex> lock(g_tabletopBoundaryCompleterMutex);
-    g_tabletopBoundaryCompleterCount = 0;
-}
-
-void RegisterTabletopBoundaryCompleter(
-        const void* entity, int entityType, int modelId,
-        const std::uint8_t* collision, float bound) {
-    if (!entity || !g_tabletopActive.load(std::memory_order_acquire) ||
-        !g_tabletopRadiusCenterValid || !collision) {
-        return;
-    }
-
-    const auto* bytes = static_cast<const std::uint8_t*>(entity);
-    const bool supported = entityType == 1 || entityType == 5 ||
-        (entityType == 4 && IsLargeVegetationModel(modelId));
-    if (!supported || modelId < 0 || modelId >= 20000) return;
-
-    V3 localCenter{};
-    std::memcpy(&localCenter, collision + 0x18, sizeof(localCenter));
-    if (!Finite(localCenter) || !std::isfinite(bound) ||
-        bound < 3.5f || bound > 80.0f) {
-        return;
-    }
-
-    V3 centerWorld{};
-    const auto* matrix = *reinterpret_cast<const std::uint8_t* const*>(
-        bytes + 0x18);
-    if (matrix) {
-        V3 right{}, up{}, at{}, position{};
-        std::memcpy(&right, matrix + 0x00, sizeof(right));
-        std::memcpy(&up, matrix + 0x10, sizeof(up));
-        std::memcpy(&at, matrix + 0x20, sizeof(at));
-        std::memcpy(&position, matrix + 0x30, sizeof(position));
-        centerWorld = position + right * localCenter.x +
-            up * localCenter.y + at * localCenter.z;
-    } else {
-        std::memcpy(&centerWorld, bytes + 0x08, sizeof(centerWorld));
-        centerWorld = centerWorld + localCenter;
-    }
-    if (!Finite(centerWorld)) return;
-
-    constexpr float kMaxCompletionExtensionGameM = 12.0f;
-    const float boundaryProbe = std::min(bound,
-                                         kMaxCompletionExtensionGameM);
-    const float baseRadius = tabletop::RadiusMeters();
-    // Only objects whose collision sphere actually crosses the mask edge are
-    // eligible. Deep-inside objects need no help; far-out objects must not
-    // create detached islands.
-    if (TabletopWorldInsideCoverage(
-            centerWorld, std::max(0.0f, baseRadius - boundaryProbe)) ||
-        !TabletopWorldInsideCoverage(
-            centerWorld, baseRadius + boundaryProbe)) {
-        return;
-    }
-
-    const float playerDistance = std::hypot(
-        centerWorld.x - g_tabletopRadiusCenter.x,
-        centerWorld.y - g_tabletopRadiusCenter.y);
-    const float edgeScore = std::abs(playerDistance - baseRadius);
-    std::lock_guard<std::mutex> lock(g_tabletopBoundaryCompleterMutex);
-    for (int index = 0; index < g_tabletopBoundaryCompleterCount; ++index) {
-        if (g_tabletopBoundaryCompleters[index].entity == entity) return;
-    }
-    int slot = g_tabletopBoundaryCompleterCount;
-    if (slot >= xr::kTabletopCompletionSphereLimit) {
-        slot = 0;
-        for (int index = 1; index < g_tabletopBoundaryCompleterCount; ++index) {
-            if (g_tabletopBoundaryCompleters[index].edgeScore >
-                g_tabletopBoundaryCompleters[slot].edgeScore) {
-                slot = index;
-            }
-        }
-        if (edgeScore >= g_tabletopBoundaryCompleters[slot].edgeScore) return;
-    } else {
-        ++g_tabletopBoundaryCompleterCount;
-    }
-    g_tabletopBoundaryCompleters[slot] = {
-        entity, centerWorld, std::min(bound, 40.0f), edgeScore};
-}
-
-void SnapshotTabletopBoundaryCompleters(xr::TabletopMaskState& out) {
-    const float scale = tabletop::VisualScale();
-    if (!std::isfinite(scale) || scale <= 0.0f) return;
-    std::lock_guard<std::mutex> lock(g_tabletopBoundaryCompleterMutex);
-    out.completionSphereCount = std::clamp(
-        g_tabletopBoundaryCompleterCount, 0,
-        xr::kTabletopCompletionSphereLimit);
-    out.completionMaxExtensionM = 12.0f * scale;
-    for (int index = 0; index < out.completionSphereCount; ++index) {
-        const TabletopBoundaryCompleter& candidate =
-            g_tabletopBoundaryCompleters[index];
-        const V3 center = TabletopWorldPointToLocalTracking(
-            candidate.centerWorld);
-        out.completionSpheres[index][0] = center.x;
-        out.completionSpheres[index][1] = center.y;
-        out.completionSpheres[index][2] = center.z;
-        out.completionSpheres[index][3] = candidate.radiusGame * scale;
-    }
-    if (out.completionSphereCount > 0) {
-        static std::atomic<bool> logged{false};
-        if (!logged.exchange(true, std::memory_order_acq_rel)) {
-            __android_log_print(
-                ANDROID_LOG_INFO, SAVR_TAG,
-                "[tabletop.edge] object completion active count=%d max_extension=12.0m",
-                out.completionSphereCount);
-        }
-    }
-}
-
-bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM,
-                                bool registerCompleter = false) {
+bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     if (!g_tabletopActive.load(std::memory_order_acquire) ||
         !g_tabletopRadiusCenterValid || entity == nullptr) {
         return true;
@@ -14771,28 +14695,21 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM,
     // road tile. Use its collision bound as the edge allowance when available,
     // then retain six metres as a conservative fallback for small props.
     float allowance = 6.0f;
-    const auto* bytes = static_cast<const std::uint8_t*>(entity);
-    const int entityType = bytes[0x5a] & 0x7;
-    const int modelId = static_cast<int>(
-        *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
-    const std::uint8_t* collision = nullptr;
-    float bound = 0.0f;
     if (g.CModelInfo_ms_modelInfoPtrs) {
+        const auto* bytes = static_cast<const std::uint8_t*>(entity);
+        const int modelId = static_cast<int>(
+            *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
         if (modelId >= 0 && modelId < 20000) {
             const auto* model = static_cast<const std::uint8_t*>(
                 g.CModelInfo_ms_modelInfoPtrs[modelId]);
-            collision = model
+            const auto* collision = model
                 ? *reinterpret_cast<const std::uint8_t* const*>(model + 0x30)
                 : nullptr;
-            bound = collision
+            const float bound = collision
                 ? *reinterpret_cast<const float*>(collision + 0x24) : 0.0f;
             if (std::isfinite(bound) && bound > 0.0f)
                 allowance = std::clamp(bound, 6.0f, 80.0f);
         }
-    }
-    if (registerCompleter) {
-        RegisterTabletopBoundaryCompleter(
-            entity, entityType, modelId, collision, bound);
     }
     const float radius = tabletop::RadiusMeters() + allowance +
         std::max(0.0f, extraRadiusM);
@@ -14846,8 +14763,7 @@ void OnRenderOneRoad(void* entity) {
 }
 
 void OnRenderOneNonRoad(void* entity) {
-    if (!TabletopEntityInsideRadius(
-            entity, kTabletopObjectOverscanM, true)) return;
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
     // The radial gate is already tightly bounded. Re-testing accepted
     // tabletop content against two slightly different eye frusta caused
     // distant objects to alternate between eyes/frames.
@@ -14886,8 +14802,7 @@ void OnRenderOneNonRoad(void* entity) {
 }
 
 void OnRenderAlphaEntity(void* entity, float distance) {
-    if (!TabletopEntityInsideRadius(
-            entity, kTabletopObjectOverscanM, true)) return;
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
     if (!g_tabletopActive.load(std::memory_order_acquire) &&
         !StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, true);
@@ -21963,7 +21878,6 @@ void OnRenderScene(bool underwater) {
     const CamBasis logicalBase = ReadCam(camU);
     const bool tabletopFrame = IsTabletopActive() &&
         g_tabletopRenderCameraValid;
-    ResetTabletopBoundaryCompleters();
     const CamBasis base = tabletopFrame
         ? g_tabletopRenderCamera : logicalBase;
     // Passthrough shows through untouched pixels in tabletop mode. Geometry

@@ -144,33 +144,16 @@ if (($playerSlant + 80.0) -le $verticalSeparation) {
     throw 'height-independent far clip did not include horizontal coverage'
 }
 
-# Boundary-object completion is the intersection of one object's 3D collision
-# sphere with a hard 12 m skirt around the original mask. It may finish a
-# silhouette that crosses the edge, but can never create a detached remote
-# island even if a bad/large collision sphere is supplied.
-function Test-CompletedEdgePoint {
-    param(
-        [double]$PointX, [double]$BaseRadius,
-        [double]$SphereCenterX, [double]$SphereRadius,
-        [double]$MaxExtension
-    )
-    $baseSignedDistance = [Math]::Abs($PointX) - $BaseRadius
-    $sphereSignedDistance = [Math]::Abs($PointX - $SphereCenterX) -
-        $SphereRadius
-    $boundedCompletion = [Math]::Max(
-        $sphereSignedDistance,
-        $baseSignedDistance - $MaxExtension)
-    return [Math]::Min($baseSignedDistance, $boundedCompletion) -le 0.0
+# Objective positions follow the live miniature scale, but their presentation
+# never becomes smaller than the default 1:25 tabletop size. This keeps mission
+# guidance readable without moving its world-space target.
+function Get-ObjectivePresentationScale([double]$WorldScale) {
+    return [Math]::Max(0.04, $WorldScale)
 }
-if (-not (Test-CompletedEdgePoint 80 75 78 6 12)) {
-    throw 'crossing object silhouette was not completed'
-}
-if (Test-CompletedEdgePoint 90 75 78 6 12) {
-    throw 'object completion exceeded its collision sphere'
-}
-if (Test-CompletedEdgePoint 100 75 100 40 12) {
-    throw 'object completion created a detached island beyond the safety skirt'
-}
+Assert-Close (Get-ObjectivePresentationScale 0.01) 0.04 `
+    'objective scale floor'
+Assert-Close (Get-ObjectivePresentationScale 0.08) 0.08 `
+    'objective enlarged scale'
 
 # Fixed-camera zoom keeps the player at the same physical point. The anchor
 # moves by exactly the inverse scale delta instead of scaling around an old

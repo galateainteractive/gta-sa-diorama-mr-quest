@@ -6,9 +6,6 @@
 
 - Added release-build swim-state diagnostics confirming that tabletop movement
   remains headset-relative and immersive arm-stroke locomotion stays blocked.
-- Added a bounded edge-completion test for large non-road buildings and
-  vegetation whose collision volume crosses the tabletop mask. Up to eight
-  nearby silhouettes may finish, with a hard 12 metre extension limit.
 
 ### Improved
 
@@ -22,6 +19,13 @@
 - Removed the experimental height-only aircraft shell after headset testing
   showed that it also revealed upper portions of unrelated scenery outside the
   tabletop radius. Aircraft now obey the normal mask again.
+- Removed the boundary-object completion experiment after headset testing; the
+  fade is once again the original continuous radial mask with no per-building
+  or vegetation extensions.
+- Fixed yellow objective cones using the immersive world transform in tabletop,
+  which could place them far away from their matching miniature location.
+- Kept red mission areas and yellow objective markers physically readable when
+  the model is shrunk, and draw them as unobstructed tabletop navigation UI.
 - Fixed tabletop mission cylinders being captured successfully and then skipped
   by the late-overlay renderer's tabletop early return.
 - Added a cylinder-only fallback when shared scene depth is unavailable, so a
