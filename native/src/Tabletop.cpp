@@ -35,10 +35,10 @@ Settings g_settings{};
 std::once_flag g_loadOnce;
 std::atomic<float> g_visualScale{0.04f};
 std::atomic<int> g_radiusPreset{1};
-// Preset 3 is deliberately an 80 m A/B step. 90 m was already close enough
+// Preset 3 is deliberately a 75 m A/B step. 90 m was already close enough
 // to the expensive 120 m disk that it did not answer whether the stable 60 m
 // profile could grow a little without bringing the visible sector churn back.
-constexpr float kRadiusPresets[]{30.0f, 60.0f, 80.0f, 120.0f};
+constexpr float kRadiusPresets[]{30.0f, 60.0f, 75.0f, 120.0f};
 constexpr int kRadiusPresetCount =
     static_cast<int>(sizeof(kRadiusPresets) / sizeof(kRadiusPresets[0]));
 

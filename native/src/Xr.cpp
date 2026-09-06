@@ -8694,6 +8694,9 @@ GLint  g_tabletopAlphaUpLoc = -1, g_tabletopAlphaForwardLoc = -1;
 GLint  g_tabletopAlphaPlayerLoc = -1, g_tabletopAlphaViewerLoc = -1;
 GLint  g_tabletopAlphaAxisXLoc = -1, g_tabletopAlphaAxisYLoc = -1;
 GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaDepthScaleLoc = -1;
+GLint  g_tabletopAlphaCompletionCountLoc = -1;
+GLint  g_tabletopAlphaCompletionSpheresLoc = -1;
+GLint  g_tabletopAlphaCompletionMaxLoc = -1;
 GLint  g_tabletopAlphaModeLoc = -1;
 GLint  g_tabletopAlphaBridgeLoc = -1;
 int    g_handDepthRetryCountdown = 0;
@@ -10683,6 +10686,7 @@ bool EnsureTabletopAlphaProgram() {
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
                      "uniform vec4 uRadii; uniform float uDepthScale; uniform int uMode,uBridge;\n"
+                     "uniform int uCompletionCount; uniform vec4 uCompletionSpheres[8]; uniform float uCompletionMax;\n"
                      "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
                      "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
                      "void main(){\n"
@@ -10696,6 +10700,8 @@ bool EnsureTabletopAlphaProgram() {
                      " float sd=length(pp)-uRadii.x;\n"
                      " if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);\n"
                      " if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}\n"
+                     " float baseSd=sd;\n"
+                     " for(int i=0;i<8;++i){if(i>=uCompletionCount)break;vec4 s=uCompletionSpheres[i];float sphereSd=length(p-s.xyz)-s.w;float boundedSd=max(sphereSd,baseSd-uCompletionMax);sd=min(sd,boundedSd);}\n"
                      " float a=1.0-smoothstep(-uRadii.w,0.0,sd);\n"
                      " o=vec4(0,0,0,a);\n"
                      "}\n";
@@ -10731,6 +10737,12 @@ bool EnsureTabletopAlphaProgram() {
     g_tabletopAlphaAxisXLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisX");
     g_tabletopAlphaAxisYLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisY");
     g_tabletopAlphaRadiiLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uRadii");
+    g_tabletopAlphaCompletionCountLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uCompletionCount");
+    g_tabletopAlphaCompletionSpheresLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uCompletionSpheres[0]");
+    g_tabletopAlphaCompletionMaxLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uCompletionMax");
     g_tabletopAlphaDepthScaleLoc =
         glGetUniformLocation(g_tabletopAlphaProgram, "uDepthScale");
     g_tabletopAlphaModeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uMode");
@@ -10878,6 +10890,16 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         glUniform3fv(g_tabletopAlphaAxisYLoc, 1, mask.axisY);
         glUniform4f(g_tabletopAlphaRadiiLoc, mask.playerRadiusM,
                     mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
+        const int completionCount = std::clamp(
+            mask.completionSphereCount, 0, kTabletopCompletionSphereLimit);
+        glUniform1i(g_tabletopAlphaCompletionCountLoc, completionCount);
+        if (completionCount > 0) {
+            glUniform4fv(g_tabletopAlphaCompletionSpheresLoc,
+                         completionCount,
+                         &mask.completionSpheres[0][0]);
+        }
+        glUniform1f(g_tabletopAlphaCompletionMaxLoc,
+                    std::max(0.0f, mask.completionMaxExtensionM));
         glUniform1f(g_tabletopAlphaDepthScaleLoc,
                     std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
         glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);

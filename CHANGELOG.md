@@ -6,10 +6,13 @@
 
 - Added release-build swim-state diagnostics confirming that tabletop movement
   remains headset-relative and immersive arm-stroke locomotion stays blocked.
+- Added a bounded edge-completion test for large non-road buildings and
+  vegetation whose collision volume crosses the tabletop mask. Up to eight
+  nearby silhouettes may finish, with a hard 12 metre extension limit.
 
 ### Improved
 
-- Replaced the 90 metre radius preset with an 80 metre test step between the
+- Replaced the 90 metre radius preset with a 75 metre test step between the
   stable 60 metre profile and the expensive 120 metre profile.
 - Made mission/checkpoint cylinders mandatory tabletop information rather than
   tying them to the optional stock objective-marker preference.
@@ -49,7 +52,7 @@
 
 ### Improved
 
-- Capped procedural-grass detail at the proven 60 m budget for the 80/120 m
+- Capped procedural-grass detail at the proven 60 m budget for the 75/120 m
   tabletop radius presets while retaining the established 18 m object residency
   skirt to avoid extra pop/flicker. Ground, roads, large structures, and every
   object inside the selected visible radius remain.

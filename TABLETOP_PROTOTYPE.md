@@ -20,7 +20,7 @@ Runtime controls:
 - fixed table + one grip: drag the model through the room;
 - fixed table + both grips: move, rotate and resize the model (hands farther
   apart make it larger; hands closer make it smaller);
-- `R3`: cycle the visible map radius through 30, 60, 80 and 120 metres;
+- `R3`: cycle the visible map radius through 30, 60, 75 and 120 metres;
 - `L3 + R3`: reset scale, placement and radius while keeping the current view.
 
 The fixed view captures the current player/vehicle frame once. Character and
