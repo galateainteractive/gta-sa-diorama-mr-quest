@@ -19,6 +19,10 @@
 
 ### Fixed
 
+- Added a tabletop-specific swimming adapter. The left stick now selects a
+  headset-relative world direction and is converted into GTA's separate swim
+  turn/thrust axes, with a short water-surface debounce and no vehicle-yaw
+  inheritance.
 - Removed the experimental height-only aircraft shell after headset testing
   showed that it also revealed upper portions of unrelated scenery outside the
   tabletop radius. Aircraft now obey the normal mask again.

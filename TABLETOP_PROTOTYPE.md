@@ -27,6 +27,10 @@ Red mission areas and coloured objective cones follow the same miniature-world
 transform as CJ. Their presentation has a physical minimum size and is drawn as
 navigation UI, so shrinking the model does not hide them in the ground.
 
+Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
+selects a direction relative to the visible tabletop/headset frame, which is
+then converted into the game's native turn-and-thrust swimming controls.
+
 The fixed view captures the current player/vehicle frame once. Character and
 vehicle controls continue to use the stock gameplay path while the physical
 table stays in place.

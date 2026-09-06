@@ -59,6 +59,7 @@ bool GetLocalHeadYaw(float* yawOut);
 // keeps push-forward aligned with what the player sees after map rotation,
 // vehicle exits, camera-mode changes and respawns.
 bool TransformTabletopMoveStick(float* x, float* y);
+bool TransformTabletopSwimStick(const void* ped, float* x, float* y);
 
 // While true, the pad hook stops writing the left stick into CPad::NewState, so
 // the stick drives a VR menu instead of walking the player. Set by the input

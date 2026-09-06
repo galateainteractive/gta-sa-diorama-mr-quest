@@ -188,5 +188,29 @@ $worldVisibleY = [Math]::Sin($visibleYaw) * $rawX +
 Assert-Close $worldFromGameX $worldVisibleX 'tabletop stick world X'
 Assert-Close $worldFromGameY $worldVisibleY 'tabletop stick world Y'
 
+# Swimming consumes tank-style turn/thrust axes rather than ordinary 2D walk
+# coordinates. The adapter first resolves the requested stick direction in the
+# visible tabletop frame, then turns the ped toward it while retaining thrust.
+function Get-WrappedRadians([double]$Angle) {
+    while ($Angle -gt [Math]::PI) { $Angle -= 2.0 * [Math]::PI }
+    while ($Angle -lt -[Math]::PI) { $Angle += 2.0 * [Math]::PI }
+    return $Angle
+}
+$swimVisibleYaw = -0.22
+$swimCurrentYaw = 2.55
+$swimForwardTarget = $swimVisibleYaw + [Math]::Atan2(-0.0, 1.0)
+$swimForwardError = Get-WrappedRadians `
+    ($swimForwardTarget - $swimCurrentYaw)
+Assert-Close $swimForwardTarget $swimVisibleYaw `
+    'swim forward headset target'
+if ([Math]::Abs($swimForwardError) -lt 2.0) {
+    throw 'swim adapter failed to detect stale vehicle-facing error'
+}
+$swimRightTarget = Get-WrappedRadians `
+    ($swimVisibleYaw + [Math]::Atan2(-1.0, 0.0))
+Assert-Close $swimRightTarget `
+    (Get-WrappedRadians ($swimVisibleYaw - [Math]::PI / 2.0)) `
+    'swim right headset target'
+
 Write-Output ("PASS scale={0:F3} neutral_back={1:F2}gu neutral_up={2:F2}gu game_ipd={3:F2}gu" -f `
     $scale, $neutralGameBack, $neutralGameUp, $gameIpd)

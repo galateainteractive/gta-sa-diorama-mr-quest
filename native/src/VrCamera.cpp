@@ -5522,6 +5522,15 @@ void OnUpdatePads() {
                     sizeof(physicalFlags));
         playerSwimming = (physicalFlags & 0x100u) != 0;
     }
+    // The submerged flag can drop for one or two frames as CJ's chest crosses
+    // the water surface. Retain the swim adapter briefly so those ripples do
+    // not alternate between ordinary walking and swimming stick semantics.
+    static double tabletopSwimGraceUntilMs = 0.0;
+    const double swimNowMs = NowMs();
+    if (playerSwimming) tabletopSwimGraceUntilMs = swimNowMs + 350.0;
+    const bool tabletopSwimControls = tabletop::Enabled() &&
+        vehicle == nullptr && inputPed != nullptr &&
+        (playerSwimming || swimNowMs < tabletopSwimGraceUntilMs);
     if (tabletop::Enabled()) {
         static bool swimmingWas = false;
         if (playerSwimming != swimmingWas) {
@@ -5536,8 +5545,12 @@ void OnUpdatePads() {
     // Tabletop on-foot locomotion is always HMD-relative, regardless of a
     // BODY mode left over from the regular first-person VR configuration.
     // The game's camera-relative path already contains the composed head yaw.
-    if (tabletop::Enabled() && vehicle == nullptr)
+    if (tabletopSwimControls) {
+        if (!TransformTabletopSwimStick(inputPed, &moveX, &moveY))
+            TransformTabletopMoveStick(&moveX, &moveY);
+    } else if (tabletop::Enabled() && vehicle == nullptr) {
         TransformTabletopMoveStick(&moveX, &moveY);
+    }
     else
         locomotion::TransformMoveStick(CurrentLocalHeadYaw(),&moveX,&moveY);
     ns[0] = static_cast<int16_t>(std::clamp(moveX,-1.0f,1.0f) *  127.0f);
@@ -5984,7 +5997,7 @@ void OnUpdatePads() {
             const char* const lifecycleName = lifecycle == 3 ? "dead" :
                 (lifecycle == 2 ? "vehicle" :
                  (lifecycle == 1 ? "entering" :
-                  (playerSwimming ? "swim" : "foot")));
+                  (tabletopSwimControls ? "swim" : "foot")));
             const TabletopCoverageMode coverageMode =
                 static_cast<TabletopCoverageMode>(g_tabletopCoverageMode.load(
                     std::memory_order_relaxed));
@@ -30820,6 +30833,70 @@ bool TransformTabletopMoveStick(float* x, float* y) {
     // the world direction shown by the tabletop camera.
     *x = oldX * c + oldY * s;
     *y = oldY * c - oldX * s;
+    return std::isfinite(*x) && std::isfinite(*y);
+}
+
+bool TransformTabletopSwimStick(const void* ped, float* x, float* y) {
+    if (!ped || !x || !y || !tabletop::Enabled() ||
+        !g_tabletopActive.load(std::memory_order_acquire) ||
+        !g_tabletopRenderCameraValid) {
+        return false;
+    }
+
+    const float inputX = *x;
+    const float inputY = *y;
+    const float magnitude = std::min(1.0f, std::hypot(inputX, inputY));
+    if (!std::isfinite(magnitude)) return false;
+    if (magnitude < 0.04f) {
+        *x = 0.0f;
+        *y = 0.0f;
+        return true;
+    }
+
+    const auto* bytes = static_cast<const std::uint8_t*>(ped);
+    const auto* matrix = *reinterpret_cast<const std::uint8_t* const*>(
+        bytes + 0x18);
+    if (!matrix) return false;
+    const float pedForwardX = *reinterpret_cast<const float*>(matrix + 0x10);
+    const float pedForwardY = *reinterpret_cast<const float*>(matrix + 0x14);
+    const float pedForwardLength = std::hypot(pedForwardX, pedForwardY);
+    if (!std::isfinite(pedForwardLength) || pedForwardLength < 0.10f)
+        return false;
+
+    const float visibleYaw = std::atan2(
+        -g_tabletopRenderCamera.forward.x,
+         g_tabletopRenderCamera.forward.y);
+    const float currentYaw = std::atan2(
+        -pedForwardX / pedForwardLength,
+         pedForwardY / pedForwardLength);
+    // Stick right is -90 degrees in the same GTA yaw convention used by the
+    // ped matrix. Forward therefore targets the visible tabletop/HMD heading.
+    const float stickYaw = std::atan2(-inputX, inputY);
+    float targetYaw = visibleYaw + stickYaw;
+    float yawError = targetYaw - currentYaw;
+    while (yawError > 3.14159265f) yawError -= 6.28318531f;
+    while (yawError < -3.14159265f) yawError += 6.28318531f;
+    targetYaw = currentYaw + yawError;
+
+    // CTaskSimpleSwim treats X as turn rate and Y as forward thrust, unlike
+    // ordinary on-foot movement. Steer toward the requested world direction
+    // and reduce, but never entirely stop, propulsion during a large turn.
+    *x = std::clamp(-yawError * 0.90f, -1.0f, 1.0f);
+    const float alignment = std::max(0.0f, std::cos(yawError));
+    *y = magnitude * (0.25f + 0.75f * alignment);
+
+    static double lastLogMs = 0.0;
+    const double nowMs = NowMs();
+    if (nowMs - lastLogMs >= 1000.0) {
+        lastLogMs = nowMs;
+        __android_log_print(
+            ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.swim.input] raw=(%.2f,%.2f) current=%.3f target=%.3f error=%.3f out=(%.2f,%.2f)",
+            static_cast<double>(inputX), static_cast<double>(inputY),
+            static_cast<double>(currentYaw), static_cast<double>(targetYaw),
+            static_cast<double>(yawError), static_cast<double>(*x),
+            static_cast<double>(*y));
+    }
     return std::isfinite(*x) && std::isfinite(*y);
 }
 
