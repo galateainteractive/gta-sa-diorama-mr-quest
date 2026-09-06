@@ -9,6 +9,9 @@
 
 ### Improved
 
+- Extended stereo stabilization from 32 to 64 vertices for matrix-null Fx
+  batches. Live scraping diagnostics showed that isolated sparks were already
+  stable while denser collision bursts just above the old limit diverged.
 - Replaced the 90 metre radius preset with a 75 metre test step between the
   stable 60 metre profile and the expensive 120 metre profile.
 - Made mission/checkpoint cylinders mandatory tabletop information rather than

@@ -189,7 +189,10 @@ double MonotonicMs();
 // separately because sparks are emitted as short immediate-mode quads/strips.
 constexpr int kFxStereoDiagnosticCapacity = 256;
 constexpr std::size_t kRwIm3DVertexStride = 36;
-constexpr std::uint32_t kFxStereoStableMaxVertices = 32;
+// Scraping a vehicle batches the same matrix-null collision strips into
+// 33..64 vertices. The original 32-vertex ceiling stabilized isolated sparks
+// but let those denser bursts be rebuilt independently for the right eye.
+constexpr std::uint32_t kFxStereoStableMaxVertices = 64;
 constexpr std::size_t kFxStereoStableBatchBytes =
     kFxStereoStableMaxVertices * kRwIm3DVertexStride;
 struct FxBatchSignature {
