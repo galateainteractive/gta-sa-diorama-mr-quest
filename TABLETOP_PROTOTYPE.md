@@ -75,3 +75,23 @@ For quick A/B tests, Android properties `debug.savr.tabletop` and
 - draw distance, fog, LOD, and streaming still need on-device tuning for each
   radius preset;
 - passthrough, grab direction and rotation sign require on-device Quest tuning.
+
+## Planned experiment: weather-reactive passthrough
+
+Keep this out of rendering/visibility diagnostic packages. In a later isolated
+package, tint the existing passthrough from GTA's live time-cycle and weather
+state while leaving clear daytime neutral. The first restrained palette is:
+
+- sunrise: a mild gold/pink warmth;
+- sunset: a gradually blended warm orange;
+- night: darker, slightly blue and desaturated, with a safe brightness floor;
+- rain: cooler grey with reduced saturation;
+- fog: reduced saturation and contrast;
+- sandstorm: a mild orange/sepia grade.
+
+Prefer `XR_META_passthrough_color_lut`, as validated in the separate Mario 64
+Tabletop MR prototype, with the FB brightness/contrast/saturation style as a
+fallback. Drive smooth transitions from the retail clock, old/new weather,
+weather interpolation and current time-cycle colours. Rebuild or update the LUT
+only when the perceptual result changes, not every frame. This first experiment
+does not include lightning flashes or gameplay-event pulses.
