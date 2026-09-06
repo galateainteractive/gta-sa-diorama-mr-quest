@@ -688,9 +688,11 @@ struct ObjectiveMarkerVisual {
     float radius{1.0f};
     float height{2.0f};
     unsigned char red{255}, green{255}, blue{255};
-    // Stock-colour diamond_3 arrow (mission points, entrances and captured
-    // script cylinders); false = the optional objective HIGHLIGHT cage.
+    unsigned char alpha{255};
+    // Stock-colour diamond_3 arrow (mission points and entrances); false = the
+    // optional objective HIGHLIGHT cage unless cylinder is set.
     bool stockCone{false};
+    bool cylinder{false};
     std::uint64_t expiresNs{};
 };
 std::mutex g_objectiveMarkerMutex;
@@ -5742,30 +5744,18 @@ void AddBulletTracer(const float start[3], const float end[3], int weaponType) {
         static_cast<std::uint64_t>(lifetimeMs * 1.0e6);
 }
 
-void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
-                           float radius, float height,
-                           unsigned char red, unsigned char green,
-                           unsigned char blue, bool stockCone) {
-    if (!center) return;
-    if (stockCone ? !hud::ObjectiveMarkersIncludeOriginal()
-                  : !hud::ObjectiveMarkersIncludeHighlight()) {
-        return;
-    }
-    const XrVector3f point{center[0], center[1], center[2]};
-    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
-        !std::isfinite(point.z) || !std::isfinite(radius) ||
-        !std::isfinite(height)) {
-        return;
-    }
-    radius = std::clamp(radius, 0.35f, 2.25f);
-    height = std::clamp(height, 0.75f, 5.0f);
+void UpdateObjectiveMarkerSlot(std::uint64_t id, const XrVector3f& point,
+                               float radius, float height,
+                               unsigned char red, unsigned char green,
+                               unsigned char blue, unsigned char alpha,
+                               bool stockCone, bool cylinder) {
     const std::uint64_t now = MonotonicNowNs();
 
     std::lock_guard<std::mutex> lock(g_objectiveMarkerMutex);
     ObjectiveMarkerVisual* slot = nullptr;
     for (ObjectiveMarkerVisual& marker : g_objectiveMarkers) {
         if (marker.valid && marker.id == id &&
-            marker.stockCone == stockCone) {
+            marker.stockCone == stockCone && marker.cylinder == cylinder) {
             slot = &marker;
             break;
         }
@@ -5783,8 +5773,48 @@ void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
     slot->red = red;
     slot->green = green;
     slot->blue = blue;
+    slot->alpha = alpha;
     slot->stockCone = stockCone;
+    slot->cylinder = cylinder;
     slot->expiresNs = now + kObjectiveMarkerLifetimeNs;
+}
+
+void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
+                           float radius, float height,
+                           unsigned char red, unsigned char green,
+                           unsigned char blue, bool stockCone) {
+    if (!center) return;
+    if (stockCone ? !hud::ObjectiveMarkersIncludeOriginal()
+                  : !hud::ObjectiveMarkersIncludeHighlight()) {
+        return;
+    }
+    const XrVector3f point{center[0], center[1], center[2]};
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z) || !std::isfinite(radius) ||
+        !std::isfinite(height)) {
+        return;
+    }
+    radius = std::clamp(radius, 0.35f, 2.25f);
+    height = std::clamp(height, 0.75f, 5.0f);
+    UpdateObjectiveMarkerSlot(id, point, radius, height, red, green, blue,
+                              255, stockCone, false);
+}
+
+void UpdateObjectiveCylinder(std::uint64_t id, const float center[3],
+                             float radius, float height,
+                             unsigned char red, unsigned char green,
+                             unsigned char blue, unsigned char alpha) {
+    if (!center || !hud::ObjectiveMarkersIncludeOriginal()) return;
+    const XrVector3f point{center[0], center[1], center[2]};
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z) || !std::isfinite(radius) ||
+        !std::isfinite(height)) {
+        return;
+    }
+    radius = std::clamp(radius, 0.025f, 0.40f);
+    height = std::clamp(height, 0.06f, 0.65f);
+    UpdateObjectiveMarkerSlot(id, point, radius, height, red, green, blue,
+                              alpha, true, true);
 }
 
 void SetThrowableTrajectory(int hand, const float points[][3], int count,
@@ -10106,6 +10136,92 @@ void DrawStockObjectiveArrow(const float* mvp,
     glDeleteBuffers(1, &vbo);
 }
 
+void DrawStockObjectiveCylinder(const float* mvp,
+                                const ObjectiveMarkerVisual& marker) {
+    // The retail tube/cylinder pass runs too late to enter either eye capture.
+    // Rebuild it as a restrained physical-scale volume: translucent walls make
+    // it readable from the side, while the bright annulus and faint centre make
+    // the trigger area unambiguous from the normal overhead tabletop view.
+    constexpr int segments = 32;
+    constexpr int verticesPerSegment = 21;
+    float vertices[segments * verticesPerSegment * 5]{};
+    int vertexCount = 0;
+    const float bottom = marker.center.y - marker.height * 0.5f;
+    const float top = marker.center.y + marker.height * 0.5f;
+    const float innerRadius = marker.radius * 0.76f;
+    const float authoredAlpha = marker.alpha / 255.0f;
+    const float wallAlpha = std::clamp(authoredAlpha, 0.22f, 0.48f);
+    const float ringAlpha = std::clamp(authoredAlpha * 1.8f, 0.55f, 0.90f);
+    const float fillAlpha = std::clamp(authoredAlpha * 0.45f, 0.10f, 0.24f);
+    const auto emit = [&](float x, float y, float z, float shade, float alpha) {
+        float* out = &vertices[vertexCount++ * 5];
+        out[0] = x; out[1] = y; out[2] = z;
+        out[3] = shade; out[4] = alpha;
+    };
+    for (int segment = 0; segment < segments; ++segment) {
+        const float a0 = 6.2831853071795864769f * segment / segments;
+        const float a1 = 6.2831853071795864769f * (segment + 1) / segments;
+        const float c0 = std::cos(a0), s0 = std::sin(a0);
+        const float c1 = std::cos(a1), s1 = std::sin(a1);
+        const float x0 = marker.center.x + c0 * marker.radius;
+        const float z0 = marker.center.z + s0 * marker.radius;
+        const float x1 = marker.center.x + c1 * marker.radius;
+        const float z1 = marker.center.z + s1 * marker.radius;
+        const float ix0 = marker.center.x + c0 * innerRadius;
+        const float iz0 = marker.center.z + s0 * innerRadius;
+        const float ix1 = marker.center.x + c1 * innerRadius;
+        const float iz1 = marker.center.z + s1 * innerRadius;
+
+        emit(x0, bottom, z0, 0.72f, wallAlpha);
+        emit(x1, bottom, z1, 0.72f, wallAlpha);
+        emit(x0, top, z0, 1.00f, wallAlpha);
+        emit(x1, bottom, z1, 0.72f, wallAlpha);
+        emit(x1, top, z1, 1.00f, wallAlpha);
+        emit(x0, top, z0, 1.00f, wallAlpha);
+
+        const float groundY = bottom + 0.003f;
+        emit(x0, groundY, z0, 1.00f, ringAlpha);
+        emit(x1, groundY, z1, 1.00f, ringAlpha);
+        emit(ix0, groundY, iz0, 0.82f, ringAlpha);
+        emit(x1, groundY, z1, 1.00f, ringAlpha);
+        emit(ix1, groundY, iz1, 0.82f, ringAlpha);
+        emit(ix0, groundY, iz0, 0.82f, ringAlpha);
+
+        emit(x0, top, z0, 1.00f, ringAlpha * 0.72f);
+        emit(ix0, top, iz0, 0.82f, ringAlpha * 0.72f);
+        emit(x1, top, z1, 1.00f, ringAlpha * 0.72f);
+        emit(x1, top, z1, 1.00f, ringAlpha * 0.72f);
+        emit(ix0, top, iz0, 0.82f, ringAlpha * 0.72f);
+        emit(ix1, top, iz1, 0.82f, ringAlpha * 0.72f);
+
+        emit(marker.center.x, groundY, marker.center.z, 0.75f, fillAlpha);
+        emit(ix1, groundY, iz1, 0.75f, fillAlpha);
+        emit(ix0, groundY, iz0, 0.75f, fillAlpha);
+    }
+
+    EnsureArrowProgram();
+    GLuint vbo = 0;
+    glGenBuffers(1, &vbo);
+    glUseProgram(g_arrowProg);
+    glUniformMatrix4fv(g_arrowMvpLoc, 1, GL_FALSE, mvp);
+    glUniform4f(g_arrowColLoc, marker.red / 255.0f,
+               marker.green / 255.0f, marker.blue / 255.0f, 1.0f);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertexCount * 5 * sizeof(float), vertices,
+                 GL_STREAM_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+                          reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+    glDisableVertexAttribArray(1);
+    glDisableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glDeleteBuffers(1, &vbo);
+}
+
 // A restrained depth-tested cage around the exact object targeted by the
 // original CRadar arrow. It does not show through walls and never writes depth,
 // so it reads as an optional target highlight without obscuring the model.
@@ -10125,6 +10241,10 @@ void DrawObjectiveHighlights(const float* mvp,
     glBlendEquation(GL_FUNC_ADD);
     for (int markerIndex = 0; markerIndex < count; ++markerIndex) {
         const ObjectiveMarkerVisual& marker = markers[markerIndex];
+        if (marker.cylinder) {
+            DrawStockObjectiveCylinder(mvp, marker);
+            continue;
+        }
         if (marker.stockCone) {
             DrawStockObjectiveArrow(mvp, marker);
             continue;

@@ -11,6 +11,7 @@ param(
     [string]$ExistingBuildRoot,
     [switch]$BuildOnly,
     [switch]$ApkOnly,
+    [switch]$RepairAudioIfNeeded,
     [switch]$PayloadOnly,
     [switch]$NonInteractive,
     [switch]$PersonalUpdate
@@ -1341,6 +1342,9 @@ function Invoke-Main {
     if ($ApkOnly.IsPresent -and ($PayloadOnly.IsPresent -or $BuildOnly.IsPresent)) {
         throw 'ApkOnly cannot be combined with PayloadOnly or BuildOnly.'
     }
+    if ($RepairAudioIfNeeded.IsPresent -and -not $ApkOnly.IsPresent) {
+        throw 'RepairAudioIfNeeded is valid only together with ApkOnly.'
+    }
     if ([string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
         $buildRoot = Join-Path $runsRoot $runId
     }
@@ -1490,7 +1494,41 @@ function Invoke-Main {
             -RemoteParent $packageFiles -RemoteFinal "$packageFiles/vrhands"
     }
     else {
-        Write-Host 'ApkOnly selected: existing verified game/audio payloads were preserved.'
+        Write-Host 'ApkOnly selected: existing game data and VR-hands payloads were preserved.'
+        if ($RepairAudioIfNeeded.IsPresent) {
+            Write-Step 'Verifying the preserved Quest audio payload'
+            $packageFiles = "/sdcard/Android/data/$($script:PackageName)/files"
+            $audioFinal = "$packageFiles/audio"
+            $audioValid = $false
+            if (Test-RemotePath -RemotePath $audioFinal) {
+                try {
+                    Assert-RemotePayloadHashes -RemoteRoot $audioFinal
+                    $audioValid = $true
+                }
+                catch {
+                    Write-Warning "Preserved audio is incomplete or corrupt: $($_.Exception.Message)"
+                }
+            }
+            if ($audioValid) {
+                # Old Quest firmware can retain shell-only modes after an ADB
+                # move into Android/data. The content is already hash-verified;
+                # restore app traversal/read access without copying 1.2 GiB.
+                Invoke-AdbCapture -Arguments @(
+                    'shell', 'chmod', '-R', 'a+rX', $audioFinal) | Out-Null
+                Write-Host 'Preserved audio verified; permissions refreshed. No audio copy was needed.'
+            }
+            else {
+                Write-Warning 'Audio payload is absent or invalid; publishing the verified package copy now.'
+                Select-QuestDevice -RequestedSerial $script:SelectedSerial
+                Publish-PayloadTree `
+                    -LocalRoot (Join-Path $buildInfo.PayloadRoot 'audio') `
+                    -RemoteParent $packageFiles -RemoteFinal $audioFinal
+                Write-Host 'Quest audio was repaired and hash-verified.'
+            }
+        }
+        else {
+            Write-Host 'Existing audio was preserved without revalidation.'
+        }
     }
 
     Write-Step 'Verifying the installed APKs and leaving the game stopped'

@@ -343,14 +343,21 @@ void AddBulletTracer(const float start[3], const float end[3], int weaponType);
 // Refresh one marker captured from PlaceMarkerCone. The point and dimensions
 // are in OpenXR LOCAL space; entries expire automatically when the original
 // game stops issuing the marker. stockCone=false publishes the radar
-// objective's HIGHLIGHT cage; stockCone=true publishes a stock C3dMarkers
-// cone (mission points, building entrances) drawn as a translucent cylinder —
-// the engine's own marker render happens after the eye captures and never
-// reaches the headset.
+// objective's HIGHLIGHT cage; stockCone=true publishes the stock diamond
+// arrow. The engine's own marker render happens after the eye captures and
+// never reaches the headset.
 void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
                            float radius, float height,
                            unsigned char red, unsigned char green,
                            unsigned char blue, bool stockCone);
+
+// Publish a tabletop-scaled mission/checkpoint area captured from the full
+// C3dMarkers::PlaceMarker path. Unlike the diamond arrow above, this is a
+// translucent cylinder with a bright ground ring.
+void UpdateObjectiveCylinder(std::uint64_t id, const float center[3],
+                             float radius, float height,
+                             unsigned char red, unsigned char green,
+                             unsigned char blue, unsigned char alpha);
 
 // Per-hand physical throwable preview in OpenXR LOCAL space. Points are copied
 // and ring-snapshotted with the eye textures; count<=1 clears that hand's arc.

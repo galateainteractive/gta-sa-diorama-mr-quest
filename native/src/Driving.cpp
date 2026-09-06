@@ -3794,10 +3794,12 @@ void UpdateInput(const xr::InputState& input,bool gameplay,bool blocked) {
             // CBmx can bypass the ordinary CPad steering query and needs this
             // direct write for its visible fork. In tabletop the left stick is
             // authoritative, even if a saved immersive bicycle mode leaves the
-            // ungrabbed physical-handlebar value at zero. Outside tabletop keep
-            // the existing handlebar/motion steering behaviour unchanged.
+            // ungrabbed physical-handlebar value at zero. The bike field uses
+            // the opposite sign from CPad::GetSteering, just like the existing
+            // physical-handlebar path. Outside tabletop keep that path
+            // unchanged.
             const float steer = vrcam::IsTabletopActive()
-                ? TabletopStickSteering(input)
+                ? -TabletopStickSteering(input)
                 : std::clamp(visual.steering,-1.0f,1.0f);
             *reinterpret_cast<float*>(bytes+0x730) = steer;
             const std::uintptr_t handling =

@@ -8653,6 +8653,11 @@ using PlaceMarkerSetFn = void (*)(std::uint64_t, std::uint16_t,
                                   std::uint8_t, std::uint8_t, std::uint8_t,
                                   std::uint8_t, std::uint16_t, float,
                                   std::int16_t);
+using PlaceMarkerFn = void* (*)(std::uint64_t, std::uint16_t,
+                                GameSymbols::Vec3*, float,
+                                std::uint8_t, std::uint8_t, std::uint8_t,
+                                std::uint8_t, std::uint16_t, float,
+                                std::int16_t, float, float, float, bool);
 InsertEntityIntoSortedListFn g_origInsertEntityIntoSortedList = nullptr;
 InitAlphaEntityListFn g_origInitAlphaEntityList = nullptr;
 RenderFadingEntitiesFn g_origRenderFadingEntities = nullptr;
@@ -8748,6 +8753,8 @@ ConvertToDummyObjectFn g_origConvertToDummyObject = nullptr;
 FindPlayerWantedFn g_findPlayerWanted = nullptr;
 PlaceMarkerConeFn g_origPlaceMarkerCone = nullptr;
 PlaceMarkerSetFn g_origPlaceMarkerSet = nullptr;
+PlaceMarkerFn g_origPlaceMarker = nullptr;
+std::atomic<bool> g_placeMarkerCaptureActive{false};
 std::atomic<bool> g_ambientCarGateActive{false};
 std::atomic<std::uint32_t> g_ambientCarGateAttempts{0};
 std::atomic<std::uint32_t> g_ambientCarGateBlocks{0};
@@ -9344,6 +9351,60 @@ void OnMarkersRender() {
     if (g_origMarkersRender) g_origMarkersRender();
 }
 
+__attribute__((noinline)) void* OnPlaceMarker(
+    std::uint64_t id, std::uint16_t type, GameSymbols::Vec3* point, float size,
+    std::uint8_t red, std::uint8_t green, std::uint8_t blue,
+    std::uint8_t alpha, std::uint16_t pulsePeriod, float pulseFraction,
+    std::int16_t rotateRate, float normalX, float normalY, float normalZ,
+    bool checkGround) {
+    if (!g_origPlaceMarker) return nullptr;
+    void* const marker = g_origPlaceMarker(
+        id, type, point, size, red, green, blue, alpha, pulsePeriod,
+        pulseFraction, rotateRate, normalX, normalY, normalZ, checkGround);
+
+    // Script mission areas use the full PlaceMarker entry point, while the old
+    // tabletop bridge covered only the convenience PlaceMarkerSet wrapper.
+    // Tube checkpoints (type 2) take the same late RenderWare path as ordinary
+    // red cylinders (type 1), so publish both into the stereo GL pass.
+    constexpr std::uint16_t kMarker3dCylinder = 1u;
+    constexpr std::uint16_t kMarker3dTube = 2u;
+    if ((type != kMarker3dCylinder && type != kMarker3dTube) || !point ||
+        !g_tabletopActive.load(std::memory_order_acquire) ||
+        !hud::ObjectiveMarkersIncludeOriginal() ||
+        !g_tabletopWorldTransformBaseValid || !g_origin.valid ||
+        !std::isfinite(point->x) || !std::isfinite(point->y) ||
+        !std::isfinite(point->z) || !std::isfinite(size) || size <= 0.0f) {
+        return marker;
+    }
+
+    const float worldScale = tabletop::VisualScale();
+    if (!std::isfinite(worldScale) || worldScale <= 0.0f) return marker;
+    const float markerRadius = std::clamp(
+        size * worldScale * 0.55f, 0.035f, 0.30f);
+    const float markerHeight = std::clamp(
+        size * worldScale * 1.45f, 0.10f, 0.48f);
+    const V3 centerWorld{
+        point->x, point->y, point->z + markerHeight / worldScale * 0.5f};
+    const V3 centerTracking = TabletopWorldPointToLocalTracking(centerWorld);
+    if (!Finite(centerTracking)) return marker;
+    const float tracking[3]{
+        centerTracking.x, centerTracking.y, centerTracking.z};
+    xr::UpdateObjectiveCylinder(id ^ 0x2000000000000000ULL, tracking,
+                                markerRadius, markerHeight,
+                                red, green, blue, alpha);
+
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true, std::memory_order_acq_rel)) {
+        LOGI("[objective] tabletop mission area captured id=%llu type=%u "
+             "world_size=%.2f physical_radius=%.3f physical_height=%.3f",
+             static_cast<unsigned long long>(id),
+             static_cast<unsigned int>(type), static_cast<double>(size),
+             static_cast<double>(markerRadius),
+             static_cast<double>(markerHeight));
+    }
+    return marker;
+}
+
 __attribute__((noinline)) void OnPlaceMarkerCone(
     std::uint64_t id, GameSymbols::Vec3* point, float size,
     std::uint8_t red, std::uint8_t green, std::uint8_t blue,
@@ -9408,6 +9469,11 @@ __attribute__((noinline)) void OnPlaceMarkerSet(
     const GameSymbols::Vec3 source = point ? *point : GameSymbols::Vec3{};
     g_origPlaceMarkerSet(id, type, point, size, red, green, blue, alpha,
                          pulsePeriod, pulseFraction, rotateRate);
+
+    // PlaceMarkerSet calls the full PlaceMarker symbol internally. When that
+    // comprehensive hook is active it already emitted the correctly scaled
+    // cylinder, so do not also publish the legacy diamond replacement.
+    if (g_placeMarkerCaptureActive.load(std::memory_order_acquire)) return;
 
     constexpr std::uint16_t kMarker3dCylinder = 1u;
     if (type != kMarker3dCylinder || !point ||
@@ -14472,23 +14538,12 @@ void ReportStereoDispatchCullWindow() {
 // moving circle to cross it without a load/unload flash. Ground gets a whole
 // extra sector so no admitted pole, car or pedestrian can outlive its floor.
 constexpr float kTabletopObjectOverscanM = 18.0f;
-constexpr float kTabletopLargeRadiusObjectOverscanM = 8.0f;
 constexpr float kTabletopGroundOverscanM = 55.0f;
 constexpr float kTabletopViewerIslandM = 55.0f;
 constexpr float kTabletopViewerGroundIslandM = 80.0f;
 constexpr float kTabletopBridgeM = 28.0f;
 constexpr float kTabletopGroundBridgeM = 42.0f;
 constexpr float kTabletopDisconnectBridgeM = 140.0f;
-
-float TabletopObjectOverscanM() {
-    // Presets 3/4 already expose a much larger disk (90/120 m). Keep every
-    // object inside the visible circle, but spend less GPU work on secondary
-    // opaque/alpha content hidden beyond its fade. The 30/60 m presets retain
-    // the established 18 m residency skirt and therefore remain unchanged.
-    return tabletop::RadiusPresetIndex() >= 2
-        ? kTabletopLargeRadiusObjectOverscanM
-        : kTabletopObjectOverscanM;
-}
 
 float TabletopCoverageSegmentT(float x, float y) {
     if (!g_tabletopViewCoverageCenterValid) return 0.0f;
@@ -14642,7 +14697,7 @@ void OnRenderOneRoad(void* entity) {
 }
 
 void OnRenderOneNonRoad(void* entity) {
-    if (!TabletopEntityInsideRadius(entity, TabletopObjectOverscanM())) return;
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
     // The radial gate is already tightly bounded. Re-testing accepted
     // tabletop content against two slightly different eye frusta caused
     // distant objects to alternate between eyes/frames.
@@ -14681,7 +14736,7 @@ void OnRenderOneNonRoad(void* entity) {
 }
 
 void OnRenderAlphaEntity(void* entity, float distance) {
-    if (!TabletopEntityInsideRadius(entity, TabletopObjectOverscanM())) return;
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
     if (!g_tabletopActive.load(std::memory_order_acquire) &&
         !StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, true);
@@ -18016,6 +18071,9 @@ void InstallStereoReuseHooks() {
     static constexpr std::uint32_t kPlaceMarkerConePlt[4] = {
         0xf0000230u, 0xf9404a11u, 0x91024210u, 0xd61f0220u,
     };
+    static constexpr std::uint32_t kPlaceMarkerPlt[4] = {
+        0xd00001f0u, 0xf941ca11u, 0x910e4210u, 0xd61f0220u,
+    };
     static constexpr std::uint32_t kPlaceMarkerSetPlt[4] = {
         0xb0000230u, 0xf9426211u, 0x91130210u, 0xd61f0220u,
     };
@@ -18088,6 +18146,19 @@ void InstallStereoReuseHooks() {
             kPlaceMarkerConePlt,
             reinterpret_cast<void*>(g_origPlaceMarkerCone),
             reinterpret_cast<void*>(&OnPlaceMarkerCone));
+    g_origPlaceMarker = effectsGameHandle
+        ? reinterpret_cast<PlaceMarkerFn>(
+              dlsym(effectsGameHandle,
+                    "_ZN10C3dMarkers11PlaceMarkerEytR7CVectorfhhhhtfsfffb"))
+        : nullptr;
+    const bool placeMarkerCaptureActive = g_origPlaceMarker &&
+        InstallRetailGotHook(
+            "mission area marker capture", 0x5f1c0cu, 0x80d2a0u, 0x84b390u,
+            kPlaceMarkerPlt,
+            reinterpret_cast<void*>(g_origPlaceMarker),
+            reinterpret_cast<void*>(&OnPlaceMarker));
+    g_placeMarkerCaptureActive.store(
+        placeMarkerCaptureActive, std::memory_order_release);
     g_origPlaceMarkerSet = effectsGameHandle
         ? reinterpret_cast<PlaceMarkerSetFn>(
               dlsym(effectsGameHandle,
@@ -18110,10 +18181,11 @@ void InstallStereoReuseHooks() {
             reinterpret_cast<void*>(&OnPlaceMarkerSet));
     if (effectsGameHandle) dlclose(effectsGameHandle);
     LOGI("[objective] original_stereo=%d flat_preserve=%d cone_capture=%d "
-         "cylinder_capture=%d cylinder_entry=%d",
+         "place_capture=%d cylinder_fallback=%d cylinder_entry=%d",
          hud::ObjectiveMarkersIncludeOriginal() ? 1 : 0,
          flatMarkerSkipActive ? 1 : 0,
          objectiveCaptureActive ? 1 : 0,
+         placeMarkerCaptureActive ? 1 : 0,
          cylinderCaptureActive ? 1 : 0,
          markerSetEntryMatch ? 1 : 0);
 
@@ -23376,7 +23448,7 @@ bool OnGetIsOnScreen(void* entity) {
     // frustum decisions; the larger selectable tabletop circle remains subject
     // to the normal per-eye dispatch optimization.
     if (stereo &&
-        TabletopEntityInsideRadius(entity, TabletopObjectOverscanM())) return true;
+        TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return true;
     const bool profileCull = stereo && ShouldProfileCullOnCurrentThread();
     const auto* entityBytes = static_cast<const std::uint8_t*>(entity);
     const int entityType = entity ? (entityBytes[0x5a] & 0x7) : 0;
@@ -23881,7 +23953,7 @@ bool OnIsSphereVisible(void* cam, const void* origin, float radius) {
         if (TabletopWorldInsidePlayerSafety(world, allowance) ||
             TabletopWorldInsideCoverage(
                 world, tabletop::RadiusMeters() +
-                           TabletopObjectOverscanM() + allowance)) return true;
+                           kTabletopObjectOverscanM + allowance)) return true;
     }
     const bool profileCull = stereo && ShouldProfileCullOnCurrentThread();
     if (stereo && origin && g.TheCamera) {

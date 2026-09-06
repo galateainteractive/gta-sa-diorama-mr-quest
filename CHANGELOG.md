@@ -9,6 +9,10 @@
   camera.
 - Added targeted tabletop aim diagnostics for the classic attack route and the
   Android targeting widget, without enabling physical weapons in miniature mode.
+- Added a stereo tabletop replacement for script mission cylinders and tube
+  checkpoints captured from the complete `C3dMarkers::PlaceMarker` path.
+- Added an APK-only installer option that hash-checks preserved Quest audio,
+  refreshes its read permissions, and republishes it only when invalid.
 - Added Vice City-style volumetric bullet tracers with a thin core and a
   multi-fin smoke volume.
 - Added in-game tracer colour selection (`VICE CITY` or `GOLD`) and live smoke
@@ -21,9 +25,10 @@
 
 ### Improved
 
-- Reduced the hidden object overscan and capped procedural-grass detail at the
-  proven 60 m budget for the 90/120 m tabletop radius presets. Ground, roads,
-  large structures, and every object inside the selected visible radius remain.
+- Capped procedural-grass detail at the proven 60 m budget for the 90/120 m
+  tabletop radius presets while retaining the established 18 m object residency
+  skirt to avoid extra pop/flicker. Ground, roads, large structures, and every
+  object inside the selected visible radius remain.
 - Shortened tracer length and lifetime so shots read as fast projectiles rather
   than persistent laser beams.
 - Stabilized parachute visibility distance against altitude changes and moved
@@ -38,6 +43,8 @@
 
 - Fixed BMX/bicycle steering in tabletop mode being overwritten by the idle
   immersive-handlebar value after the left-stick query had succeeded.
+- Fixed the direct BMX fork/handling write using the opposite steering sign
+  from the tabletop `CPad` query.
 - Fixed older tracers dimming newly spawned smoke by sharing one averaged alpha
   value.
 - Fixed mission selection wrapping and page-specific mission counts.
