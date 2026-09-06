@@ -276,11 +276,6 @@ struct TabletopMaskState {
     float viewerRadiusM{};
     float bridgeRadiusM{};
     float featherM{};
-    // A second, elevation-gated shell lets already-admitted aircraft remain
-    // visible beyond the ground disk without exposing distant streets. Values
-    // are physical OpenXR metres, just like the ordinary radii above.
-    float aircraftRadiusM{};
-    float aircraftMinHeightM{};
     // GTA's depth projection uses game units; convert reconstructed view
     // distance to OpenXR LOCAL metres before testing the physical boundary.
     float depthScaleMPerGameUnit{1.0f};

@@ -3011,12 +3011,6 @@ bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     // Four GTA metres at normal scale gives a 16 cm soft edge: wide enough to
     // hide sector pop, narrow enough to retain the crisp tabletop silhouette.
     out.featherM = std::clamp(4.0f * scale, 0.08f, 0.24f);
-    // Aircraft get an experimental 120 m horizontal extension once their
-    // fragments are at least ten GTA metres above CJ. The matching entity gate
-    // below admits only plane/helicopter vehicles into this outer shell; the
-    // height condition keeps streets and ordinary props clipped to the disk.
-    out.aircraftRadiusM = (radius + 120.0f) * scale;
-    out.aircraftMinHeightM = 10.0f * scale;
     out.depthScaleMPerGameUnit = scale;
     return true;
 }
@@ -14648,13 +14642,10 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     // road tile. Use its collision bound as the edge allowance when available,
     // then retain six metres as a conservative fallback for small props.
     float allowance = 6.0f;
-    const auto* bytes = static_cast<const std::uint8_t*>(entity);
-    const int modelId = static_cast<int>(
-        *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
-    const int entityType = bytes[0x5a] & 0x7;
-    const bool aircraft = entityType == 2 &&
-        traffic_census::IsAircraftModel(modelId);
     if (g.CModelInfo_ms_modelInfoPtrs) {
+        const auto* bytes = static_cast<const std::uint8_t*>(entity);
+        const int modelId = static_cast<int>(
+            *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
         if (modelId >= 0 && modelId < 20000) {
             const auto* model = static_cast<const std::uint8_t*>(
                 g.CModelInfo_ms_modelInfoPtrs[modelId]);
@@ -14667,7 +14658,6 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
                 allowance = std::clamp(bound, 6.0f, 80.0f);
         }
     }
-    if (aircraft) extraRadiusM += 120.0f;
     const float radius = tabletop::RadiusMeters() + allowance +
         std::max(0.0f, extraRadiusM);
     return TabletopWorldInsideCoverage(world, radius);

@@ -4,9 +4,6 @@
 
 ### Added
 
-- Added an experimental elevated aircraft shell: planes and helicopters can
-  remain visible for 120 metres beyond the selected ground radius while the
-  ordinary street scene stays bounded by the tabletop mask.
 - Added release-build swim-state diagnostics confirming that tabletop movement
   remains headset-relative and immersive arm-stroke locomotion stays blocked.
 
@@ -19,6 +16,9 @@
 
 ### Fixed
 
+- Removed the experimental height-only aircraft shell after headset testing
+  showed that it also revealed upper portions of unrelated scenery outside the
+  tabletop radius. Aircraft now obey the normal mask again.
 - Fixed tabletop mission cylinders being captured successfully and then skipped
   by the late-overlay renderer's tabletop early return.
 - Added a cylinder-only fallback when shared scene depth is unavailable, so a

@@ -8693,8 +8693,7 @@ GLint  g_tabletopAlphaEyeLoc = -1, g_tabletopAlphaRightLoc = -1;
 GLint  g_tabletopAlphaUpLoc = -1, g_tabletopAlphaForwardLoc = -1;
 GLint  g_tabletopAlphaPlayerLoc = -1, g_tabletopAlphaViewerLoc = -1;
 GLint  g_tabletopAlphaAxisXLoc = -1, g_tabletopAlphaAxisYLoc = -1;
-GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaAircraftLoc = -1;
-GLint  g_tabletopAlphaDepthScaleLoc = -1;
+GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaDepthScaleLoc = -1;
 GLint  g_tabletopAlphaModeLoc = -1;
 GLint  g_tabletopAlphaBridgeLoc = -1;
 int    g_handDepthRetryCountdown = 0;
@@ -10683,7 +10682,7 @@ bool EnsureTabletopAlphaProgram() {
                      "uniform vec2 uNearFar; uniform vec2 uTan;\n"
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
-                     "uniform vec4 uRadii; uniform vec2 uAircraft; uniform float uDepthScale; uniform int uMode,uBridge;\n"
+                     "uniform vec4 uRadii; uniform float uDepthScale; uniform int uMode,uBridge;\n"
                      "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
                      "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
                      "void main(){\n"
@@ -10697,10 +10696,6 @@ bool EnsureTabletopAlphaProgram() {
                      " float sd=length(pp)-uRadii.x;\n"
                      " if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);\n"
                      " if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}\n"
-                     " vec3 worldUp=normalize(cross(uAxisX,uAxisY));\n"
-                     " float height=dot(p-uPlayer,worldUp);\n"
-                     " float airSd=max(length(pp)-uAircraft.x,uAircraft.y-height);\n"
-                     " sd=min(sd,airSd);\n"
                      " float a=1.0-smoothstep(-uRadii.w,0.0,sd);\n"
                      " o=vec4(0,0,0,a);\n"
                      "}\n";
@@ -10736,8 +10731,6 @@ bool EnsureTabletopAlphaProgram() {
     g_tabletopAlphaAxisXLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisX");
     g_tabletopAlphaAxisYLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisY");
     g_tabletopAlphaRadiiLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uRadii");
-    g_tabletopAlphaAircraftLoc =
-        glGetUniformLocation(g_tabletopAlphaProgram, "uAircraft");
     g_tabletopAlphaDepthScaleLoc =
         glGetUniformLocation(g_tabletopAlphaProgram, "uDepthScale");
     g_tabletopAlphaModeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uMode");
@@ -10885,8 +10878,6 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         glUniform3fv(g_tabletopAlphaAxisYLoc, 1, mask.axisY);
         glUniform4f(g_tabletopAlphaRadiiLoc, mask.playerRadiusM,
                     mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
-        glUniform2f(g_tabletopAlphaAircraftLoc, mask.aircraftRadiusM,
-                    mask.aircraftMinHeightM);
         glUniform1f(g_tabletopAlphaDepthScaleLoc,
                     std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
         glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);
