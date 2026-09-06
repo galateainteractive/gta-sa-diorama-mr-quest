@@ -1,5 +1,17 @@
 # Changelog
 
+## Package 23 test candidate
+
+- Replace scoped nearby vehicle scraping/wheel sparks with capped world-space
+  crossed fins shared by both stereo eyes; retain other stock effect producers.
+- Stop heuristic left-to-right Fx batch substitution in tabletop.
+- Require high-precision depth sampling for the radial mask, isolate its
+  sampler state, and reject invalid mask inputs/non-finite distances.
+- Make mask failure counters available in player APKs and add a bounded
+  success heartbeat. P22 used a logging macro compiled out in these APKs.
+- Preserve P22 road admission and all previously approved gameplay changes.
+- Headset validation remains pending; see `PACKAGE_23.md` for test guidance.
+
 ## 0.1.4 alpha
 
 ### Added

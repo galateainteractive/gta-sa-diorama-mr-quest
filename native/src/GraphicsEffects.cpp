@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <mutex>
 
 namespace savr::graphicsfx {
 namespace {
@@ -276,6 +277,10 @@ void RecordFxStereoBatch(void* vertices, unsigned int count, void* matrix,
 
 void* StabilizeFxStereoBatch(void* vertices, unsigned int count, void* matrix,
                              unsigned int flags, void* texture) {
+    // Batch ordinal/count/texture do not identify an emitter. Copying a left
+    // batch over a different right-eye emitter can itself scatter particles.
+    // Tabletop replaces the audited scraping producer instead (below).
+    if (vrcam::IsTabletopActive()) return vertices;
     if (g_fxEye != 1 || matrix != nullptr || !vertices || count == 0u ||
         count > kFxStereoStableMaxVertices || g_fxBatchCount[1] <= 0) {
         return vertices;
@@ -3618,6 +3623,190 @@ bool PrepareEssentialLightQueues(int eye) {
     return true;
 }
 
+// Verified 2.11.311 AddSparks ABI: the by-value CVector is an AArch64
+// three-float HFA (s1..s3), followed by spread/life in s4/s5.
+using AddSparksFn = void (*)(void*, GameSymbols::Vec3&, GameSymbols::Vec3&,
+                            float, int, GameSymbols::Vec3, unsigned char,
+                            float, float);
+AddSparksFn g_originalAddSparks{};
+std::uintptr_t g_sparkGameBase{};
+bool g_scrapeReplacementReady{};
+constexpr int kScrapeCapacity = 96;
+struct ScrapeParticle {
+    CoronaV3 origin{}, velocity{};
+    std::uint32_t born{};
+    float lifetime{};
+};
+ScrapeParticle g_scrapeParticles[kScrapeCapacity]{};
+std::mutex g_scrapeMutex;
+int g_scrapeNext{};
+std::uint32_t g_scrapeSeed = 0x73617672u;
+std::uint32_t g_scrapeEmissionWindow{};
+int g_scrapeEmissionCount{};
+std::uint64_t g_scrapeReplaced{}, g_scrapeDropped{};
+CoronaVertex g_scrapeVertices[kScrapeCapacity * 12]{};
+int g_scrapeVertexCount{};
+
+float ScrapeRandom() {
+    // Do not consume GTA's random stream or change mission/traffic RNG.
+    g_scrapeSeed ^= g_scrapeSeed << 13;
+    g_scrapeSeed ^= g_scrapeSeed >> 17;
+    g_scrapeSeed ^= g_scrapeSeed << 5;
+    return static_cast<float>(g_scrapeSeed & 0xffffu) / 65535.0f;
+}
+
+__attribute__((noinline)) void OnAddTabletopSparks(
+        void* fx, GameSymbols::Vec3& point, GameSymbols::Vec3& direction,
+        float force, int count, GameSymbols::Vec3 across,
+        unsigned char type, float spread, float life) {
+    const auto caller = reinterpret_cast<std::uintptr_t>(
+        __builtin_return_address(0)) - g_sparkGameBase;
+    // Exact return addresses: CPhysical::ApplyFriction, vehicle wheel damage,
+    // CVehicle::AddSingleWheelParticles. Script, weapon, break-object, and
+    // other AddSparks callers retain their original effects.
+    const bool scrapeCaller = caller == 0x4a2284u ||
+        caller == 0x6dfb78u || caller == 0x6e3500u;
+    void* vehicle = nullptr;
+    if (g_scrapeReplacementReady && scrapeCaller &&
+        vrcam::IsTabletopActive() && Enabled() && Profile() > 0 &&
+        g.FindPlayerVehicle && g.CTimer_m_snTimeInMilliseconds) {
+        vehicle = g.FindPlayerVehicle(-1, false);
+    }
+    const CoronaV3 position{point.x, point.y, point.z};
+    const CoronaV3 emission{direction.x, direction.y, direction.z};
+    CoronaV3 vehiclePosition{};
+    if (vehicle) {
+        const auto* bytes = static_cast<const std::uint8_t*>(vehicle);
+        const auto* matrix = *reinterpret_cast<const std::uint8_t* const*>(
+            bytes + 0x18);
+        vehiclePosition = ReadCoronaV3(matrix ? matrix + 0x30 : bytes + 0x08);
+    }
+    const CoronaV3 separation = position - vehiclePosition;
+    if (!vehicle || !CoronaFinite(position) || !CoronaFinite(emission) ||
+        !CoronaFinite(vehiclePosition) || !std::isfinite(force) || count < 1 ||
+        CoronaDot(separation, separation) > 64.0f) {
+        if (g_originalAddSparks)
+            g_originalAddSparks(fx, point, direction, force, count, across,
+                                type, spread, life);
+        return;
+    }
+
+    const auto now = *g.CTimer_m_snTimeInMilliseconds;
+    std::lock_guard<std::mutex> lock(g_scrapeMutex);
+    ++g_scrapeReplaced;
+    if (now - g_scrapeEmissionWindow >= 16u) {
+        g_scrapeEmissionWindow = now;
+        g_scrapeEmissionCount = 0;
+    }
+    // At most eight births per 16 ms even for multiple contacts per wheel.
+    const int births = std::min({count, 4, 8 - g_scrapeEmissionCount});
+    g_scrapeDropped += static_cast<std::uint64_t>(count - births);
+    g_scrapeEmissionCount += births;
+    CoronaV3 axis = CoronaNormalized(emission);
+    if (CoronaDot(axis, axis) < 0.5f) axis = {0.0f, 0.0f, 1.0f};
+    for (int i = 0; i < births; ++i) {
+        const float speed = std::clamp(std::abs(force) * 2.0f, 1.5f, 6.0f);
+        const CoronaV3 jitter{ScrapeRandom() - 0.5f,
+                              ScrapeRandom() - 0.5f, ScrapeRandom() * 0.6f};
+        auto& particle = g_scrapeParticles[g_scrapeNext++ % kScrapeCapacity];
+        particle = {position, (axis + jitter) * speed, now,
+                    0.16f + ScrapeRandom() * 0.14f};
+        // Keep the circular index bounded for multi-hour play sessions.
+        g_scrapeNext %= kScrapeCapacity;
+    }
+}
+
+void RenderTabletopScrapeSparks(int eye) {
+    if (!g_scrapeReplacementReady || eye < 0 || eye > 1) return;
+    if (!vrcam::IsTabletopActive() || !Enabled()) {
+        std::lock_guard<std::mutex> lock(g_scrapeMutex);
+        for (auto& particle : g_scrapeParticles) particle.lifetime = 0.0f;
+        g_scrapeVertexCount = 0;
+        return;
+    }
+    if (eye == 0) {
+        const auto now = *g.CTimer_m_snTimeInMilliseconds;
+        g_scrapeVertexCount = 0;
+        std::lock_guard<std::mutex> lock(g_scrapeMutex);
+        for (auto& particle : g_scrapeParticles) {
+            const float age = static_cast<float>(now - particle.born) * 0.001f;
+            if (particle.lifetime <= 0.0f || age >= particle.lifetime) continue;
+            const CoronaV3 gravity{0.0f, 0.0f, -4.0f};
+            const CoronaV3 head = particle.origin + particle.velocity * age +
+                gravity * (0.5f * age * age);
+            const CoronaV3 axis = CoronaNormalized(particle.velocity + gravity * age);
+            const CoronaV3 reference = std::abs(axis.z) < 0.9f
+                ? CoronaV3{0.0f, 0.0f, 1.0f} : CoronaV3{1.0f, 0.0f, 0.0f};
+            const CoronaV3 side = CoronaNormalized(CoronaCross(axis, reference));
+            const CoronaV3 up = CoronaNormalized(CoronaCross(axis, side));
+            const float fade = 1.0f - age / particle.lifetime;
+            const CoronaV3 tail = head - axis * (0.10f + fade * 0.18f);
+            const auto color = PackSkyColor(255, 140 + static_cast<int>(100 * fade),
+                                            50, static_cast<int>(255 * fade));
+            // Two crossed fins have real volume, without a camera-facing
+            // billboard. Build once; both eyes consume identical world points.
+            for (const CoronaV3 width : {side * 0.015f, up * 0.015f}) {
+                const CoronaV3 points[6]{head + width, tail + width, head - width,
+                                         head - width, tail + width, tail - width};
+                for (const CoronaV3 p : points)
+                    g_scrapeVertices[g_scrapeVertexCount++] = MakeCoronaVertex(
+                        p, color, 0.0f, 0.0f);
+            }
+        }
+        static std::uint32_t lastReport{};
+        if (now - lastReport >= 2000u && g_scrapeReplaced != 0) {
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[spark.replace] calls=%llu budget_drops=%llu active=%d cap=%d",
+                static_cast<unsigned long long>(g_scrapeReplaced),
+                static_cast<unsigned long long>(g_scrapeDropped),
+                g_scrapeVertexCount / 12, kScrapeCapacity);
+            lastReport = now;
+            g_scrapeReplaced = g_scrapeDropped = 0;
+        }
+    }
+    if (g_scrapeVertexCount == 0) return;
+    const auto saved = CaptureRenderState();
+    if (!saved.valid) return;
+    g_fn.definedState();
+    g_fn.renderStateSet(1, nullptr);
+    g_fn.renderStateSet(6, reinterpret_cast<void*>(1)); // depth test
+    g_fn.renderStateSet(8, reinterpret_cast<void*>(1)); // mask receives depth
+    g_fn.renderStateSet(12, reinterpret_cast<void*>(1));
+    g_fn.renderStateSet(10, reinterpret_cast<void*>(5)); // SRCALPHA
+    g_fn.renderStateSet(11, reinterpret_cast<void*>(6)); // INVSRCALPHA
+    g_fn.renderStateSet(20, reinterpret_cast<void*>(1)); // CULLNONE
+    g_fn.renderStateSet(14, nullptr);
+    g_fn.renderStateSet(29, reinterpret_cast<void*>(8)); // ALPHATEST ALWAYS
+    if (g.RwIm3DTransform(g_scrapeVertices, g_scrapeVertexCount, nullptr, 8u | 16u)) {
+        g_origIm3DRenderPrimitive(3); // TRIANGLELIST
+        g.RwIm3DEnd();
+    }
+    RestoreRenderState(saved);
+}
+
+void InstallTabletopScrapeSparks(void* handle) {
+    if (!g_eyeTargetRoutingReady || !g_fn.definedState ||
+        !g_fn.renderStateSet || !g_fn.renderStateGet || !g.RwIm3DTransform ||
+        !g_origIm3DRenderPrimitive || !g.RwIm3DEnd ||
+        !g.CTimer_m_snTimeInMilliseconds) return;
+    g_originalAddSparks = Resolve<AddSparksFn>(
+        handle, "_ZN4Fx_c9AddSparksER7CVectorS1_fiS0_hff");
+    Dl_info info{};
+    if (!g_originalAddSparks ||
+        !dladdr(reinterpret_cast<void*>(g_originalAddSparks), &info)) return;
+    g_sparkGameBase = reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+    constexpr std::uint32_t plt[4]{0x90000230u, 0xf947b211u,
+                                  0x913d8210u, 0xd61f0220u};
+    g_scrapeReplacementReady = InstallRetailGotHook(
+        "tabletop scraping sparks", g_sparkGameBase, 0x4d5750u,
+        0x800a40u, 0x844f60u, plt,
+        reinterpret_cast<void*>(g_originalAddSparks),
+        reinterpret_cast<void*>(&OnAddTabletopSparks));
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[spark.replace] ready=%d cap=%d sources=friction,wheel near_vehicle=8m",
+        g_scrapeReplacementReady ? 1 : 0, kScrapeCapacity);
+}
+
 bool ResolveFunctions() {
     if (g_resolveAttempted.exchange(true, std::memory_order_acq_rel))
         return g_ready;
@@ -3683,6 +3872,7 @@ bool ResolveFunctions() {
         g_fxFrustumFixReady = false;
         LOGI("[gfxfx.frustum] stock culling restored; nearby rescue disabled");
         g_im3dHooksReady = InstallIm3DDiagnostics(handle);
+        InstallTabletopScrapeSparks(handle);
     }
     if (Profile() > 0) {
         g_trafficLightQualityReady = InstallTrafficLightQualityGate(handle);
@@ -4070,6 +4260,7 @@ void RenderEye(void* rwCamera, int eye) {
     g_insideFxRender = false;
     FinishFxStereoDiagnosticEye(eye);
     if (probeMode > 0) RestoreRenderState(preProbeState);
+    RenderTabletopScrapeSparks(eye);
     if (profile >= 1) Call(g_fn.waterCannons);
     // Searchlight cones are pure late geometry, but their stock helpers share
     // mutable cone scratch state. Replay them only when SAVR owns the complete

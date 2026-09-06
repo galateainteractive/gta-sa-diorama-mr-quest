@@ -10682,7 +10682,9 @@ bool EnsureTabletopAlphaProgram() {
                      "}\n";
     const char* fs = "#version 300 es\n"
                      "precision highp float; in vec2 vUv; out vec4 o;\n"
-                     "uniform sampler2D uDepth; uniform int uUseDepth;\n"
+                     // Float precision does not set sampler precision. Depth
+                     // values near 1 need all available bits before inversion.
+                     "uniform highp sampler2D uDepth; uniform int uUseDepth;\n"
                      "uniform vec2 uNearFar; uniform vec2 uTan;\n"
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
@@ -10690,8 +10692,8 @@ bool EnsureTabletopAlphaProgram() {
                      "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
                      "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
                      "void main(){\n"
-                     " if(uUseDepth==0){o=vec4(0,0,0,1);return;}\n"
-                     " float d=texture(uDepth,vUv).r;if(d>=0.999999)discard;\n"
+                     " if(uUseDepth==0){o=vec4(0);return;}\n"
+                     " float d=texture(uDepth,vUv).r;if(!(d>=0.0&&d<0.999999))discard;\n"
                      " float n=uNearFar.x,f=uNearFar.y,z=d*2.0-1.0;\n"
                      " float vz=((2.0*n*f)/max(1e-5,f+n-z*(f-n)))*uDepthScale;\n"
                      " vec2 ndc=vUv*2.0-1.0;\n"
@@ -10700,6 +10702,7 @@ bool EnsureTabletopAlphaProgram() {
                      " float sd=length(pp)-uRadii.x;\n"
                      " if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);\n"
                      " if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}\n"
+                     " if(isnan(sd)||isinf(sd))discard;\n"
                      " float a=1.0-smoothstep(-uRadii.w,0.0,sd);\n"
                      " o=vec4(0,0,0,a);\n"
                      "}\n";
@@ -10768,6 +10771,7 @@ enum class TabletopMaskFallbackReason : int {
     Storage,
     DepthCopy,
     Shader,
+    InvalidState,
     Count,
 };
 
@@ -10779,16 +10783,43 @@ void RecordTabletopMaskFallback(TabletopMaskFallbackReason reason, int eye) {
     const std::uint64_t nowNs = MonotonicNowNs();
     if (lastReportNs != 0 && nowNs - lastReportNs < 1000000000ULL) return;
     lastReportNs = nowNs;
-    LOGW("[tabletop.mask] fail_closed eye=%d inactive=%llu program=%llu "
-         "source_depth=%llu storage=%llu depth_copy=%llu shader=%llu",
+    // LOGW compiles out in player APKs. This bounded witness must survive.
+    __android_log_print(ANDROID_LOG_WARN, SAVR_TAG,
+         "[tabletop.mask] fail_closed eye=%d cumulative inactive=%llu program=%llu "
+         "source_depth=%llu storage=%llu depth_copy=%llu shader=%llu invalid=%llu",
          eye,
          static_cast<unsigned long long>(counts[0]),
          static_cast<unsigned long long>(counts[1]),
          static_cast<unsigned long long>(counts[2]),
          static_cast<unsigned long long>(counts[3]),
          static_cast<unsigned long long>(counts[4]),
-         static_cast<unsigned long long>(counts[5]));
-    counts.fill(0);
+         static_cast<unsigned long long>(counts[5]),
+         static_cast<unsigned long long>(counts[6]));
+}
+
+bool ValidTabletopMaskInputs(const TabletopMaskState& mask,
+                             const XrPosef& pose, float nearZ, float farZ) {
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(mask.playerCenter[i]) ||
+            !std::isfinite(mask.viewerCenter[i]) ||
+            !std::isfinite(mask.axisX[i]) || !std::isfinite(mask.axisY[i]))
+            return false;
+    }
+    const auto positive = [](float value) {
+        return std::isfinite(value) && value > 0.0f;
+    };
+    const float qLength = pose.orientation.x * pose.orientation.x +
+        pose.orientation.y * pose.orientation.y +
+        pose.orientation.z * pose.orientation.z +
+        pose.orientation.w * pose.orientation.w;
+    return std::isfinite(pose.position.x) && std::isfinite(pose.position.y) &&
+        std::isfinite(pose.position.z) && std::isfinite(qLength) &&
+        std::abs(qLength - 1.0f) < 0.02f &&
+        positive(nearZ) && std::isfinite(farZ) && farZ > nearZ &&
+        positive(mask.playerRadiusM) && positive(mask.viewerRadiusM) &&
+        positive(mask.bridgeRadiusM) && positive(mask.featherM) &&
+        positive(mask.depthScaleMPerGameUnit) &&
+        mask.coverageMode >= 0 && mask.coverageMode <= 2;
 }
 
 // RenderWare's post-effects do not preserve a trustworthy alpha channel. Build
@@ -10805,6 +10836,11 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     if (!mask.active) {
         ClearTabletopWorldAlpha(targetW, targetH);
         RecordTabletopMaskFallback(TabletopMaskFallbackReason::Inactive, eye);
+        return false;
+    }
+    if (!ValidTabletopMaskInputs(mask, renderPose, nearZ, farZ)) {
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(TabletopMaskFallbackReason::InvalidState, eye);
         return false;
     }
     if (!EnsureTabletopAlphaProgram()) {
@@ -10907,6 +10943,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     glDepthMask(GL_FALSE);
     glUseProgram(g_tabletopAlphaProgram);
     glUniform1i(g_tabletopAlphaUseDepthLoc, useWorldFade ? 1 : 0);
+    GLint savedDepthSampler = 0;
     if (useWorldFade) {
         const float saneNear = std::max(0.001f, nearZ);
         const float saneFar = std::max(saneNear + 1.0f, farZ);
@@ -10926,6 +10963,10 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         const XrVector3f forward = QuatRotate(
             renderPose.orientation, {0.0f, 0.0f, -1.0f});
         glActiveTexture(GL_TEXTURE7);
+        glGetIntegerv(GL_SAMPLER_BINDING, &savedDepthSampler);
+        // An overlay's sampler object must not override the depth texture's
+        // NEAREST/no-compare settings on this shared presentation context.
+        glBindSampler(7, 0);
         glBindTexture(GL_TEXTURE_2D, g_tabletopMaskDepthTex);
         glUniform1i(g_tabletopAlphaDepthLoc, 7);
         glUniform2f(g_tabletopAlphaNearFarLoc, saneNear, saneFar);
@@ -10955,6 +10996,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     if (useWorldFade) {
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_2D, 0);
+        glBindSampler(7, static_cast<GLuint>(savedDepthSampler));
         glActiveTexture(GL_TEXTURE0);
     }
     glUseProgram(0);
@@ -10986,6 +11028,22 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
             static_cast<double>(mask.playerRadiusM),
             static_cast<double>(mask.featherM),
             static_cast<double>(mask.depthScaleMPerGameUnit), targetW, targetH);
+    }
+    if (eye == 1) {
+        static std::uint64_t lastHealthNs = 0;
+        static unsigned int successfulPairs = 0;
+        ++successfulPairs;
+        const auto nowNs = MonotonicNowNs();
+        if (nowNs - lastHealthNs >= 5000000000ULL) {
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.mask] health right_ok=%u profile=%d radius=%.3f "
+                "depthScale=%.5f depth_sampler=highp",
+                successfulPairs, mask.coverageMode,
+                static_cast<double>(mask.playerRadiusM),
+                static_cast<double>(mask.depthScaleMPerGameUnit));
+            lastHealthNs = nowNs;
+            successfulPairs = 0;
+        }
     }
     return true;
 }
