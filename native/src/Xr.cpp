@@ -10743,6 +10743,54 @@ bool EnsureTabletopAlphaProgram() {
     return g_tabletopAlphaVao != 0;
 }
 
+// A copied RenderWare frame may contain arbitrary alpha.  If the radial mask
+// cannot be rebuilt for a frame, never submit that alpha to the passthrough
+// compositor: doing so exposes distant world geometry for one eye/frame and
+// looks like a bright flash outside the tabletop disk.  Clearing alpha is the
+// safe fallback; late HUD/hand overlays are drawn afterwards as usual.
+void ClearTabletopWorldAlpha(int targetW, int targetH) {
+    GLfloat savedClear[4]{};
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, savedClear);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s.framebuffer);
+    glViewport(0, 0, targetW, targetH);
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(savedClear[0], savedClear[1], savedClear[2], savedClear[3]);
+}
+
+enum class TabletopMaskFallbackReason : int {
+    Inactive = 0,
+    Program,
+    SourceDepth,
+    Storage,
+    DepthCopy,
+    Shader,
+    Count,
+};
+
+void RecordTabletopMaskFallback(TabletopMaskFallbackReason reason, int eye) {
+    static std::array<std::uint64_t,
+                      static_cast<int>(TabletopMaskFallbackReason::Count)> counts{};
+    static std::uint64_t lastReportNs = 0;
+    ++counts[static_cast<int>(reason)];
+    const std::uint64_t nowNs = MonotonicNowNs();
+    if (lastReportNs != 0 && nowNs - lastReportNs < 1000000000ULL) return;
+    lastReportNs = nowNs;
+    LOGW("[tabletop.mask] fail_closed eye=%d inactive=%llu program=%llu "
+         "source_depth=%llu storage=%llu depth_copy=%llu shader=%llu",
+         eye,
+         static_cast<unsigned long long>(counts[0]),
+         static_cast<unsigned long long>(counts[1]),
+         static_cast<unsigned long long>(counts[2]),
+         static_cast<unsigned long long>(counts[3]),
+         static_cast<unsigned long long>(counts[4]),
+         static_cast<unsigned long long>(counts[5]));
+    counts.fill(0);
+}
+
 // RenderWare's post-effects do not preserve a trustworthy alpha channel. Build
 // the compositor mask from the scene depth instead: untouched clear-depth
 // pixels become transparent and every real world fragment becomes opaque.
@@ -10753,8 +10801,17 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
                                        float nearZ, float farZ,
                                        const TabletopMaskState& mask) {
     if (!vrcam::IsTabletopActive() ||
-        !g_passthroughActive.load(std::memory_order_acquire) ||
-        !EnsureTabletopAlphaProgram()) return false;
+        !g_passthroughActive.load(std::memory_order_acquire)) return false;
+    if (!mask.active) {
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(TabletopMaskFallbackReason::Inactive, eye);
+        return false;
+    }
+    if (!EnsureTabletopAlphaProgram()) {
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(TabletopMaskFallbackReason::Program, eye);
+        return false;
+    }
 
     GLint sourceFormat = 0;
     GLint sourceBits = 0;
@@ -10769,22 +10826,23 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
             LOGW("[tabletop.passthrough] source depth unavailable rbo=%u err=0x%x",
                  gameDepthRbo, queryError);
         }
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(
+            TabletopMaskFallbackReason::SourceDepth, eye);
         return false;
     }
-    const bool useWorldFade = mask.active &&
-        EnsureTabletopMaskDepthStorage(targetW, targetH, sourceFormat);
-    GLenum allocationError = GL_NO_ERROR;
-    if (!useWorldFade &&
-        (!EnsureHandDepthStorage(targetW, targetH, sourceFormat,
-                                 allocationError) ||
-         g_handDepthBits != sourceBits)) {
+    const bool useWorldFade = EnsureTabletopMaskDepthStorage(
+        targetW, targetH, sourceFormat);
+    if (!useWorldFade) {
         static bool loggedDepthAllocation = false;
         if (!loggedDepthAllocation) {
             loggedDepthAllocation = true;
-            LOGW("[tabletop.passthrough] mask depth allocation failed src=0x%x/%d dst=0x%x/%d err=0x%x",
-                 sourceFormat, sourceBits, g_handDepthFormat,
-                 g_handDepthBits, allocationError);
+            LOGW("[tabletop.passthrough] mask depth allocation failed src=0x%x/%d dst=0x%x size=%dx%d",
+                 sourceFormat, sourceBits, g_tabletopMaskDepthFormat,
+                 targetW, targetH);
         }
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(TabletopMaskFallbackReason::Storage, eye);
         return false;
     }
 
@@ -10825,6 +10883,8 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
             LOGW("[tabletop.passthrough] depth mask copy failed read=0x%x draw=0x%x",
                  readStatus, drawStatus);
         }
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(TabletopMaskFallbackReason::DepthCopy, eye);
         return false;
     }
 
@@ -10905,8 +10965,13 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     glClearColor(savedClear[0], savedClear[1], savedClear[2], savedClear[3]);
     glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                               GL_RENDERBUFFER, 0);
+    if (maskError != GL_NO_ERROR) {
+        ClearTabletopWorldAlpha(targetW, targetH);
+        RecordTabletopMaskFallback(TabletopMaskFallbackReason::Shader, eye);
+        return false;
+    }
     static bool loggedSuccess = false;
-    if (!loggedSuccess && maskError == GL_NO_ERROR) {
+    if (!loggedSuccess) {
         loggedSuccess = true;
         LOGI("[tabletop.passthrough] depth alpha mask active src=%dx%d dst=%dx%d format=0x%x/%d fade=%d radius=%.2fm feather=%.2fm depthScale=%.4f",
              gameDepthW, gameDepthH, targetW, targetH,
@@ -10922,7 +10987,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
             static_cast<double>(mask.featherM),
             static_cast<double>(mask.depthScaleMPerGameUnit), targetW, targetH);
     }
-    return maskError == GL_NO_ERROR;
+    return true;
 }
 
 // Tabletop keeps the game character/vehicles at miniature scale, but its HUD

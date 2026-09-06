@@ -23499,7 +23499,7 @@ bool TabletopWorldInsidePlayerSafety(const V3& world, float allowance) {
     const float dx = world.x - player.x;
     const float dy = world.y - player.y;
     const float radius = kTabletopPlayerSafetyRadiusM +
-        std::clamp(allowance, 0.0f, 30.0f);
+        std::clamp(allowance, 0.0f, 80.0f);
     return std::isfinite(dx) && std::isfinite(dy) &&
         dx * dx + dy * dy <= radius * radius;
 }
@@ -23508,8 +23508,32 @@ bool TabletopEntityInsidePlayerSafety(const void* entity) {
     if (!entity || !g_tabletopActive.load(std::memory_order_acquire))
         return false;
     V3 world{};
-    return ReadEntityWorldPosition(entity, &world) &&
-        TabletopWorldInsidePlayerSafety(world);
+    if (!ReadEntityWorldPosition(entity, &world)) return false;
+
+    // A number of SA road shoulders, plazas and terrain slabs are dispatched
+    // through the non-road path even though their visible mesh reaches CJ.  A
+    // pivot-only safety test can therefore reject the whole slab while its
+    // collision remains active.  Test the model's collision sphere against the
+    // player island so nearby ground cannot vanish merely because its authored
+    // pivot is far away.
+    float bound = 0.0f;
+    if (g.CModelInfo_ms_modelInfoPtrs) {
+        const auto* bytes = static_cast<const std::uint8_t*>(entity);
+        const int modelId = static_cast<int>(
+            *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
+        if (modelId >= 0 && modelId < 20000) {
+            const auto* model = static_cast<const std::uint8_t*>(
+                g.CModelInfo_ms_modelInfoPtrs[modelId]);
+            const auto* collision = model
+                ? *reinterpret_cast<const std::uint8_t* const*>(model + 0x30)
+                : nullptr;
+            const float candidate = collision
+                ? *reinterpret_cast<const float*>(collision + 0x24) : 0.0f;
+            if (std::isfinite(candidate) && candidate > 0.0f)
+                bound = candidate;
+        }
+    }
+    return TabletopWorldInsidePlayerSafety(world, bound);
 }
 
 bool OnGetIsOnScreen(void* entity) {

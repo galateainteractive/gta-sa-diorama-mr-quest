@@ -19,6 +19,16 @@
 
 ### Fixed
 
+- Made the tabletop passthrough mask fail closed. A transient missing mask,
+  depth-copy failure, allocation failure, or shader error now leaves that
+  frame transparent instead of exposing arbitrary RenderWare alpha and
+  flashing distant scenery outside the radial boundary.
+- Extended the immediate player-safety island by each entity's bounded
+  collision sphere. Large road shoulders, plazas, and terrain slabs routed
+  through GTA's non-road path can no longer disappear beside CJ merely because
+  their authored pivot lies outside the safety radius.
+- Added rate-limited mask fallback counters identifying inactive state,
+  program, source-depth, storage, copy, and shader failures in headset logs.
 - Added a tabletop-specific swimming adapter. The left stick now selects a
   headset-relative world direction and is converted into GTA's separate swim
   turn/thrust axes, with a short water-surface debounce and no vehicle-yaw
