@@ -5804,7 +5804,10 @@ void UpdateObjectiveCylinder(std::uint64_t id, const float center[3],
                              float radius, float height,
                              unsigned char red, unsigned char green,
                              unsigned char blue, unsigned char alpha) {
-    if (!center || !hud::ObjectiveMarkersIncludeOriginal()) return;
+    // Mission/checkpoint areas are gameplay information, not an optional
+    // cosmetic target highlight. Keep them available in every tabletop HUD
+    // preset even when the stock objective-cone preference is disabled.
+    if (!center) return;
     const XrVector3f point{center[0], center[1], center[2]};
     if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
         !std::isfinite(point.z) || !std::isfinite(radius) ||
@@ -8690,7 +8693,8 @@ GLint  g_tabletopAlphaEyeLoc = -1, g_tabletopAlphaRightLoc = -1;
 GLint  g_tabletopAlphaUpLoc = -1, g_tabletopAlphaForwardLoc = -1;
 GLint  g_tabletopAlphaPlayerLoc = -1, g_tabletopAlphaViewerLoc = -1;
 GLint  g_tabletopAlphaAxisXLoc = -1, g_tabletopAlphaAxisYLoc = -1;
-GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaDepthScaleLoc = -1;
+GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaAircraftLoc = -1;
+GLint  g_tabletopAlphaDepthScaleLoc = -1;
 GLint  g_tabletopAlphaModeLoc = -1;
 GLint  g_tabletopAlphaBridgeLoc = -1;
 int    g_handDepthRetryCountdown = 0;
@@ -10065,8 +10069,9 @@ int SnapshotObjectiveMarkers(
             marker.valid = false;
             continue;
         }
-        if (marker.stockCone ? !hud::ObjectiveMarkersIncludeOriginal()
-                             : !hud::ObjectiveMarkersIncludeHighlight()) {
+        if (!marker.cylinder &&
+            (marker.stockCone ? !hud::ObjectiveMarkersIncludeOriginal()
+                              : !hud::ObjectiveMarkersIncludeHighlight())) {
             continue;
         }
         out[count++] = marker;
@@ -10227,7 +10232,7 @@ void DrawStockObjectiveCylinder(const float* mvp,
 // so it reads as an optional target highlight without obscuring the model.
 void DrawObjectiveHighlights(const float* mvp,
                              const ObjectiveMarkerVisual* markers,
-                             int count) {
+                             int count, bool cylindersOnly = false) {
     if (!markers || count <= 0) return;
     count = std::min(count, kMaxObjectiveMarkers);
     const float timeSeconds = static_cast<float>(
@@ -10241,6 +10246,7 @@ void DrawObjectiveHighlights(const float* mvp,
     glBlendEquation(GL_FUNC_ADD);
     for (int markerIndex = 0; markerIndex < count; ++markerIndex) {
         const ObjectiveMarkerVisual& marker = markers[markerIndex];
+        if (cylindersOnly && !marker.cylinder) continue;
         if (marker.cylinder) {
             DrawStockObjectiveCylinder(mvp, marker);
             continue;
@@ -10677,7 +10683,7 @@ bool EnsureTabletopAlphaProgram() {
                      "uniform vec2 uNearFar; uniform vec2 uTan;\n"
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
-                     "uniform vec4 uRadii; uniform float uDepthScale; uniform int uMode,uBridge;\n"
+                     "uniform vec4 uRadii; uniform vec2 uAircraft; uniform float uDepthScale; uniform int uMode,uBridge;\n"
                      "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
                      "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
                      "void main(){\n"
@@ -10691,6 +10697,10 @@ bool EnsureTabletopAlphaProgram() {
                      " float sd=length(pp)-uRadii.x;\n"
                      " if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);\n"
                      " if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}\n"
+                     " vec3 worldUp=normalize(cross(uAxisX,uAxisY));\n"
+                     " float height=dot(p-uPlayer,worldUp);\n"
+                     " float airSd=max(length(pp)-uAircraft.x,uAircraft.y-height);\n"
+                     " sd=min(sd,airSd);\n"
                      " float a=1.0-smoothstep(-uRadii.w,0.0,sd);\n"
                      " o=vec4(0,0,0,a);\n"
                      "}\n";
@@ -10726,6 +10736,8 @@ bool EnsureTabletopAlphaProgram() {
     g_tabletopAlphaAxisXLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisX");
     g_tabletopAlphaAxisYLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uAxisY");
     g_tabletopAlphaRadiiLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uRadii");
+    g_tabletopAlphaAircraftLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uAircraft");
     g_tabletopAlphaDepthScaleLoc =
         glGetUniformLocation(g_tabletopAlphaProgram, "uDepthScale");
     g_tabletopAlphaModeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uMode");
@@ -10873,6 +10885,8 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         glUniform3fv(g_tabletopAlphaAxisYLoc, 1, mask.axisY);
         glUniform4f(g_tabletopAlphaRadiiLoc, mask.playerRadiusM,
                     mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
+        glUniform2f(g_tabletopAlphaAircraftLoc, mask.aircraftRadiusM,
+                    mask.aircraftMinHeightM);
         glUniform1f(g_tabletopAlphaDepthScaleLoc,
                     std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
         glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);
@@ -10970,17 +10984,26 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
     // The miniature keeps the game's own character/vehicle rendering, while
     // radar/status remain human-scale controller instruments above the map.
     // Weapons, hand meshes and cockpit geometry still stay out of this pass.
-    if (vrcam::IsTabletopActive()) {
-        DrawTabletopControllerHudForEye(
-            rp, e, fbW, fbH, bakedHands, hudSourceTex);
-        return;
+    const bool tabletopActive = vrcam::IsTabletopActive();
+    if (tabletopActive) {
+        // Package 16 captured mission cylinders correctly, but this early exit
+        // prevented the late marker pass from ever seeing them in tabletop.
+        // Continue only when there is marker work; otherwise retain the cheap
+        // HUD-only path. With a marker, draw the HUD last so the mission ring
+        // can never cover the controller instruments.
+        if (objectiveMarkerCount <= 0) {
+            DrawTabletopControllerHudForEye(
+                rp, e, fbW, fbH, bakedHands, hudSourceTex);
+            return;
+        }
     }
-    const bool trackedVisuals = !scope.active && drivingWheel.trackedHandsEnabled;
+    const bool trackedVisuals = !tabletopActive && !scope.active &&
+                                drivingWheel.trackedHandsEnabled;
     bool chuteVisuals = false, chuteRingVisual = false;
     {
         std::lock_guard<std::mutex> lock(g_headPoseMutex);
-        chuteVisuals = g_chuteTogglesVisible;
-        chuteRingVisual = g_chuteRingVisible;
+        chuteVisuals = !tabletopActive && g_chuteTogglesVisible;
+        chuteRingVisual = !tabletopActive && g_chuteRingVisible;
     }
     const bool haveHands = trackedVisuals &&
                            g_hVc > 0 && g_hIc > 0 && g_handTex != 0;
@@ -10992,7 +11015,8 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
     const bool hudCalibrating = g_hudActive.load(std::memory_order_relaxed);
     const bool dashAnchored =
         drivingWheel.active || drivingWheel.dashAnchorValid;
-    const bool wristWanted = !scope.active && hudSourceTex != 0 &&
+    const bool wristWanted = !tabletopActive && !scope.active &&
+        hudSourceTex != 0 &&
         (hud::ShouldRenderWristHud() || hudCalibrating) &&
         (dashAnchored ||
          (trackedVisuals &&
@@ -11135,8 +11159,25 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
         DrawImmersiveDrivingWheel(mvp, drivingWheel);
     // Never turn the optional highlight into a wallhack: if the shared game
     // depth cannot be copied this frame, omit it instead of drawing on top.
-    if (usingGameDepth)
-        DrawObjectiveHighlights(mvp, objectiveMarkers, objectiveMarkerCount);
+    if (usingGameDepth || tabletopActive)
+        DrawObjectiveHighlights(mvp, objectiveMarkers, objectiveMarkerCount,
+                                tabletopActive && !usingGameDepth);
+
+    if (tabletopActive) {
+        // The mission ring is critical gameplay information, so a cylinder may
+        // fall back to cleared depth. Optional cages/cones still require the
+        // copied game depth and can never turn into through-wall highlights.
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, 0);
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        DrawTabletopControllerHudForEye(
+            rp, e, fbW, fbH, bakedHands, hudSourceTex);
+        return;
+    }
 
     if (haveHands) {
         glUseProgram(g_handProg);

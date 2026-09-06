@@ -3011,6 +3011,12 @@ bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     // Four GTA metres at normal scale gives a 16 cm soft edge: wide enough to
     // hide sector pop, narrow enough to retain the crisp tabletop silhouette.
     out.featherM = std::clamp(4.0f * scale, 0.08f, 0.24f);
+    // Aircraft get an experimental 120 m horizontal extension once their
+    // fragments are at least ten GTA metres above CJ. The matching entity gate
+    // below admits only plane/helicopter vehicles into this outer shell; the
+    // height condition keeps streets and ordinary props clipped to the disk.
+    out.aircraftRadiusM = (radius + 120.0f) * scale;
+    out.aircraftMinHeightM = 10.0f * scale;
     out.depthScaleMPerGameUnit = scale;
     return true;
 }
@@ -5511,6 +5517,27 @@ void OnUpdatePads() {
     auto* ns = reinterpret_cast<int16_t*>(pad);
     void* vehicle = g.FindPlayerVehicle ? g.FindPlayerVehicle(-1, false)
                                         : nullptr;
+    void* const inputPed = g.FindPlayerPed ? g.FindPlayerPed(-1) : nullptr;
+    bool playerSwimming = false;
+    if (inputPed) {
+        // CPhysical flags dword at +0x64; bit 8 is maintained by
+        // CPed::ProcessBuoyancy while CJ is submerged/swimming.
+        std::uint32_t physicalFlags = 0;
+        std::memcpy(&physicalFlags,
+                    static_cast<const std::uint8_t*>(inputPed) + 0x64,
+                    sizeof(physicalFlags));
+        playerSwimming = (physicalFlags & 0x100u) != 0;
+    }
+    if (tabletop::Enabled()) {
+        static bool swimmingWas = false;
+        if (playerSwimming != swimmingWas) {
+            swimmingWas = playerSwimming;
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.swim] active=%d stick=headset-relative gesture=blocked",
+                playerSwimming ? 1 : 0);
+        }
+    }
     float moveX=mappedMoveX,moveY=mappedMoveY;
     // Tabletop on-foot locomotion is always HMD-relative, regardless of a
     // BODY mode left over from the regular first-person VR configuration.
@@ -5654,21 +5681,11 @@ void OnUpdatePads() {
     // in water (toggleable in LOCOMOTION settings). Applied after the stick
     // writes so a real stick push always wins over the gesture.
     {
-        void* gesturePed = g.FindPlayerPed ? g.FindPlayerPed(-1) : nullptr;
-        bool swimming = false;
-        if (gesturePed) {
-            // CPhysical flags dword at +0x64 (disasm: ApplyForce @0x4a12a8);
-            // bit 8 = bSubmergedInWater, maintained by CPed::ProcessBuoyancy.
-            std::uint32_t physicalFlags = 0;
-            std::memcpy(&physicalFlags,
-                        static_cast<const std::uint8_t*>(gesturePed) + 0x64,
-                        sizeof(physicalFlags));
-            swimming = (physicalFlags & 0x100u) != 0;
-        }
+        void* const gesturePed = inputPed;
         const bool gestureBlocked = tabletop::Enabled() || gesturePed == nullptr ||
             vehicle != nullptr || ParachuteStateActive();
         gesturemove::Result gm{};
-        gesturemove::Update(gesturePed, swimming, gestureBlocked, gm);
+        gesturemove::Update(gesturePed, playerSwimming, gestureBlocked, gm);
         if (gm.forward > 0.0f) {
             const float stickMagnitude =
                 std::abs(mappedMoveX) + std::abs(mappedMoveY);
@@ -5972,7 +5989,8 @@ void OnUpdatePads() {
                 std::memory_order_relaxed);
             const char* const lifecycleName = lifecycle == 3 ? "dead" :
                 (lifecycle == 2 ? "vehicle" :
-                 (lifecycle == 1 ? "entering" : "foot"));
+                 (lifecycle == 1 ? "entering" :
+                  (playerSwimming ? "swim" : "foot")));
             const TabletopCoverageMode coverageMode =
                 static_cast<TabletopCoverageMode>(g_tabletopCoverageMode.load(
                     std::memory_order_relaxed));
@@ -9370,7 +9388,6 @@ __attribute__((noinline)) void* OnPlaceMarker(
     constexpr std::uint16_t kMarker3dTube = 2u;
     if ((type != kMarker3dCylinder && type != kMarker3dTube) || !point ||
         !g_tabletopActive.load(std::memory_order_acquire) ||
-        !hud::ObjectiveMarkersIncludeOriginal() ||
         !g_tabletopWorldTransformBaseValid || !g_origin.valid ||
         !std::isfinite(point->x) || !std::isfinite(point->y) ||
         !std::isfinite(point->z) || !std::isfinite(size) || size <= 0.0f) {
@@ -9395,12 +9412,14 @@ __attribute__((noinline)) void* OnPlaceMarker(
 
     static std::atomic<bool> logged{false};
     if (!logged.exchange(true, std::memory_order_acq_rel)) {
-        LOGI("[objective] tabletop mission area captured id=%llu type=%u "
-             "world_size=%.2f physical_radius=%.3f physical_height=%.3f",
-             static_cast<unsigned long long>(id),
-             static_cast<unsigned int>(type), static_cast<double>(size),
-             static_cast<double>(markerRadius),
-             static_cast<double>(markerHeight));
+        __android_log_print(
+            ANDROID_LOG_INFO, SAVR_TAG,
+            "[objective] tabletop mission area captured id=%llu type=%u "
+            "world_size=%.2f physical_radius=%.3f physical_height=%.3f",
+            static_cast<unsigned long long>(id),
+            static_cast<unsigned int>(type), static_cast<double>(size),
+            static_cast<double>(markerRadius),
+            static_cast<double>(markerHeight));
     }
     return marker;
 }
@@ -14629,10 +14648,13 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     // road tile. Use its collision bound as the edge allowance when available,
     // then retain six metres as a conservative fallback for small props.
     float allowance = 6.0f;
+    const auto* bytes = static_cast<const std::uint8_t*>(entity);
+    const int modelId = static_cast<int>(
+        *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
+    const int entityType = bytes[0x5a] & 0x7;
+    const bool aircraft = entityType == 2 &&
+        traffic_census::IsAircraftModel(modelId);
     if (g.CModelInfo_ms_modelInfoPtrs) {
-        const auto* bytes = static_cast<const std::uint8_t*>(entity);
-        const int modelId = static_cast<int>(
-            *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
         if (modelId >= 0 && modelId < 20000) {
             const auto* model = static_cast<const std::uint8_t*>(
                 g.CModelInfo_ms_modelInfoPtrs[modelId]);
@@ -14645,6 +14667,7 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
                 allowance = std::clamp(bound, 6.0f, 80.0f);
         }
     }
+    if (aircraft) extraRadiusM += 120.0f;
     const float radius = tabletop::RadiusMeters() + allowance +
         std::max(0.0f, extraRadiusM);
     return TabletopWorldInsideCoverage(world, radius);

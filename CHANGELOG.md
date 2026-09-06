@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.4 alpha
+
+### Added
+
+- Added an experimental elevated aircraft shell: planes and helicopters can
+  remain visible for 120 metres beyond the selected ground radius while the
+  ordinary street scene stays bounded by the tabletop mask.
+- Added release-build swim-state diagnostics confirming that tabletop movement
+  remains headset-relative and immersive arm-stroke locomotion stays blocked.
+
+### Improved
+
+- Replaced the 90 metre radius preset with an 80 metre test step between the
+  stable 60 metre profile and the expensive 120 metre profile.
+- Made mission/checkpoint cylinders mandatory tabletop information rather than
+  tying them to the optional stock objective-marker preference.
+
+### Fixed
+
+- Fixed tabletop mission cylinders being captured successfully and then skipped
+  by the late-overlay renderer's tabletop early return.
+- Added a cylinder-only fallback when shared scene depth is unavailable, so a
+  mission trigger area is not silently lost for that frame.
+
 ## 0.1.3 alpha
 
 ### Added
@@ -25,7 +49,7 @@
 
 ### Improved
 
-- Capped procedural-grass detail at the proven 60 m budget for the 90/120 m
+- Capped procedural-grass detail at the proven 60 m budget for the 80/120 m
   tabletop radius presets while retaining the established 18 m object residency
   skirt to avoid extra pop/flicker. Ground, roads, large structures, and every
   object inside the selected visible radius remain.

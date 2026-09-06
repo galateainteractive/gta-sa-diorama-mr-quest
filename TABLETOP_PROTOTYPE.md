@@ -20,7 +20,7 @@ Runtime controls:
 - fixed table + one grip: drag the model through the room;
 - fixed table + both grips: move, rotate and resize the model (hands farther
   apart make it larger; hands closer make it smaller);
-- `R3`: cycle the visible map radius through 30, 60, 90 and 120 metres;
+- `R3`: cycle the visible map radius through 30, 60, 80 and 120 metres;
 - `L3 + R3`: reset scale, placement and radius while keeping the current view.
 
 The fixed view captures the current player/vehicle frame once. Character and
@@ -30,6 +30,9 @@ table stays in place.
 When supported by the runtime, `XR_FB_passthrough` is submitted underneath the
 world projection. Empty sky pixels are transparent, while road, opaque and
 alpha entity dispatches are limited to the selected circular map radius.
+An experimental elevation-gated shell admits flying planes and helicopters up
+to 120 game metres farther than the ground disk without expanding the ordinary
+street/terrain sector budget.
 
 The render camera is kept orthonormal. Instead of placing scale in its matrix,
 physical head translation and eye separation are divided by `visual_scale`.
