@@ -8780,6 +8780,15 @@ PlaceMarkerConeFn g_origPlaceMarkerCone = nullptr;
 PlaceMarkerSetFn g_origPlaceMarkerSet = nullptr;
 PlaceMarkerFn g_origPlaceMarker = nullptr;
 std::atomic<bool> g_placeMarkerCaptureActive{false};
+std::atomic<std::uint64_t> g_objectiveConeSources{0};
+std::atomic<std::uint64_t> g_objectiveConePublishes{0};
+std::atomic<std::uint64_t> g_objectiveCylinderSources{0};
+std::atomic<std::uint64_t> g_objectiveCylinderPublishes{0};
+std::atomic<std::uint64_t> g_objectiveTransformFailures{0};
+std::atomic<std::uint64_t> g_objectiveRedPublishes{0};
+std::atomic<std::uint64_t> g_objectiveYellowPublishes{0};
+std::atomic<std::uint64_t> g_objectiveBluePublishes{0};
+std::atomic<std::uint64_t> g_objectiveOtherPublishes{0};
 std::atomic<bool> g_ambientCarGateActive{false};
 std::atomic<std::uint32_t> g_ambientCarGateAttempts{0};
 std::atomic<std::uint32_t> g_ambientCarGateBlocks{0};
@@ -9368,12 +9377,45 @@ void OnFxRender(void* fx, void* camera, unsigned char heatHaze) {
     if (g_origFxRender) g_origFxRender(fx, camera, heatHaze);
 }
 
+void CountObjectivePublishedColor(std::uint8_t red, std::uint8_t green,
+                                  std::uint8_t blue) {
+    if (red >= 160 && red > green * 3 / 2 && red > blue * 3 / 2) {
+        g_objectiveRedPublishes.fetch_add(1, std::memory_order_relaxed);
+    } else if (red >= 140 && green >= 110 && blue < 120) {
+        g_objectiveYellowPublishes.fetch_add(1, std::memory_order_relaxed);
+    } else if (blue >= 140 && blue > red * 3 / 2 && blue > green * 6 / 5) {
+        g_objectiveBluePublishes.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_objectiveOtherPublishes.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void OnMarkersRender() {
     // The per-eye stock replay is gone (its atomic draws were dropped after
     // RenderScene); the headset markers are the GL cones published from the
     // PlaceMarkerCone hook. Let the stock flat render run unconditionally so
     // the marker array's used-flag lifecycle stays exactly retail.
     if (g_origMarkersRender) g_origMarkersRender();
+    if (!g_tabletopActive.load(std::memory_order_acquire)) return;
+    static double lastReportMs{};
+    const double nowMs = NowMs();
+    if (nowMs - lastReportMs < 2000.0) return;
+    __android_log_print(
+        ANDROID_LOG_INFO, SAVR_TAG,
+        "[objective.source] scale=%.3f cone=%llu/%llu cylinder=%llu/%llu "
+        "transform_fail=%llu colors_r_y_b_other=%llu/%llu/%llu/%llu",
+        static_cast<double>(tabletop::VisualScale()),
+        static_cast<unsigned long long>(g_objectiveConePublishes.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveConeSources.exchange(0)),
+        static_cast<unsigned long long>(
+            g_objectiveCylinderPublishes.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveCylinderSources.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveTransformFailures.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveRedPublishes.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveYellowPublishes.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveBluePublishes.exchange(0)),
+        static_cast<unsigned long long>(g_objectiveOtherPublishes.exchange(0)));
+    lastReportMs = nowMs;
 }
 
 bool ObjectiveMarkerWorldToTracking(const GameSymbols::Vec3& world,
@@ -9421,8 +9463,12 @@ __attribute__((noinline)) void* OnPlaceMarker(
     // red cylinders (type 1), so publish both into the stereo GL pass.
     constexpr std::uint16_t kMarker3dCylinder = 1u;
     constexpr std::uint16_t kMarker3dTube = 2u;
-    if ((type != kMarker3dCylinder && type != kMarker3dTube) || !point ||
-        !g_tabletopActive.load(std::memory_order_acquire) ||
+    const bool tabletopMarker =
+        (type == kMarker3dCylinder || type == kMarker3dTube) &&
+        g_tabletopActive.load(std::memory_order_acquire);
+    if (tabletopMarker)
+        g_objectiveCylinderSources.fetch_add(1, std::memory_order_relaxed);
+    if (!tabletopMarker || !point ||
         !g_tabletopWorldTransformBaseValid || !g_origin.valid ||
         !std::isfinite(point->x) || !std::isfinite(point->y) ||
         !std::isfinite(point->z) || !std::isfinite(size) || size <= 0.0f) {
@@ -9439,12 +9485,17 @@ __attribute__((noinline)) void* OnPlaceMarker(
     const V3 centerWorld{
         point->x, point->y, point->z + markerHeight / worldScale * 0.5f};
     const V3 centerTracking = TabletopWorldPointToLocalTracking(centerWorld);
-    if (!Finite(centerTracking)) return marker;
+    if (!Finite(centerTracking)) {
+        g_objectiveTransformFailures.fetch_add(1, std::memory_order_relaxed);
+        return marker;
+    }
     const float tracking[3]{
         centerTracking.x, centerTracking.y, centerTracking.z};
     xr::UpdateObjectiveCylinder(id ^ 0x2000000000000000ULL, tracking,
                                 markerRadius, markerHeight,
                                 red, green, blue, alpha);
+    g_objectiveCylinderPublishes.fetch_add(1, std::memory_order_relaxed);
+    CountObjectivePublishedColor(red, green, blue);
 
     static std::atomic<bool> logged{false};
     if (!logged.exchange(true, std::memory_order_acq_rel)) {
@@ -9482,6 +9533,10 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
         !std::isfinite(source.z) || !std::isfinite(size) || size <= 0.0f) {
         return;
     }
+    const bool tabletopMarker =
+        g_tabletopActive.load(std::memory_order_acquire);
+    if (tabletopMarker)
+        g_objectiveConeSources.fetch_add(1, std::memory_order_relaxed);
 
     constexpr std::uintptr_t kRadarMarkerReturn = 0x51c894u;
     // Replay the stock diamond_3 silhouette.  Unlike ordinary red script
@@ -9504,6 +9559,14 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
             xr::UpdateObjectiveMarker(id ^ 0x8000000000000000ULL,
                                       markerTracking, markerRadius, markerHeight,
                                       red, green, blue, true);
+            if (tabletopMarker) {
+                g_objectiveConePublishes.fetch_add(1,
+                                                    std::memory_order_relaxed);
+                CountObjectivePublishedColor(red, green, blue);
+            }
+        } else if (tabletopMarker) {
+            g_objectiveTransformFailures.fetch_add(1,
+                                                    std::memory_order_relaxed);
         }
     }
 
@@ -9527,6 +9590,12 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
     if (ObjectiveMarkerWorldToTracking(world, tracking)) {
         xr::UpdateObjectiveMarker(id, tracking, radius, height,
                                   red, green, blue, false);
+        if (tabletopMarker) {
+            g_objectiveConePublishes.fetch_add(1, std::memory_order_relaxed);
+            CountObjectivePublishedColor(red, green, blue);
+        }
+    } else if (tabletopMarker) {
+        g_objectiveTransformFailures.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

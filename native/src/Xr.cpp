@@ -10404,7 +10404,7 @@ int SnapshotObjectiveMarkers(
         out[count++] = marker;
     }
     static std::uint64_t lastReportNs{};
-    if (vrcam::IsTabletopActive() && count > 0 &&
+    if (vrcam::IsTabletopActive() &&
         now - lastReportNs >= 2000000000ULL) {
         __android_log_print(
             ANDROID_LOG_INFO, SAVR_TAG,
@@ -10575,7 +10575,7 @@ void DrawStockObjectiveCylinder(const float* mvp,
 void DrawObjectiveHighlights(const float* mvp,
                              const XrVector3f& eyePosition,
                              const ObjectiveMarkerVisual* markers,
-                             int count, bool tabletop) {
+                             int count, bool tabletopMode, int eye) {
     if (!markers || count <= 0) return;
     count = std::min(count, kMaxObjectiveMarkers);
     const float timeSeconds = static_cast<float>(
@@ -10587,9 +10587,42 @@ void DrawObjectiveHighlights(const float* mvp,
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glBlendEquation(GL_FUNC_ADD);
+    int clipVisible = 0;
+    int clipBehind = 0;
+    int clipOutside = 0;
+    float nearest = 1000000.0f;
+    float farthest = 0.0f;
     for (int markerIndex = 0; markerIndex < count; ++markerIndex) {
         ObjectiveMarkerVisual marker = markers[markerIndex];
-        if (tabletop) {
+        if (tabletopMode) {
+            const float x = marker.center.x;
+            const float y = marker.center.y;
+            const float z = marker.center.z;
+            const float clipX = mvp[0] * x + mvp[4] * y +
+                                mvp[8] * z + mvp[12];
+            const float clipY = mvp[1] * x + mvp[5] * y +
+                                mvp[9] * z + mvp[13];
+            const float clipZ = mvp[2] * x + mvp[6] * y +
+                                mvp[10] * z + mvp[14];
+            const float clipW = mvp[3] * x + mvp[7] * y +
+                                mvp[11] * z + mvp[15];
+            if (!std::isfinite(clipW) || clipW <= 0.001f) {
+                ++clipBehind;
+            } else if (std::abs(clipX) > clipW || std::abs(clipY) > clipW ||
+                       clipZ < -clipW || clipZ > clipW) {
+                ++clipOutside;
+            } else {
+                ++clipVisible;
+            }
+            const XrVector3f eyeDelta = vsub(marker.center, eyePosition);
+            const float eyeDistance = std::sqrt(std::max(
+                0.0f, vdot(eyeDelta, eyeDelta)));
+            if (std::isfinite(eyeDistance)) {
+                nearest = std::min(nearest, eyeDistance);
+                farthest = std::max(farthest, eyeDistance);
+            }
+        }
+        if (tabletopMode) {
             // Keep markers legible at every tabletop zoom without changing
             // their world position. A minimum angular footprint compensates
             // for eye-to-marker distance; close markers retain authored size.
@@ -10673,6 +10706,21 @@ void DrawObjectiveHighlights(const float* mvp,
     }
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
+    if (tabletopMode && eye == 0) {
+        static std::uint64_t lastDrawReportNs{};
+        const std::uint64_t nowNs = MonotonicNowNs();
+        if (nowNs - lastDrawReportNs >= 2000000000ULL) {
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[objective.draw] scale=%.3f submitted=%d clip_visible=%d "
+                "clip_outside=%d clip_behind=%d eye_distance=%.2f..%.2f",
+                static_cast<double>(tabletop::VisualScale()), count,
+                clipVisible, clipOutside, clipBehind,
+                static_cast<double>(nearest < 999999.0f ? nearest : 0.0f),
+                static_cast<double>(farthest));
+            lastDrawReportNs = nowNs;
+        }
+    }
 }
 
 void DrawWeaponLaser(const float* mvp, const LaserRay& ray) {
@@ -11539,7 +11587,7 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
         glDisable(GL_CULL_FACE);
         glDisable(GL_SCISSOR_TEST);
         DrawObjectiveHighlights(mvp, eyePos, objectiveMarkers,
-                                objectiveMarkerCount, true);
+                                objectiveMarkerCount, true, e);
         glUseProgram(0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -11662,7 +11710,7 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
     // depth cannot be copied this frame, omit it instead of drawing on top.
     if (usingGameDepth)
         DrawObjectiveHighlights(mvp, eyePos, objectiveMarkers,
-                                objectiveMarkerCount, false);
+                                objectiveMarkerCount, false, e);
 
     if (haveHands) {
         glUseProgram(g_handProg);

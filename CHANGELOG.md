@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 27 diagnostic candidate
+
+- Add bounded marker-source telemetry separating GTA cone/cylinder calls from
+  successful tabletop publications, transform failures and colour families.
+- Report the XR marker pool even when empty, including expiration/eviction
+  counts and live tabletop scale.
+- Add a left-eye clip-space audit reporting submitted, visible, outside and
+  behind-camera markers plus their eye-distance range.
+- Keep Package 26 rendering and Package 25 sparks unchanged. See
+  `PACKAGE_27.md`.
+
 ## Package 26 test candidate
 
 - Expand the late stereo objective-marker pool from 16 to 64 entries. GTA's
