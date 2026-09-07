@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 30 test candidate
+
+- Fix the remaining grab-zoom marker disappearance identified by Package 29:
+  late objective vertices were in physical metres but used the tabletop world
+  pass's game-unit near/far clip distances.
+- Convert those clip distances with the synchronized eye/mask frame scale so
+  nearby red, yellow and blue markers stay inside the physical projection at
+  every miniature size.
+- Preserve Package 29 diagnostics and all Package 28/25 marker positioning and
+  presentation behaviour. See `PACKAGE_30.md`.
+
 ## Package 29 targeted diagnostic candidate
 
 - Extend the marker draw heartbeat with one compact record per active marker:

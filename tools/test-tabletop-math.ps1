@@ -155,6 +155,17 @@ Assert-Close (Get-ObjectivePresentationScale 0.01) 0.04 `
 Assert-Close (Get-ObjectivePresentationScale 0.08) 0.08 `
     'objective enlarged scale'
 
+# The stereo world publishes its clip planes in GTA units while tabletop late
+# overlays are already in physical metres. Reapplying the synchronized frame
+# scale must recover the same five-centimetre physical near plane at every grab
+# zoom; otherwise nearby mission markers disappear when the model is shrunk.
+$physicalNearClip = 0.05
+foreach ($grabScale in @(0.010, 0.019, 0.033, 0.040, 0.080)) {
+    $publishedGameNearClip = $physicalNearClip / $grabScale
+    Assert-Close ($publishedGameNearClip * $grabScale) `
+        $physicalNearClip "objective near clip at scale $grabScale"
+}
+
 # Fixed-camera zoom keeps the player at the same physical point. The anchor
 # moves by exactly the inverse scale delta instead of scaling around an old
 # hand midpoint that may be far away from CJ.

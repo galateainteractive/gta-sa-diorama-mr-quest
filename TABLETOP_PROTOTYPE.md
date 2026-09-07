@@ -25,7 +25,9 @@ Runtime controls:
 
 Red mission areas and coloured objective cones follow the same miniature-world
 transform as CJ. Their presentation has a physical minimum size and is drawn as
-navigation UI, so shrinking the model does not hide them in the ground.
+navigation UI, so shrinking the model does not hide them in the ground. Their
+late stereo projection converts the eye pass's game-unit clip distances back
+to physical metres using the scale captured for the same frame.
 
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is

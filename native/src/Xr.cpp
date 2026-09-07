@@ -11681,8 +11681,22 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
     const XrVector3f eyePos{rp.position.x + rr.x, rp.position.y + rr.y, rp.position.z + rr.z};
     float view[16], proj[16], mvp[16];
     MatView(view, rp.orientation, eyePos);
-    const float nearZ = std::max(0.001f, renderedNearZ);
-    const float farZ = std::max(nearZ + 1.0f, renderedFarZ);
+    // The tabletop eye renders GTA geometry in game units: VrCamera therefore
+    // divides its physical 5 cm near plane by the miniature scale before
+    // publishing renderedNearZ/renderedFarZ.  Late objective vertices below
+    // are already expressed in tracking-space metres, so using those game-unit
+    // clip distances directly cuts nearby markers as soon as the user shrinks
+    // the table. Convert the pair back with the exact mask/frame scale that was
+    // also used to reproject the marker positions.
+    const float tabletopProjectionScale =
+        tabletopActive && tabletopMask.active &&
+                std::isfinite(tabletopMask.depthScaleMPerGameUnit)
+            ? std::clamp(tabletopMask.depthScaleMPerGameUnit, 0.001f, 1.0f)
+            : 1.0f;
+    const float nearZ = std::max(
+        0.001f, renderedNearZ * tabletopProjectionScale);
+    const float farZ = std::max(
+        nearZ + 1.0f, renderedFarZ * tabletopProjectionScale);
     // Tracers are world geometry drawn after the blit. They must use the same
     // narrowed frustum as the scoped eye pixels; the projection layer itself
     // still advertises the normal tangents below.
