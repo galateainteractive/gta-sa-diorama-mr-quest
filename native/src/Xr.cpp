@@ -704,6 +704,12 @@ struct ObjectiveMarkerVisual {
     // optional objective HIGHLIGHT cage unless cylinder is set.
     bool stockCone{false};
     bool cylinder{false};
+    // Absolute game-space point. Tabletop presentation
+    // reconstructs this through the exact mask transform captured with the eye
+    // image, so a two-hand scale/rotation cannot leave a marker one frame in a
+    // different physical coordinate system from the miniature.
+    bool tabletopWorldPoint{false};
+    float worldGame[3]{};
     std::uint64_t expiresNs{};
 };
 std::mutex g_objectiveMarkerMutex;
@@ -6063,7 +6069,8 @@ void UpdateObjectiveMarkerSlot(std::uint64_t id, const XrVector3f& point,
                                float radius, float height,
                                unsigned char red, unsigned char green,
                                unsigned char blue, unsigned char alpha,
-                               bool stockCone, bool cylinder) {
+                               bool stockCone, bool cylinder,
+                               const float worldGame[3]) {
     const std::uint64_t now = MonotonicNowNs();
 
     std::lock_guard<std::mutex> lock(g_objectiveMarkerMutex);
@@ -6092,13 +6099,26 @@ void UpdateObjectiveMarkerSlot(std::uint64_t id, const XrVector3f& point,
     slot->alpha = alpha;
     slot->stockCone = stockCone;
     slot->cylinder = cylinder;
+    slot->tabletopWorldPoint = vrcam::IsTabletopActive() &&
+        worldGame && std::isfinite(worldGame[0]) &&
+        std::isfinite(worldGame[1]) && std::isfinite(worldGame[2]);
+    if (slot->tabletopWorldPoint) {
+        slot->worldGame[0] = worldGame[0];
+        slot->worldGame[1] = worldGame[1];
+        slot->worldGame[2] = worldGame[2];
+    } else {
+        slot->worldGame[0] = 0.0f;
+        slot->worldGame[1] = 0.0f;
+        slot->worldGame[2] = 0.0f;
+    }
     slot->expiresNs = now + kObjectiveMarkerLifetimeNs;
 }
 
 void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
                            float radius, float height,
                            unsigned char red, unsigned char green,
-                           unsigned char blue, bool stockCone) {
+                           unsigned char blue, bool stockCone,
+                           const float worldGame[3]) {
     if (!center) return;
     if (stockCone ? !hud::ObjectiveMarkersIncludeOriginal()
                   : !hud::ObjectiveMarkersIncludeHighlight()) {
@@ -6118,13 +6138,14 @@ void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
         height = std::clamp(height, 0.75f, 5.0f);
     }
     UpdateObjectiveMarkerSlot(id, point, radius, height, red, green, blue,
-                              255, stockCone, false);
+                              255, stockCone, false, worldGame);
 }
 
 void UpdateObjectiveCylinder(std::uint64_t id, const float center[3],
                              float radius, float height,
                              unsigned char red, unsigned char green,
-                             unsigned char blue, unsigned char alpha) {
+                             unsigned char blue, unsigned char alpha,
+                             const float worldGame[3]) {
     // Mission/checkpoint areas are gameplay information, not an optional
     // cosmetic target highlight. Keep them available in every tabletop HUD
     // preset even when the stock objective-cone preference is disabled.
@@ -6138,7 +6159,7 @@ void UpdateObjectiveCylinder(std::uint64_t id, const float center[3],
     radius = std::clamp(radius, 0.025f, 0.40f);
     height = std::clamp(height, 0.06f, 0.65f);
     UpdateObjectiveMarkerSlot(id, point, radius, height, red, green, blue,
-                              alpha, true, true);
+                              alpha, true, true, worldGame);
 }
 
 void SetThrowableTrajectory(int hand, const float points[][3], int count,
@@ -10421,6 +10442,47 @@ int SnapshotObjectiveMarkers(
     return count;
 }
 
+void RebaseObjectiveMarkersToTabletopMask(
+        ObjectiveMarkerVisual* markers, int count,
+        const TabletopMaskState& mask) {
+    if (!markers || count <= 0 || !mask.active ||
+        !std::isfinite(mask.depthScaleMPerGameUnit) ||
+        mask.depthScaleMPerGameUnit <= 0.0f) {
+        return;
+    }
+    const XrVector3f playerCenter{
+        mask.playerCenter[0], mask.playerCenter[1], mask.playerCenter[2]};
+    const XrVector3f playerWorld{
+        mask.playerWorld[0], mask.playerWorld[1], mask.playerWorld[2]};
+    const XrVector3f axisX = vnorm(
+        {mask.axisX[0], mask.axisX[1], mask.axisX[2]});
+    const XrVector3f axisY = vnorm(
+        {mask.axisY[0], mask.axisY[1], mask.axisY[2]});
+    const XrVector3f axisZ = vnorm(vcross(axisX, axisY));
+    const auto finite = [](const XrVector3f& value) {
+        return std::isfinite(value.x) && std::isfinite(value.y) &&
+            std::isfinite(value.z);
+    };
+    if (!finite(playerCenter) || !finite(playerWorld) ||
+        !finite(axisX) || !finite(axisY) || !finite(axisZ)) {
+        return;
+    }
+    const float scale = mask.depthScaleMPerGameUnit;
+    count = std::min(count, kMaxObjectiveMarkers);
+    for (int index = 0; index < count; ++index) {
+        ObjectiveMarkerVisual& marker = markers[index];
+        if (!marker.tabletopWorldPoint) continue;
+        const XrVector3f deltaGame{
+            marker.worldGame[0] - playerWorld.x,
+            marker.worldGame[1] - playerWorld.y,
+            marker.worldGame[2] - playerWorld.z};
+        marker.center = vadd(playerCenter,
+            vscale(vadd(vadd(vscale(axisX, deltaGame.x),
+                             vscale(axisY, deltaGame.y)),
+                        vscale(axisZ, deltaGame.z)), scale));
+    }
+}
+
 void DrawStockObjectiveArrow(const float* mvp,
                              const ObjectiveMarkerVisual& marker) {
     // Exact low-poly diamond_3 silhouette used by the mobile game: one bright
@@ -11990,6 +12052,8 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     ObjectiveMarkerVisual liveObjectiveMarkers[kMaxObjectiveMarkers]{};
     const int liveObjectiveMarkerCount =
         SnapshotObjectiveMarkers(liveObjectiveMarkers);
+    RebaseObjectiveMarkersToTabletopMask(
+        liveObjectiveMarkers, liveObjectiveMarkerCount, tabletopMask);
 
     GLint prevDraw = 0, prevRead = 0, prevVp[4]{};
     FxaaGlState fxaaGlState{};

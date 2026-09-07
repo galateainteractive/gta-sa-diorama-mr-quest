@@ -282,6 +282,7 @@ struct TabletopMaskState {
     int coverageMode{}; // 0 player circle, 1 connected capsule, 2 islands
     bool bridgeEnabled{false};
     float playerCenter[3]{};
+    float playerWorld[3]{};
     float viewerCenter[3]{};
     float axisX[3]{1.0f, 0.0f, 0.0f};
     float axisY[3]{0.0f, 0.0f, 1.0f};
@@ -362,7 +363,8 @@ void AddBulletTracer(const float start[3], const float end[3], int weaponType);
 void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
                            float radius, float height,
                            unsigned char red, unsigned char green,
-                           unsigned char blue, bool stockCone);
+                           unsigned char blue, bool stockCone,
+                           const float worldGame[3] = nullptr);
 
 // Publish a tabletop-scaled mission/checkpoint area captured from the full
 // C3dMarkers::PlaceMarker path. Unlike the diamond arrow above, this is a
@@ -370,7 +372,8 @@ void UpdateObjectiveMarker(std::uint64_t id, const float center[3],
 void UpdateObjectiveCylinder(std::uint64_t id, const float center[3],
                              float radius, float height,
                              unsigned char red, unsigned char green,
-                             unsigned char blue, unsigned char alpha);
+                             unsigned char blue, unsigned char alpha,
+                             const float worldGame[3] = nullptr);
 
 // Per-hand physical throwable preview in OpenXR LOCAL space. Points are copied
 // and ring-snapshotted with the eye textures; count<=1 clears that hand's arc.

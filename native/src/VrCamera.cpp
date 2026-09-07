@@ -2995,6 +2995,9 @@ bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     out.playerCenter[0] = player.x;
     out.playerCenter[1] = player.y;
     out.playerCenter[2] = player.z;
+    out.playerWorld[0] = g_tabletopRadiusCenter.x;
+    out.playerWorld[1] = g_tabletopRadiusCenter.y;
+    out.playerWorld[2] = g_tabletopRadiusCenter.z;
     out.viewerCenter[0] = viewer.x;
     out.viewerCenter[1] = viewer.y;
     out.viewerCenter[2] = viewer.z;
@@ -9438,6 +9441,20 @@ bool ObjectiveMarkerWorldToTracking(const GameSymbols::Vec3& world,
     return true;
 }
 
+bool ObjectiveMarkerWorldPosition(const GameSymbols::Vec3& world,
+                                  float worldGame[3]) {
+    if (!worldGame ||
+        !g_tabletopActive.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (!std::isfinite(world.x) || !std::isfinite(world.y) ||
+        !std::isfinite(world.z)) return false;
+    worldGame[0] = world.x;
+    worldGame[1] = world.y;
+    worldGame[2] = world.z;
+    return true;
+}
+
 float ObjectiveMarkerPresentationScale() {
     // Marker presentation is UI-like in tabletop mode. Keep its authored
     // physical base independent of map zoom; the late stereo pass then applies
@@ -9491,9 +9508,13 @@ __attribute__((noinline)) void* OnPlaceMarker(
     }
     const float tracking[3]{
         centerTracking.x, centerTracking.y, centerTracking.z};
+    float worldGame[3]{};
+    const bool haveWorldGame = ObjectiveMarkerWorldPosition(
+        {centerWorld.x, centerWorld.y, centerWorld.z}, worldGame);
     xr::UpdateObjectiveCylinder(id ^ 0x2000000000000000ULL, tracking,
                                 markerRadius, markerHeight,
-                                red, green, blue, alpha);
+                                red, green, blue, alpha,
+                                haveWorldGame ? worldGame : nullptr);
     g_objectiveCylinderPublishes.fetch_add(1, std::memory_order_relaxed);
     CountObjectivePublishedColor(red, green, blue);
 
@@ -9555,10 +9576,14 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
             : markerRadiusGame;
         const GameSymbols::Vec3 markerCenter = *point;
         float markerTracking[3]{};
+        float worldGame[3]{};
+        const bool haveWorldGame = ObjectiveMarkerWorldPosition(
+            markerCenter, worldGame);
         if (ObjectiveMarkerWorldToTracking(markerCenter, markerTracking)) {
             xr::UpdateObjectiveMarker(id ^ 0x8000000000000000ULL,
                                       markerTracking, markerRadius, markerHeight,
-                                      red, green, blue, true);
+                                      red, green, blue, true,
+                                      haveWorldGame ? worldGame : nullptr);
             if (tabletopMarker) {
                 g_objectiveConePublishes.fetch_add(1,
                                                     std::memory_order_relaxed);
@@ -9587,9 +9612,12 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
     const GameSymbols::Vec3 world{
         source.x, source.y, source.z - heightGame * 0.55f};
     float tracking[3]{};
+    float worldGame[3]{};
+    const bool haveWorldGame = ObjectiveMarkerWorldPosition(world, worldGame);
     if (ObjectiveMarkerWorldToTracking(world, tracking)) {
         xr::UpdateObjectiveMarker(id, tracking, radius, height,
-                                  red, green, blue, false);
+                                  red, green, blue, false,
+                                  haveWorldGame ? worldGame : nullptr);
         if (tabletopMarker) {
             g_objectiveConePublishes.fetch_add(1, std::memory_order_relaxed);
             CountObjectivePublishedColor(red, green, blue);
@@ -9642,10 +9670,14 @@ __attribute__((noinline)) void OnPlaceMarkerSet(
         ? std::clamp(markerRadiusGame * presentationScale, 0.045f, 0.28f)
         : markerRadiusGame;
     float markerTracking[3]{};
+    float worldGame[3]{};
+    const bool haveWorldGame = ObjectiveMarkerWorldPosition(
+        markerWorld, worldGame);
     if (ObjectiveMarkerWorldToTracking(markerWorld, markerTracking)) {
         xr::UpdateObjectiveMarker(id ^ 0x4000000000000000ULL,
                                   markerTracking, markerRadius, markerHeight,
-                                  red, green, blue, true);
+                                  red, green, blue, true,
+                                  haveWorldGame ? worldGame : nullptr);
     }
 }
 

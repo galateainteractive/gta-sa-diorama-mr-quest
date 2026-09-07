@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 28 test candidate
+
+- Fix the grab-zoom marker divergence identified by Package 27 diagnostics:
+  markers remained live and submitted but moved outside clip space at small
+  tabletop scales.
+- Retain each marker's absolute GTA world point and reconstruct its physical
+  position from the exact player centre, scale and map axes captured alongside
+  the corresponding stereo eye/mask frame.
+- Keep Package 27 bounded telemetry for headset confirmation and preserve all
+  Package 26/25 behaviour. See `PACKAGE_28.md`.
+
 ## Package 27 diagnostic candidate
 
 - Add bounded marker-source telemetry separating GTA cone/cylinder calls from
