@@ -5,6 +5,7 @@
 #include "Log.h"
 #include "PhysicalWeapon.h"
 #include "Symbols.h"
+#include "Tabletop.h"
 #include "VrCamera.h"
 #include "Xr.h"
 
@@ -3728,6 +3729,7 @@ int g_scrapeNext{};
 std::uint32_t g_scrapeSeed = 0x73617672u;
 std::uint32_t g_scrapeEmissionWindow{};
 int g_scrapeEmissionCount{};
+int g_scrapeNearbyEmissionCount{};
 std::uint64_t g_scrapeReplaced{}, g_scrapeDropped{};
 CoronaVertex g_scrapeVertices[kScrapeCapacity * 12]{};
 int g_scrapeVertexCount{};
@@ -3751,10 +3753,12 @@ __attribute__((noinline)) void OnAddTabletopSparks(
     // other AddSparks callers retain their original effects.
     const bool scrapeCaller = caller == 0x4a2284u ||
         caller == 0x6dfb78u || caller == 0x6e3500u;
-    void* vehicle = nullptr;
-    if (g_scrapeReplacementReady && scrapeCaller &&
+    const bool replacementEligible = g_scrapeReplacementReady && scrapeCaller &&
         vrcam::IsTabletopActive() && Enabled() && Profile() > 0 &&
-        g.FindPlayerVehicle && g.CTimer_m_snTimeInMilliseconds) {
+        g.FindPlayerVehicle && g.FindPlayerCoors &&
+        g.CTimer_m_snTimeInMilliseconds;
+    void* vehicle = nullptr;
+    if (replacementEligible) {
         vehicle = g.FindPlayerVehicle(-1, false);
     }
     const CoronaV3 position{point.x, point.y, point.z};
@@ -3766,10 +3770,23 @@ __attribute__((noinline)) void OnAddTabletopSparks(
             bytes + 0x18);
         vehiclePosition = ReadCoronaV3(matrix ? matrix + 0x30 : bytes + 0x08);
     }
-    const CoronaV3 separation = position - vehiclePosition;
-    if (!vehicle || !CoronaFinite(position) || !CoronaFinite(emission) ||
-        !CoronaFinite(vehiclePosition) || !std::isfinite(force) || count < 1 ||
-        CoronaDot(separation, separation) > 64.0f) {
+    const CoronaV3 playerPosition = replacementEligible
+        ? [&]() {
+            const auto point = g.FindPlayerCoors(-1);
+            return CoronaV3{point.x, point.y, point.z};
+        }()
+        : CoronaV3{};
+    const CoronaV3 vehicleSeparation = position - vehiclePosition;
+    const bool playerVehicleSpark = vehicle && CoronaFinite(vehiclePosition) &&
+        CoronaDot(vehicleSeparation, vehicleSeparation) <= 64.0f;
+    const CoronaV3 playerSeparation = position - playerPosition;
+    const float nearbyRadius = tabletop::RadiusMeters() + 8.0f;
+    const bool nearbySpark = CoronaFinite(playerPosition) &&
+        CoronaDot(playerSeparation, playerSeparation) <=
+            nearbyRadius * nearbyRadius;
+    if (!replacementEligible || (!playerVehicleSpark && !nearbySpark) ||
+        !CoronaFinite(position) ||
+        !CoronaFinite(emission) || !std::isfinite(force) || count < 1) {
         if (g_originalAddSparks)
             g_originalAddSparks(fx, point, direction, force, count, across,
                                 type, spread, life);
@@ -3782,11 +3799,19 @@ __attribute__((noinline)) void OnAddTabletopSparks(
     if (now - g_scrapeEmissionWindow >= 16u) {
         g_scrapeEmissionWindow = now;
         g_scrapeEmissionCount = 0;
+        g_scrapeNearbyEmissionCount = 0;
     }
-    // At most eight births per 16 ms even for multiple contacts per wheel.
-    const int births = std::min({count, 4, 8 - g_scrapeEmissionCount});
+    // At most eight births per 16 ms across the whole scene. Nearby traffic
+    // may consume only half of that window, so it cannot starve the player's
+    // own scrape contacts when several cars collide at once.
+    const int available = playerVehicleSpark
+        ? 8 - g_scrapeEmissionCount
+        : std::min(8 - g_scrapeEmissionCount,
+                   4 - g_scrapeNearbyEmissionCount);
+    const int births = std::max(0, std::min({count, 4, available}));
     g_scrapeDropped += static_cast<std::uint64_t>(count - births);
     g_scrapeEmissionCount += births;
+    if (!playerVehicleSpark) g_scrapeNearbyEmissionCount += births;
     CoronaV3 axis = CoronaNormalized(emission);
     if (CoronaDot(axis, axis) < 0.5f) axis = {0.0f, 0.0f, 1.0f};
     for (int i = 0; i < births; ++i) {
@@ -3825,12 +3850,12 @@ void RenderTabletopScrapeSparks(int eye) {
             const CoronaV3 side = CoronaNormalized(CoronaCross(axis, reference));
             const CoronaV3 up = CoronaNormalized(CoronaCross(axis, side));
             const float fade = 1.0f - age / particle.lifetime;
-            const CoronaV3 tail = head - axis * (0.10f + fade * 0.18f);
+            const CoronaV3 tail = head - axis * (0.12f + fade * 0.21f);
             const auto color = PackSkyColor(255, 140 + static_cast<int>(100 * fade),
                                             50, static_cast<int>(255 * fade));
             // Two crossed fins have real volume, without a camera-facing
             // billboard. Build once; both eyes consume identical world points.
-            for (const CoronaV3 width : {side * 0.015f, up * 0.015f}) {
+            for (const CoronaV3 width : {side * 0.018f, up * 0.018f}) {
                 const CoronaV3 points[6]{head + width, tail + width, head - width,
                                          head - width, tail + width, tail - width};
                 for (const CoronaV3 p : points)
@@ -3888,7 +3913,8 @@ void InstallTabletopScrapeSparks(void* handle) {
         reinterpret_cast<void*>(g_originalAddSparks),
         reinterpret_cast<void*>(&OnAddTabletopSparks));
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-        "[spark.replace] ready=%d cap=%d sources=friction,wheel near_vehicle=8m",
+        "[spark.replace] ready=%d cap=%d sources=friction,wheel "
+        "scope=player_vehicle+nearby_tabletop_radius",
         g_scrapeReplacementReady ? 1 : 0, kScrapeCapacity);
 }
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## Package 25 test candidate
+
+- Extend the stereo-safe 3D scraping/wheel spark replacement from CJ's current
+  vehicle to matching contacts around the player inside the tabletop radius.
+- Make the replacement streaks 20% wider and modestly longer while retaining
+  the 96-particle pool and eight-birth global frame budget. Nearby traffic may
+  use at most half that budget, reserving capacity for CJ's vehicle.
+- Make red, yellow and blue objective-marker presentation independent of map
+  scale, then enforce a minimum angular footprint from the viewer in the late
+  stereo overlay without moving the marker's gameplay position.
+- Retain objective markers for 1.25 seconds to bridge short GTA marker/LOD
+  update gaps while tabletop zoom changes.
+- Preserve Package 24 passthrough grading and all approved controls, data,
+  audio, saves and configuration. See `PACKAGE_25.md`.
+
 ## Package 24 test candidate
 
 - Add gradual weather-reactive passthrough driven by the verified retail GTA

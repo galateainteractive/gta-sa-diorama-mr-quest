@@ -9397,11 +9397,11 @@ bool ObjectiveMarkerWorldToTracking(const GameSymbols::Vec3& world,
 }
 
 float ObjectiveMarkerPresentationScale() {
-    // Mission guidance must remain readable when the user shrinks the model.
-    // Preserve authored growth above the default 1:25 scale, but never shrink
-    // marker geometry below its default physical presentation size.
+    // Marker presentation is UI-like in tabletop mode. Keep its authored
+    // physical base independent of map zoom; the late stereo pass then applies
+    // only a minimum angular size relative to the viewer.
     return g_tabletopActive.load(std::memory_order_acquire)
-        ? std::max(0.04f, tabletop::VisualScale()) : 1.0f;
+        ? 0.04f : 1.0f;
 }
 
 __attribute__((noinline)) void* OnPlaceMarker(
@@ -9431,7 +9431,7 @@ __attribute__((noinline)) void* OnPlaceMarker(
 
     const float worldScale = tabletop::VisualScale();
     if (!std::isfinite(worldScale) || worldScale <= 0.0f) return marker;
-    const float presentationScale = std::max(0.04f, worldScale);
+    const float presentationScale = ObjectiveMarkerPresentationScale();
     const float markerRadius = std::clamp(
         size * presentationScale * 0.55f, 0.055f, 0.30f);
     const float markerHeight = std::clamp(

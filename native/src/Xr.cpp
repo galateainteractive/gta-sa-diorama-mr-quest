@@ -682,7 +682,10 @@ unsigned int g_nextBulletTracer = 0;
 // deliberately short lived: missions can remove/reassign a blip without an
 // explicit destruction callback, so absence of a refresh removes our visual.
 constexpr int kMaxObjectiveMarkers = 16;
-constexpr std::uint64_t kObjectiveMarkerLifetimeNs = 500000000ULL;
+// C3dMarkers may briefly skip a producer update while GTA changes camera LOD
+// during tabletop zoom. Retain the last known mission marker long enough to
+// bridge that transition, without leaving removed objectives stale for long.
+constexpr std::uint64_t kObjectiveMarkerLifetimeNs = 1250000000ULL;
 struct ObjectiveMarkerVisual {
     bool valid{false};
     std::uint64_t id{};
@@ -10545,8 +10548,9 @@ void DrawStockObjectiveCylinder(const float* mvp,
 // arrow. Immersive mode depth-tests it; tabletop draws it as navigation UI so
 // shrinking the model cannot bury it in miniature terrain.
 void DrawObjectiveHighlights(const float* mvp,
+                             const XrVector3f& eyePosition,
                              const ObjectiveMarkerVisual* markers,
-                             int count) {
+                             int count, bool tabletop) {
     if (!markers || count <= 0) return;
     count = std::min(count, kMaxObjectiveMarkers);
     const float timeSeconds = static_cast<float>(
@@ -10559,7 +10563,28 @@ void DrawObjectiveHighlights(const float* mvp,
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glBlendEquation(GL_FUNC_ADD);
     for (int markerIndex = 0; markerIndex < count; ++markerIndex) {
-        const ObjectiveMarkerVisual& marker = markers[markerIndex];
+        ObjectiveMarkerVisual marker = markers[markerIndex];
+        if (tabletop) {
+            // Keep markers legible at every tabletop zoom without changing
+            // their world position. A minimum angular footprint compensates
+            // for eye-to-marker distance; close markers retain authored size.
+            const XrVector3f delta = vsub(marker.center, eyePosition);
+            const float distance = std::sqrt(std::max(0.0f,
+                                                      vdot(delta, delta)));
+            if (std::isfinite(distance)) {
+                const float oldHeight = marker.height;
+                const float maxRadius = marker.cylinder ? 0.30f : 0.22f;
+                const float maxHeight = marker.cylinder ? 0.48f : 0.55f;
+                marker.radius = std::max(marker.radius,
+                    std::clamp(distance * 0.035f, 0.05f, maxRadius));
+                marker.height = std::max(marker.height,
+                    std::clamp(distance * 0.10f, 0.12f, maxHeight));
+                // Mission-area cylinders are grounded. Preserve their lower
+                // edge when extra presentation height is needed.
+                if (marker.cylinder)
+                    marker.center.y += (marker.height - oldHeight) * 0.5f;
+            }
+        }
         if (marker.cylinder) {
             DrawStockObjectiveCylinder(mvp, marker);
             continue;
@@ -11488,7 +11513,8 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glDisable(GL_SCISSOR_TEST);
-        DrawObjectiveHighlights(mvp, objectiveMarkers, objectiveMarkerCount);
+        DrawObjectiveHighlights(mvp, eyePos, objectiveMarkers,
+                                objectiveMarkerCount, true);
         glUseProgram(0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -11610,7 +11636,8 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
     // Never turn the optional highlight into a wallhack: if the shared game
     // depth cannot be copied this frame, omit it instead of drawing on top.
     if (usingGameDepth)
-        DrawObjectiveHighlights(mvp, objectiveMarkers, objectiveMarkerCount);
+        DrawObjectiveHighlights(mvp, eyePos, objectiveMarkers,
+                                objectiveMarkerCount, false);
 
     if (haveHands) {
         glUseProgram(g_handProg);
