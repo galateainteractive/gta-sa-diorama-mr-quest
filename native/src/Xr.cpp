@@ -681,7 +681,13 @@ unsigned int g_nextBulletTracer = 0;
 // Optional target highlight fed from the exact stock radar marker calls. It is
 // deliberately short lived: missions can remove/reassign a blip without an
 // explicit destruction callback, so absence of a refresh removes our visual.
-constexpr int kMaxObjectiveMarkers = 16;
+// CRadar owns up to 250 traces and can submit considerably more than sixteen
+// world markers in one frame (mission targets, entrances and services). The
+// old sixteen-slot bridge silently overwrote early mission colours with later
+// blips; the stock miniature then appeared to depend on zoom because only its
+// close-range RenderWare copy remained. Sixty-four covers the live submitted
+// set without allocating or drawing anything for unused slots.
+constexpr int kMaxObjectiveMarkers = 64;
 // C3dMarkers may briefly skip a producer update while GTA changes camera LOD
 // during tabletop zoom. Retain the last known mission marker long enough to
 // bridge that transition, without leaving removed objectives stale for long.
@@ -703,6 +709,8 @@ struct ObjectiveMarkerVisual {
 std::mutex g_objectiveMarkerMutex;
 ObjectiveMarkerVisual g_objectiveMarkers[kMaxObjectiveMarkers]{};
 unsigned int g_nextObjectiveMarker = 0;
+std::uint64_t g_objectiveMarkerPoolEvictions{};
+std::uint64_t g_objectiveMarkerExpirations{};
 
 std::uint64_t MonotonicNowNs() {
     return static_cast<std::uint64_t>(
@@ -6069,6 +6077,7 @@ void UpdateObjectiveMarkerSlot(std::uint64_t id, const XrVector3f& point,
         if (!slot && (!marker.valid || marker.expiresNs <= now)) slot = &marker;
     }
     if (!slot) {
+        ++g_objectiveMarkerPoolEvictions;
         slot = &g_objectiveMarkers[
             g_nextObjectiveMarker++ % kMaxObjectiveMarkers];
     }
@@ -10384,6 +10393,7 @@ int SnapshotObjectiveMarkers(
         if (!marker.valid) continue;
         if (marker.expiresNs <= now) {
             marker.valid = false;
+            ++g_objectiveMarkerExpirations;
             continue;
         }
         if (!marker.cylinder &&
@@ -10392,6 +10402,21 @@ int SnapshotObjectiveMarkers(
             continue;
         }
         out[count++] = marker;
+    }
+    static std::uint64_t lastReportNs{};
+    if (vrcam::IsTabletopActive() && count > 0 &&
+        now - lastReportNs >= 2000000000ULL) {
+        __android_log_print(
+            ANDROID_LOG_INFO, SAVR_TAG,
+            "[objective.pool] live=%d cap=%d evicted=%llu expired=%llu "
+            "scale=%.3f",
+            count, kMaxObjectiveMarkers,
+            static_cast<unsigned long long>(g_objectiveMarkerPoolEvictions),
+            static_cast<unsigned long long>(g_objectiveMarkerExpirations),
+            static_cast<double>(tabletop::VisualScale()));
+        g_objectiveMarkerPoolEvictions = 0;
+        g_objectiveMarkerExpirations = 0;
+        lastReportNs = now;
     }
     return count;
 }

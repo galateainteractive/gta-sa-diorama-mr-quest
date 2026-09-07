@@ -1,5 +1,15 @@
 # Changelog
 
+## Package 26 test candidate
+
+- Expand the late stereo objective-marker pool from 16 to 64 entries. GTA's
+  radar can submit more than sixteen active 3D blips in one frame; the old
+  ring silently replaced early mission colours with later markers.
+- Add a bounded `[objective.pool]` heartbeat reporting live entries, pool
+  evictions, expirations and tabletop scale for headset confirmation.
+- Preserve Package 25 sparks and every Package 24 passthrough/control change.
+  See `PACKAGE_26.md`.
+
 ## Package 25 test candidate
 
 - Extend the stereo-safe 3D scraping/wheel spark replacement from CJ's current
