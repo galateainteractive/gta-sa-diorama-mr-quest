@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 33 tabletop alpha stability candidate
+
+- Add a bounded 96-entry spill list for static alpha scenery rejected when
+  GTA's fixed 200-node list is saturated, using current-frame validation and
+  prior-frame selection priority to reduce border churn safely.
+- Freeze the same spill selection across both stereo eyes and report bounded
+  `[tabletop.flicker.fix]` telemetry; keep an isolated process-start off switch
+  for an exact same-APK comparison.
+- Extend tabletop attack telemetry with CJ's forward basis and add
+  `[tabletop.aim.area]` arguments for spray can, flamethrower and extinguisher.
+  Combat direction remains unchanged pending headset evidence. See
+  `PACKAGE_33.md`.
+
 ## Package 32 targeted flicker diagnostic candidate
 
 - Add player-build telemetry for half-second windows of visible entities,

@@ -294,14 +294,32 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
             }
             const float heading = g.FindPlayerHeading
                 ? g.FindPlayerHeading(0) : 0.0f;
+            Vec3 actorForward{};
+            bool haveActorForward = false;
+            if (playerPed) {
+                const auto* const pedBytes =
+                    static_cast<const std::uint8_t*>(playerPed);
+                const auto* const matrix =
+                    *reinterpret_cast<const std::uint8_t* const*>(
+                        pedBytes + 0x18);
+                if (matrix) {
+                    std::memcpy(&actorForward, matrix + 0x10,
+                                sizeof(actorForward));
+                    haveActorForward = Finite(actorForward);
+                }
+            }
             LOGI("[tabletop.aim] attack edge weapon=%d slot=%d vanilla=%d "
                  "buttons=A%d/B%d/X%d/Y%d R2=%.2f camera_mode=%d heading=%.3f "
+                 "actor_forward=(%.3f,%.3f,%.3f) "
                  "route=classic_no_physical_ray",
                  weaponType, slot, vanilla,
                  input.a ? 1 : 0, input.b ? 1 : 0,
                  input.x ? 1 : 0, input.y ? 1 : 0,
                  static_cast<double>(input.triggers[1]), cameraMode,
-                 static_cast<double>(heading));
+                 static_cast<double>(heading),
+                 haveActorForward ? static_cast<double>(actorForward.x) : 0.0,
+                 haveActorForward ? static_cast<double>(actorForward.y) : 0.0,
+                 haveActorForward ? static_cast<double>(actorForward.z) : 0.0);
             g_tabletopLastLoggedWeapon = weaponType;
         }
         g_tabletopAttackPreviously = attack;

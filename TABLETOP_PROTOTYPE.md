@@ -29,9 +29,21 @@ navigation UI, so shrinking the model does not hide them in the ground. Their
 late stereo projection converts the eye pass's game-unit clip distances back
 to physical metres using the scale captured for the same frame.
 
+The radial border also has a bounded alpha-overflow stabilizer. When GTA's
+fixed ordinary transparency list fills, up to 96 current-frame static scenery
+entries inside the tabletop coverage can use a shared two-eye spill list.
+Vehicles and pedestrians are excluded, and no entity is held after it stops
+appearing in the current frame. Set Android process-start property
+`debug.savr.tabletop_alpha_overflow=0` for an exact fallback comparison.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.
+
+Tabletop attacks use GTA's classic combat task rather than tracked physical-hand
+aiming. `B` is merged into `CPad::GetWeapon` for punches, melee, guns and spray
+weapons. Diagnostic captures report `[tabletop.aim]` for attack edges and
+`[tabletop.aim.area]` for the actual spray-area arguments and actor direction.
 
 The fixed view captures the current player/vehicle frame once. Character and
 vehicle controls continue to use the stock gameplay path while the physical

@@ -3106,6 +3106,73 @@ bool OnFireAreaEffect(void* weapon, void* firingEntity,
                       GameSymbols::Vec3* target) {
     if (!g_origFireAreaEffect) return false;
 
+    const int weaponType = weapon
+        ? *static_cast<const std::int32_t*>(weapon) : -1;
+    const bool localTabletopArea =
+        savr::vrcam::IsTabletopActive() && firingEntity && origin &&
+        g.FindPlayerPed && firingEntity == g.FindPlayerPed(-1) &&
+        (weaponType == 37 || weaponType == 41 || weaponType == 42);
+    if (localTabletopArea) {
+        // Diagnostic only: record the arguments entering retail together with
+        // the visible actor basis. A null target proves that GTA will derive
+        // the jet from its hidden legacy camera/heading; a non-null target lets
+        // us compare the requested ray with CJ's actual forward direction.
+        static double lastTabletopAreaLogMs = 0.0;
+        const double nowMs = MonotonicMs();
+        if (nowMs - lastTabletopAreaLogMs >= 250.0) {
+            lastTabletopAreaLogMs = nowMs;
+            GameSymbols::Vec3 actorForward{};
+            bool haveActorForward = false;
+            const auto* const entityBytes =
+                static_cast<const std::uint8_t*>(firingEntity);
+            const auto* const matrix =
+                *reinterpret_cast<const std::uint8_t* const*>(
+                    entityBytes + 0x18);
+            if (matrix) {
+                std::memcpy(&actorForward, matrix + 0x10,
+                            sizeof(actorForward));
+                haveActorForward = std::isfinite(actorForward.x) &&
+                    std::isfinite(actorForward.y) &&
+                    std::isfinite(actorForward.z);
+            }
+            GameSymbols::Vec3 targetDirection{};
+            bool haveTargetDirection = target &&
+                std::isfinite(target->x) && std::isfinite(target->y) &&
+                std::isfinite(target->z);
+            if (haveTargetDirection) {
+                targetDirection = {target->x-origin->x,
+                                   target->y-origin->y,
+                                   target->z-origin->z};
+                const float lengthSq = targetDirection.x*targetDirection.x +
+                    targetDirection.y*targetDirection.y +
+                    targetDirection.z*targetDirection.z;
+                if (std::isfinite(lengthSq) && lengthSq > 1.0e-6f) {
+                    const float inverseLength = 1.0f/std::sqrt(lengthSq);
+                    targetDirection.x *= inverseLength;
+                    targetDirection.y *= inverseLength;
+                    targetDirection.z *= inverseLength;
+                } else {
+                    haveTargetDirection = false;
+                }
+            }
+            const float heading = g.FindPlayerHeading
+                ? g.FindPlayerHeading(0) : 0.0f;
+            LOGI("[tabletop.aim.area] weapon=%d target=%d entity=%d "
+                 "origin=(%.2f,%.2f,%.2f) actor_forward=(%.3f,%.3f,%.3f) "
+                 "target_dir=(%.3f,%.3f,%.3f) heading=%.3f",
+                 weaponType, haveTargetDirection ? 1 : 0,
+                 targetEntity ? 1 : 0,
+                 origin->x, origin->y, origin->z,
+                 haveActorForward ? actorForward.x : 0.0f,
+                 haveActorForward ? actorForward.y : 0.0f,
+                 haveActorForward ? actorForward.z : 0.0f,
+                 haveTargetDirection ? targetDirection.x : 0.0f,
+                 haveTargetDirection ? targetDirection.y : 0.0f,
+                 haveTargetDirection ? targetDirection.z : 0.0f,
+                 heading);
+        }
+    }
+
     // The Quest physical-fire route currently owns hitscan weapons only.  The
     // stock area-weapon producer therefore still derives flamethrower direction
     // from the legacy player camera/heading and a ped-relative barrel point.
@@ -3117,7 +3184,7 @@ bool OnFireAreaEffect(void* weapon, void* firingEntity,
     const bool localFlamethrower =
         Enabled() && Profile() == 1 && savr::vrcam::IsStereoActive() && weapon &&
         firingEntity && origin && g.FindPlayerPed &&
-        *static_cast<const std::int32_t*>(weapon) == kFlamethrowerType &&
+        weaponType == kFlamethrowerType &&
         firingEntity == g.FindPlayerPed(-1);
     if (!localFlamethrower) {
         return g_origFireAreaEffect(weapon, firingEntity, origin,

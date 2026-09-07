@@ -76,6 +76,14 @@ constexpr char kLinkedLodPrefetchProperty[] = "debug.savr.lod_prefetch";
 constexpr bool kDefaultHiddenAreaMaskEnabled = true;
 constexpr char kHiddenAreaMaskProperty[] = "debug.savr.hidden_area_mask";
 
+// Package 33: when GTA's fixed 200-node ordinary alpha list is full, retain a
+// small, tabletop-only spill list instead of allowing equally valid border
+// scenery to trade places every frame. The property is a process-start escape
+// hatch for a direct A/B on the same APK.
+constexpr bool kDefaultTabletopAlphaOverflowEnabled = true;
+constexpr char kTabletopAlphaOverflowProperty[] =
+    "debug.savr.tabletop_alpha_overflow";
+
 // Unified phone-like distance profile. User-facing distances now live in the
 // persisted Graphics menu below; this hidden switch remains the emergency
 // compatibility fallback to retail/cheap values.
@@ -6384,6 +6392,7 @@ DynamicShadowDiagnostics g_dynamicShadowDiagnostics{};
 bool ReadEntityWorldPosition(const void* entity, V3* out);
 bool TabletopWorldInsidePlayerSafety(const V3& world, float allowance = 0.0f);
 bool TabletopEntityInsidePlayerSafety(const void* entity);
+bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM);
 
 bool MobileShadowSettingsInitialized() {
     // Initialize fills two descriptor pointers at the head of each 0x28-byte
@@ -9057,6 +9066,12 @@ struct AircraftOrdinaryAlphaOverflowEntry {
     float distance{};
 };
 
+struct TabletopAlphaOverflowEntry {
+    void* entity{};
+    float distance{};
+    int previousRank{-1};
+};
+
 constexpr int kNeonOverflowCapacity = 32;
 thread_local std::array<NeonOverflowEntry, kNeonOverflowCapacity>
     g_neonOverflowEntries{};
@@ -9071,6 +9086,131 @@ thread_local std::array<AircraftOrdinaryAlphaOverflowEntry,
     g_aircraftOrdinaryAlphaOverflowEntries{};
 thread_local int g_aircraftOrdinaryAlphaOverflowCount = 0;
 std::atomic<std::uint64_t> g_aircraftOrdinaryAlphaOverflowDraws{0};
+constexpr int kTabletopAlphaOverflowCapacity = 96;
+thread_local std::array<TabletopAlphaOverflowEntry,
+                        kTabletopAlphaOverflowCapacity>
+    g_tabletopAlphaOverflowEntries{};
+thread_local std::array<void*, kTabletopAlphaOverflowCapacity>
+    g_tabletopAlphaOverflowPrevious{};
+thread_local int g_tabletopAlphaOverflowCount = 0;
+thread_local int g_tabletopAlphaOverflowPreviousCount = 0;
+thread_local bool g_tabletopAlphaOverflowFrozen = false;
+std::atomic<std::uint64_t> g_tabletopAlphaOverflowCaptured{0};
+std::atomic<std::uint64_t> g_tabletopAlphaOverflowReplaced{0};
+std::atomic<std::uint64_t> g_tabletopAlphaOverflowDraws{0};
+std::atomic<std::uint64_t> g_tabletopAlphaOverflowDrops{0};
+
+bool TabletopAlphaOverflowEnabled() {
+    static const bool enabled = [] {
+        char text[PROP_VALUE_MAX]{};
+        bool value = kDefaultTabletopAlphaOverflowEnabled;
+        if (__system_property_get(kTabletopAlphaOverflowProperty, text) > 0) {
+            if (std::strcmp(text, "0") == 0) value = false;
+            else if (std::strcmp(text, "1") == 0) value = true;
+            else LOGW("[tabletop.flicker.fix] ignoring invalid %s=%s (valid 0, 1)",
+                      kTabletopAlphaOverflowProperty, text);
+        }
+        LOGI("[tabletop.flicker.fix] alpha_overflow=%d capacity=%d property=%s",
+             value ? 1 : 0, kTabletopAlphaOverflowCapacity,
+             kTabletopAlphaOverflowProperty);
+        return value;
+    }();
+    return enabled;
+}
+
+int TabletopAlphaOverflowIndex(const void* entity) {
+    if (!entity) return -1;
+    for (int i = 0; i < g_tabletopAlphaOverflowCount; ++i) {
+        if (g_tabletopAlphaOverflowEntries[static_cast<std::size_t>(i)].entity ==
+                entity) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int TabletopAlphaOverflowPreviousRank(const void* entity) {
+    if (!entity) return -1;
+    for (int i = 0; i < g_tabletopAlphaOverflowPreviousCount; ++i) {
+        if (g_tabletopAlphaOverflowPrevious[static_cast<std::size_t>(i)] ==
+                entity) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool CaptureTabletopAlphaOverflow(void* entity, float distance) {
+    if (!entity || !std::isfinite(distance) || g_tabletopAlphaOverflowFrozen ||
+        g_renderingStereoEyeIndex == 1 || !TabletopAlphaOverflowEnabled() ||
+        !g_tabletopActive.load(std::memory_order_acquire) ||
+        !g_stereoActive.load(std::memory_order_relaxed) ||
+        !g_neonOverflowHooksActive.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const auto* const bytes = static_cast<const std::uint8_t*>(entity);
+    const int entityType = bytes[0x5a] & 0x7;
+    // The observed flashes are scenery. Never retain peds, vehicles or other
+    // lifecycle-owned objects through this raw-pointer spill list.
+    if ((entityType != 1 && entityType != 4 && entityType != 5) ||
+        !TabletopEntityInsideRadius(entity, 6.0f)) {
+        return false;
+    }
+    if (TabletopAlphaOverflowIndex(entity) >= 0) return true;
+
+    const int previousRank = TabletopAlphaOverflowPreviousRank(entity);
+    const TabletopAlphaOverflowEntry entry{entity, distance, previousRank};
+    if (g_tabletopAlphaOverflowCount < kTabletopAlphaOverflowCapacity) {
+        g_tabletopAlphaOverflowEntries[static_cast<std::size_t>(
+            g_tabletopAlphaOverflowCount++)] = entry;
+        g_tabletopAlphaOverflowCaptured.fetch_add(1,
+                                                   std::memory_order_relaxed);
+        return true;
+    }
+
+    // Preserve entries that also overflowed last frame. If the spill itself
+    // fills, a returning entry replaces the least stable newcomer; otherwise a
+    // nearer newcomer may replace only a farther newcomer. Every retained
+    // pointer was observed again in this frame before it can be drawn.
+    int victim = -1;
+    if (previousRank >= 0) {
+        int worstRank = -1;
+        for (int i = 0; i < g_tabletopAlphaOverflowCount; ++i) {
+            const int rank = g_tabletopAlphaOverflowEntries[
+                static_cast<std::size_t>(i)].previousRank;
+            if (rank < 0) {
+                victim = i;
+                break;
+            }
+            if (rank > worstRank) {
+                worstRank = rank;
+                victim = i;
+            }
+        }
+        if (victim >= 0 &&
+            g_tabletopAlphaOverflowEntries[static_cast<std::size_t>(victim)]
+                    .previousRank <= previousRank) {
+            victim = -1;
+        }
+    } else {
+        float farthest = distance;
+        for (int i = 0; i < g_tabletopAlphaOverflowCount; ++i) {
+            const auto& candidate = g_tabletopAlphaOverflowEntries[
+                static_cast<std::size_t>(i)];
+            if (candidate.previousRank < 0 && candidate.distance > farthest) {
+                farthest = candidate.distance;
+                victim = i;
+            }
+        }
+    }
+    if (victim < 0) {
+        g_tabletopAlphaOverflowDrops.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_tabletopAlphaOverflowEntries[static_cast<std::size_t>(victim)] = entry;
+    g_tabletopAlphaOverflowReplaced.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
 
 bool NeonOverflowContains(void* entity) {
     for (int i = 0; i < g_neonOverflowCount; ++i) {
@@ -9141,6 +9281,13 @@ bool CaptureAircraftOrdinaryAlphaOverflow(void* entity, float distance) {
 }
 
 void OnInitAlphaEntityList() {
+    g_tabletopAlphaOverflowPreviousCount = g_tabletopAlphaOverflowCount;
+    for (int i = 0; i < g_tabletopAlphaOverflowPreviousCount; ++i) {
+        g_tabletopAlphaOverflowPrevious[static_cast<std::size_t>(i)] =
+            g_tabletopAlphaOverflowEntries[static_cast<std::size_t>(i)].entity;
+    }
+    g_tabletopAlphaOverflowCount = 0;
+    g_tabletopAlphaOverflowFrozen = false;
     g_neonOverflowCount = 0;
     g_aircraftOrdinaryAlphaOverflowCount = 0;
     if (g_origInitAlphaEntityList) g_origInitAlphaEntityList();
@@ -9181,6 +9328,59 @@ void OnRenderFadingEntities() {
         g.CVisibilityPlugins_RenderEntity(entry.entity, entry.distance);
         g_aircraftOrdinaryAlphaOverflowDraws.fetch_add(
             1, std::memory_order_relaxed);
+    }
+    if (TabletopAlphaOverflowEnabled() &&
+        g_tabletopActive.load(std::memory_order_acquire)) {
+        if (g_renderingStereoEyeIndex == 0)
+            g_tabletopAlphaOverflowFrozen = true;
+        std::sort(g_tabletopAlphaOverflowEntries.begin(),
+                  g_tabletopAlphaOverflowEntries.begin() +
+                      g_tabletopAlphaOverflowCount,
+                  [](const TabletopAlphaOverflowEntry& a,
+                     const TabletopAlphaOverflowEntry& b) {
+                      return a.distance > b.distance;
+                  });
+        for (int i = 0; i < g_tabletopAlphaOverflowCount; ++i) {
+            const auto& entry = g_tabletopAlphaOverflowEntries[
+                static_cast<std::size_t>(i)];
+            if (!entry.entity) continue;
+            g.CVisibilityPlugins_RenderEntity(entry.entity, entry.distance);
+            g_tabletopAlphaOverflowDraws.fetch_add(1,
+                                                   std::memory_order_relaxed);
+        }
+        if (g_renderingStereoEyeIndex == 1) {
+            struct ReportState {
+                double startMs{};
+                std::uint64_t captured{};
+                std::uint64_t replaced{};
+                std::uint64_t draws{};
+                std::uint64_t drops{};
+            };
+            static ReportState report{};
+            const double nowMs = NowMs();
+            if (report.startMs <= 0.0) report.startMs = nowMs;
+            if (nowMs - report.startMs >= 500.0) {
+                const std::uint64_t captured =
+                    g_tabletopAlphaOverflowCaptured.load(
+                        std::memory_order_relaxed);
+                const std::uint64_t replaced =
+                    g_tabletopAlphaOverflowReplaced.load(
+                        std::memory_order_relaxed);
+                const std::uint64_t draws = g_tabletopAlphaOverflowDraws.load(
+                    std::memory_order_relaxed);
+                const std::uint64_t drops = g_tabletopAlphaOverflowDrops.load(
+                    std::memory_order_relaxed);
+                LOGI("[tabletop.flicker.fix] retained=%d previous=%d "
+                     "captured=%llu replaced=%llu draws=%llu drops=%llu",
+                     g_tabletopAlphaOverflowCount,
+                     g_tabletopAlphaOverflowPreviousCount,
+                     static_cast<unsigned long long>(captured-report.captured),
+                     static_cast<unsigned long long>(replaced-report.replaced),
+                     static_cast<unsigned long long>(draws-report.draws),
+                     static_cast<unsigned long long>(drops-report.drops));
+                report = {nowMs, captured, replaced, draws, drops};
+            }
+        }
     }
 }
 
@@ -9471,6 +9671,8 @@ bool OnInsertEntityIntoSortedList(void* entity, float distance) {
     const int modelId = bytes ? static_cast<int>(
         *reinterpret_cast<const std::int16_t*>(bytes + 0x32)) : -1;
     const int neonBit = NeonSignModelBit(modelId);
+    if (TabletopAlphaOverflowIndex(entity) >= 0)
+        return retainRaisedPitchAlpha(true);
     if (neonBit >= 0) {
         const std::uint32_t bit = 1u << neonBit;
         const std::uint32_t previous = g_neonSignsSeenMask.fetch_or(
@@ -9501,6 +9703,9 @@ bool OnInsertEntityIntoSortedList(void* entity, float distance) {
             CaptureNeonOverflow(entity, distance)) {
             return retainRaisedPitchAlpha(true);
         }
+        if (!inserted && CaptureTabletopAlphaOverflow(entity, distance)) {
+            return retainRaisedPitchAlpha(true);
+        }
         return retainRaisedPitchAlpha(inserted);
     }
 
@@ -9527,6 +9732,9 @@ bool OnInsertEntityIntoSortedList(void* entity, float distance) {
         return retainRaisedPitchAlpha(true);
     }
     if (!inserted && neonBit >= 0 && CaptureNeonOverflow(entity, distance)) {
+        return retainRaisedPitchAlpha(true);
+    }
+    if (!inserted && CaptureTabletopAlphaOverflow(entity, distance)) {
         return retainRaisedPitchAlpha(true);
     }
     return retainRaisedPitchAlpha(inserted);
