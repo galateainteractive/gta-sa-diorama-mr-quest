@@ -12234,6 +12234,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     const GLuint hudSource=g_stereoHudTex[set].load(
         std::memory_order_relaxed);
     bool ok = true;
+    bool tabletopMaskApplied[2]{};
     for (int e = 0; e < 2 && ok; ++e) {
         Swapchain& chain = s.swapchains[e];
         uint32_t idx = 0;
@@ -12302,7 +12303,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         EndXrGpuStage(copyGpuTimer);
         RecordXrCpuStage(e, XrCpuStage::CopySubmit, copyWallStartMs,
                          copyCpuStartMs);
-        ApplyTabletopPassthroughAlphaMask(
+        tabletopMaskApplied[e] = ApplyTabletopPassthroughAlphaMask(
             g_stereoEyeDepth[set][e].load(std::memory_order_relaxed),
             ew, eh, chain.width, chain.height, rp, e,
             g_stereoEyeNear[set][e].load(std::memory_order_relaxed),
@@ -12355,6 +12356,38 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                 ok = false;
             } else {
                 submittedSequenceAgeMs = completedCandidate.ageMs;
+            }
+            if (vrcam::IsTabletopActive()) {
+                static std::uint64_t lastFlickerStereoLogNs = 0;
+                const std::uint64_t nowNs = MonotonicNowNs();
+                if (lastFlickerStereoLogNs == 0 ||
+                    nowNs - lastFlickerStereoLogNs >= 500000000ULL) {
+                    lastFlickerStereoLogNs = nowNs;
+                    __android_log_print(
+                        ANDROID_LOG_INFO, SAVR_TAG,
+                        "[tabletop.flicker.stereo] gen=%d/%d set=%d age=%.2fms "
+                        "mask=%d/%d color=%u/%u depth=%u/%u "
+                        "near=%.4f/%.4f far=%.1f/%.1f scale=%.5f radius=%.3f",
+                        expectedGeneration,
+                        g_stereoGeneration[set].load(std::memory_order_relaxed),
+                        set, submittedSequenceAgeMs,
+                        tabletopMaskApplied[0] ? 1 : 0,
+                        tabletopMaskApplied[1] ? 1 : 0,
+                        g_stereoEyeTex[set][0].load(std::memory_order_relaxed),
+                        g_stereoEyeTex[set][1].load(std::memory_order_relaxed),
+                        g_stereoEyeDepth[set][0].load(std::memory_order_relaxed),
+                        g_stereoEyeDepth[set][1].load(std::memory_order_relaxed),
+                        static_cast<double>(g_stereoEyeNear[set][0].load(
+                            std::memory_order_relaxed)),
+                        static_cast<double>(g_stereoEyeNear[set][1].load(
+                            std::memory_order_relaxed)),
+                        static_cast<double>(g_stereoEyeFar[set][0].load(
+                            std::memory_order_relaxed)),
+                        static_cast<double>(g_stereoEyeFar[set][1].load(
+                            std::memory_order_relaxed)),
+                        static_cast<double>(tabletopMask.depthScaleMPerGameUnit),
+                        static_cast<double>(tabletopMask.playerRadiusM));
+                }
             }
             if (gpuRead.PinNow()) {
                 static bool loggedEarlySourceReadClose = false;

@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 32 targeted flicker diagnostic candidate
+
+- Add player-build telemetry for half-second windows of visible entities,
+  ordinary LODs, super-LODs, streaming requests and alpha-list sizes while
+  Tabletop is active.
+- Hash render-list pointer identity before the stereo pair and after each eye,
+  detecting same-count model/LOD substitutions and left/right mutations that
+  the earlier candidate counter could not expose.
+- Report the exact synchronized stereo generation, ring slot, colour/depth
+  resources, clip planes and radial-mask scale used by the compositor.
+- Preserve Package 31 rendering and gameplay byte-for-behaviour: this package
+  changes diagnostics only. See `PACKAGE_32.md`.
+
 ## Package 31 passthrough validation candidate
 
 - Amplify the existing gradual GTA clock/weather passthrough treatment to

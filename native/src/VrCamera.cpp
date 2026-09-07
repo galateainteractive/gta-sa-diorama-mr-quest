@@ -9268,6 +9268,194 @@ int CountTrackedAlphaNodes() {
     return entities >= 0 && underwater >= 0 ? entities + underwater : -1;
 }
 
+// Package 32 diagnostic witness. Counts alone cannot distinguish a stable
+// render list from GTA swapping an ordinary model for a same-sized LOD list.
+// Hash only pointer identity (never entity contents), so the player build can
+// report those substitutions without changing visibility or touching assets.
+struct TabletopRenderListIdentity {
+    bool valid{};
+    std::uint64_t entities{};
+    std::uint64_t lods{};
+    std::uint64_t superLods{};
+    std::uint64_t alpha{};
+};
+
+void MixTabletopIdentity(std::uint64_t& hash, std::uintptr_t value) {
+    constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+    hash ^= static_cast<std::uint64_t>(value);
+    hash *= kFnvPrime;
+}
+
+bool HashTabletopPointerList(std::uintptr_t offset, int count, int capacity,
+                             std::uint64_t* result) {
+    if (!result || !g.LoadBase || count < 0 || count > capacity) return false;
+    auto* const entries = reinterpret_cast<void* const*>(g.LoadBase + offset);
+    std::uint64_t hash = 1469598103934665603ULL;
+    MixTabletopIdentity(hash, static_cast<std::uintptr_t>(count));
+    for (int i = 0; i < count; ++i) {
+        if (!entries[i]) return false;
+        MixTabletopIdentity(hash, reinterpret_cast<std::uintptr_t>(entries[i]));
+    }
+    *result = hash;
+    return true;
+}
+
+bool HashTabletopAlphaList(void* listAddress, int capacity,
+                           std::uint64_t& hash) {
+    if (!listAddress || capacity <= 0) return false;
+    auto* const head = reinterpret_cast<AlphaListNode*>(listAddress);
+    auto* const tail = reinterpret_cast<AlphaListNode*>(
+        reinterpret_cast<std::uint8_t*>(listAddress) + 0x28);
+    AlphaListNode* previous = head;
+    AlphaListNode* node = head->next;
+    for (int count = 0; count <= capacity; ++count) {
+        if (node == tail) {
+            if (tail->previous != previous) return false;
+            MixTabletopIdentity(hash, static_cast<std::uintptr_t>(count));
+            return true;
+        }
+        if (!node || (reinterpret_cast<std::uintptr_t>(node) & 7u) != 0u ||
+            node->previous != previous || !node->next || !node->object) {
+            return false;
+        }
+        MixTabletopIdentity(hash,
+                            reinterpret_cast<std::uintptr_t>(node->object));
+        previous = node;
+        node = node->next;
+    }
+    return false;
+}
+
+TabletopRenderListIdentity CaptureTabletopRenderListIdentity() {
+    TabletopRenderListIdentity identity{};
+    if (!g.LoadBase || !g.CRenderer_ms_nNoOfVisibleEntities ||
+        !g.CRenderer_ms_nNoOfVisibleLods ||
+        !g.CRenderer_ms_nNoOfVisibleSuperLods) {
+        return identity;
+    }
+    const int entities = *g.CRenderer_ms_nNoOfVisibleEntities;
+    const int lods = *g.CRenderer_ms_nNoOfVisibleLods;
+    const int superLods = *g.CRenderer_ms_nNoOfVisibleSuperLods;
+    std::uint64_t alpha = 1469598103934665603ULL;
+    identity.valid = HashTabletopPointerList(
+            kRetailVisibleEntityPtrsOffset, entities,
+            kRetailVisiblePointerCapacity, &identity.entities) &&
+        HashTabletopPointerList(
+            kRetailVisibleLodPtrsOffset, lods,
+            kRetailVisiblePointerCapacity, &identity.lods) &&
+        HashTabletopPointerList(
+            kRetailVisibleSuperLodPtrsOffset, superLods,
+            kRetailVisibleSuperPointerCapacity, &identity.superLods) &&
+        HashTabletopAlphaList(g.CVisibilityPlugins_m_alphaEntityList,
+                              kRetailAlphaEntityCapacity, alpha) &&
+        HashTabletopAlphaList(g.CVisibilityPlugins_m_alphaUnderwaterEntityList,
+                              kRetailAlphaUnderwaterEntityCapacity, alpha);
+    identity.alpha = identity.valid ? alpha : 0;
+    return identity;
+}
+
+struct TabletopFlickerRange {
+    int minimum{std::numeric_limits<int>::max()};
+    int maximum{std::numeric_limits<int>::min()};
+    void Add(int value) {
+        minimum = std::min(minimum, value);
+        maximum = std::max(maximum, value);
+    }
+};
+
+void LogTabletopFlickerWindow(
+        const perf::StereoFrameSample& sample,
+        const TabletopRenderListIdentity identity[3]) {
+    struct Window {
+        double startMs{};
+        int frames{};
+        TabletopFlickerRange entities;
+        TabletopFlickerRange lods;
+        TabletopFlickerRange superLods;
+        TabletopFlickerRange streaming;
+        TabletopFlickerRange alphaBefore;
+        TabletopFlickerRange alphaLeft;
+        TabletopFlickerRange alphaRight;
+        TabletopRenderListIdentity previous{};
+        int entityChanges{};
+        int lodChanges{};
+        int superLodChanges{};
+        int alphaChanges{};
+        int eyeEntityMismatches{};
+        int eyeLodMismatches{};
+        int eyeSuperLodMismatches{};
+        int eyeAlphaMismatches{};
+        int invalidIdentities{};
+    };
+    static Window window{};
+    const double nowMs = NowMs();
+    if (window.startMs <= 0.0) window.startMs = nowMs;
+    ++window.frames;
+    window.entities.Add(sample.visibleEntities);
+    window.lods.Add(sample.visibleLods);
+    window.superLods.Add(sample.visibleSuperLods);
+    window.streaming.Add(sample.streamingRequests);
+    window.alphaBefore.Add(sample.alphaNodesBefore);
+    window.alphaLeft.Add(sample.alphaNodesAfterLeft);
+    window.alphaRight.Add(sample.alphaNodesAfterRight);
+
+    if (!identity[0].valid || !identity[1].valid || !identity[2].valid) {
+        ++window.invalidIdentities;
+    } else {
+        if (window.previous.valid) {
+            window.entityChanges +=
+                identity[2].entities != window.previous.entities;
+            window.lodChanges += identity[2].lods != window.previous.lods;
+            window.superLodChanges +=
+                identity[2].superLods != window.previous.superLods;
+            window.alphaChanges += identity[2].alpha != window.previous.alpha;
+        }
+        window.eyeEntityMismatches +=
+            identity[1].entities != identity[2].entities;
+        window.eyeLodMismatches += identity[1].lods != identity[2].lods;
+        window.eyeSuperLodMismatches +=
+            identity[1].superLods != identity[2].superLods;
+        window.eyeAlphaMismatches += identity[1].alpha != identity[2].alpha;
+        window.previous = identity[2];
+    }
+
+    if (nowMs - window.startMs < 500.0) return;
+    __android_log_print(
+        ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.flicker.scene] seq=%d frames=%d scale=%.5f radius=%.1f "
+        "ent=%d..%d lod=%d..%d super=%d..%d stream=%d..%d "
+        "alpha=B%d..%d/L%d..%d/R%d..%d",
+        sample.sequence, window.frames,
+        static_cast<double>(tabletop::VisualScale()),
+        static_cast<double>(tabletop::RadiusMeters()),
+        window.entities.minimum, window.entities.maximum,
+        window.lods.minimum, window.lods.maximum,
+        window.superLods.minimum, window.superLods.maximum,
+        window.streaming.minimum, window.streaming.maximum,
+        window.alphaBefore.minimum, window.alphaBefore.maximum,
+        window.alphaLeft.minimum, window.alphaLeft.maximum,
+        window.alphaRight.minimum, window.alphaRight.maximum);
+    __android_log_print(
+        ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.flicker.identity] seq=%d changes=E%d/L%d/S%d/A%d "
+        "eye_mismatch=E%d/L%d/S%d/A%d invalid=%d "
+        "hash=E%016llx/L%016llx/S%016llx/A%016llx",
+        sample.sequence,
+        window.entityChanges, window.lodChanges, window.superLodChanges,
+        window.alphaChanges,
+        window.eyeEntityMismatches, window.eyeLodMismatches,
+        window.eyeSuperLodMismatches, window.eyeAlphaMismatches,
+        window.invalidIdentities,
+        static_cast<unsigned long long>(identity[2].entities),
+        static_cast<unsigned long long>(identity[2].lods),
+        static_cast<unsigned long long>(identity[2].superLods),
+        static_cast<unsigned long long>(identity[2].alpha));
+    const TabletopRenderListIdentity previous = window.previous;
+    window = {};
+    window.startMs = nowMs;
+    window.previous = previous;
+}
+
 bool OnInsertEntityIntoSortedList(void* entity, float distance) {
     if (!g_origInsertEntityIntoSortedList) return false;
     const bool raisedPitchEntry =
@@ -22269,6 +22457,9 @@ void OnRenderScene(bool underwater) {
     double tScene[2]{}, tSceneCpu[2]{}, tSky[2]{}, tEnd = 0.0, tA;
     g_stereoReuseCounters = {};
     int alphaNodes[3] = {CountTrackedAlphaNodes(), -1, -1};
+    TabletopRenderListIdentity flickerIdentity[3]{};
+    if (tabletopFrame)
+        flickerIdentity[0] = CaptureTabletopRenderListIdentity();
     // Retail RenderWater clears every polygon's bToBeRendered bit after it is
     // submitted (ARM64 0x6f0670/0x6f0728). PreRenderWater marked the geometry
     // only once before this stereo pair, so capture it before the left eye and
@@ -22622,6 +22813,8 @@ void OnRenderScene(bool underwater) {
         tScene[e] += NowMs() - tA;
         tSceneCpu[e] += perf::ThreadCpuMs() - tSceneCpuStart;
         alphaNodes[e + 1] = CountTrackedAlphaNodes();
+        if (tabletopFrame)
+            flickerIdentity[e + 1] = CaptureTabletopRenderListIdentity();
         if (g_alphaDedupeHookActive.load(std::memory_order_relaxed) &&
             alphaNodes[e + 1] < 0) {
             ++g_stereoReuseCounters.alphaDedupeFaults;
@@ -23554,6 +23747,8 @@ void OnRenderScene(bool underwater) {
         recordEndMonoMs >= profT0 && profT0 >= stereoHookEntryMonoMs &&
         stereoHookExitCpuMs >= recordEndCpuMs &&
         recordEndCpuMs >= profCpuT0 && profCpuT0 >= stereoHookEntryCpuMs;
+    if (tabletopFrame)
+        LogTabletopFlickerWindow(stereoSample, flickerIdentity);
     perf::SubmitStereoFrame(stereoSample);
     // A secondary/unexpected RenderScene without a fresh main ScanWorld must
     // not republish the previous aircraft frame into the persistent CSV.
