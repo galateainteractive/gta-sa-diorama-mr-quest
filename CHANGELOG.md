@@ -1,5 +1,17 @@
 # Changelog
 
+## Package 24 test candidate
+
+- Add gradual weather-reactive passthrough driven by the verified retail GTA
+  clock, rain, fog, cloud-coverage and sandstorm values.
+- Keep clear daytime neutral; use restrained dawn, sunset, night, rain/fog and
+  sandstorm palettes with a smooth 1.35 s transition.
+- Prefer a compact `XR_META_passthrough_color_lut` path updated at no more than
+  4 Hz, with FB brightness/contrast/saturation fallback.
+- Change only OpenXR passthrough styling; preserve Package 23 rendering,
+  effects, controls, data, audio, saves and configuration.
+- Headset colour validation remains pending; see `PACKAGE_24.md`.
+
 ## Package 23 test candidate
 
 - Replace scoped nearby vehicle scraping/wheel sparks with capped world-space

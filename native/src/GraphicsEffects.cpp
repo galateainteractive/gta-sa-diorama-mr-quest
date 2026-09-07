@@ -156,6 +156,14 @@ bool g_embeddedCanopyHideReady = false;
 bool g_lampGroundPoolsReady = false;
 bool g_wetReflectionsReady = false;
 bool g_underwaterStateReady = false;
+std::atomic<bool> g_passthroughWeatherResolveAttempted{false};
+bool g_passthroughWeatherStateReady = false;
+std::uint8_t* g_passthroughClockHours = nullptr;
+std::uint8_t* g_passthroughClockMinutes = nullptr;
+float* g_passthroughWeatherRain = nullptr;
+float* g_passthroughWeatherFog = nullptr;
+float* g_passthroughWeatherClouds = nullptr;
+float* g_passthroughWeatherSandstorm = nullptr;
 bool g_searchlightsReady = false;
 std::atomic<bool> g_mobileColorResolveAttempted{false};
 bool g_mobileColorReady = false;
@@ -2295,6 +2303,83 @@ void PublishUnderwaterState(int eye) {
     xr::SetUnderwaterState(underWaterness, waterDepth);
 }
 
+bool ResolvePassthroughWeatherState() {
+    if (g_passthroughWeatherResolveAttempted.exchange(
+            true, std::memory_order_acq_rel)) {
+        return g_passthroughWeatherStateReady;
+    }
+    void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!handle) {
+        LOGW("[tabletop.passthrough.weather] libGame.so unavailable");
+        return false;
+    }
+    auto* const hours = Resolve<std::uint8_t*>(
+        handle, "_ZN6CClock18ms_nGameClockHoursE");
+    auto* const minutes = Resolve<std::uint8_t*>(
+        handle, "_ZN6CClock20ms_nGameClockMinutesE");
+    auto* const rain = Resolve<float*>(handle, "_ZN8CWeather4RainE");
+    auto* const fog = Resolve<float*>(handle, "_ZN8CWeather9FoggynessE");
+    auto* const clouds = Resolve<float*>(
+        handle, "_ZN8CWeather13CloudCoverageE");
+    auto* const sandstorm = Resolve<float*>(
+        handle, "_ZN8CWeather9SandstormE");
+
+    Dl_info info{};
+    const bool ownerReady = hours &&
+        dladdr(static_cast<const void*>(hours), &info) != 0 && info.dli_fbase;
+    const auto base = ownerReady
+        ? reinterpret_cast<std::uintptr_t>(info.dli_fbase) : 0u;
+    const auto atOffset = [base](const void* pointer, std::uintptr_t offset) {
+        return base != 0u && pointer &&
+            reinterpret_cast<std::uintptr_t>(pointer) - base == offset;
+    };
+    g_passthroughWeatherStateReady =
+        atOffset(hours, 0x9f9a3au) &&
+        atOffset(minutes, 0x9f9a3bu) &&
+        atOffset(rain, 0xcc7480u) &&
+        atOffset(fog, 0xcc7468u) &&
+        atOffset(clouds, 0xcc7464u) &&
+        atOffset(sandstorm, 0xcc7484u);
+    if (g_passthroughWeatherStateReady) {
+        g_passthroughClockHours = hours;
+        g_passthroughClockMinutes = minutes;
+        g_passthroughWeatherRain = rain;
+        g_passthroughWeatherFog = fog;
+        g_passthroughWeatherClouds = clouds;
+        g_passthroughWeatherSandstorm = sandstorm;
+    }
+    LOGI("[tabletop.passthrough.weather] state_ready=%d clock=%p/%p "
+         "rain=%p fog=%p clouds=%p sand=%p",
+         g_passthroughWeatherStateReady ? 1 : 0, hours, minutes,
+         rain, fog, clouds, sandstorm);
+    dlclose(handle);
+    return g_passthroughWeatherStateReady;
+}
+
+void PublishPassthroughWeatherState(int eye) {
+    if (eye != 0) return;
+    xr::PassthroughWeatherState state{};
+    if (!ResolvePassthroughWeatherState() ||
+        !g_passthroughClockHours || !g_passthroughClockMinutes ||
+        !g_passthroughWeatherRain || !g_passthroughWeatherFog ||
+        !g_passthroughWeatherClouds || !g_passthroughWeatherSandstorm) {
+        xr::SetPassthroughWeatherState(state);
+        return;
+    }
+    const auto normalized = [](const float* value) {
+        return value && std::isfinite(*value)
+            ? std::clamp(*value, 0.0f, 1.0f) : 0.0f;
+    };
+    state.valid = true;
+    state.hour = static_cast<float>(*g_passthroughClockHours % 24u) +
+        static_cast<float>(*g_passthroughClockMinutes % 60u) / 60.0f;
+    state.rain = normalized(g_passthroughWeatherRain);
+    state.fog = normalized(g_passthroughWeatherFog);
+    state.clouds = normalized(g_passthroughWeatherClouds);
+    state.sandstorm = normalized(g_passthroughWeatherSandstorm);
+    xr::SetPassthroughWeatherState(state);
+}
+
 bool ResolveMobileColorState() {
     if (g_mobileColorResolveAttempted.exchange(true,
                                                 std::memory_order_acq_rel)) {
@@ -4161,6 +4246,10 @@ void RenderEye(void* rwCamera, int eye) {
     // compositor, not in the recorded eye passes, and WORLD EFFECTS OFF must
     // not kill the independent underwater treatment.
     PublishUnderwaterState(eye);
+    // Weather tint is an isolated OpenXR passthrough style. Publish it before
+    // the optional world-effects gate so turning those effects off never makes
+    // the room colour freeze on an old GTA time of day.
+    PublishPassthroughWeatherState(eye);
     // Mobile Original colour is also a compositor resolve, independent of the
     // optional geometry-effects profile. Publish it before this frame's stereo
     // ring slot is sealed by SetStereoEyeTextures.

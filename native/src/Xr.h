@@ -239,6 +239,19 @@ void NotifyStereoRetailSwapCompletedFromRenderQueue();
 // the exact frame whose world pixels it presents.
 void SetUnderwaterState(float underWaterness, float waterDepth);
 
+// GTA clock and weather sampled on the GameThread. The XR presentation thread
+// uses this immutable snapshot to grade only the passthrough layer; game/world
+// colour, radial masking and eye textures are unchanged.
+struct PassthroughWeatherState {
+    bool valid{false};
+    float hour{};       // fractional GTA hour in [0, 24)
+    float rain{};       // normalized CWeather intensities
+    float fog{};
+    float clouds{};
+    float sandstorm{};
+};
+void SetPassthroughWeatherState(const PassthroughWeatherState& state);
+
 // Retail Android's final MobileRender colour transform for the current game
 // frame. The GameThread publishes it before the matching eye-texture pair; the
 // compositor applies it inside the existing resolve (no extra full-screen pass).

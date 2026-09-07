@@ -76,11 +76,11 @@ For quick A/B tests, Android properties `debug.savr.tabletop` and
   radius preset;
 - passthrough, grab direction and rotation sign require on-device Quest tuning.
 
-## Planned experiment: weather-reactive passthrough
+## Package 24 experiment: weather-reactive passthrough
 
-Keep this out of rendering/visibility diagnostic packages. In a later isolated
-package, tint the existing passthrough from GTA's live time-cycle and weather
-state while leaving clear daytime neutral. The first restrained palette is:
+This remains isolated from rendering and visibility changes. Package 24 tints
+the existing passthrough from GTA's live clock and interpolated weather state
+while leaving clear daytime neutral. The first restrained palette is:
 
 - sunrise: a mild gold/pink warmth;
 - sunset: a gradually blended warm orange;
@@ -89,9 +89,10 @@ state while leaving clear daytime neutral. The first restrained palette is:
 - fog: reduced saturation and contrast;
 - sandstorm: a mild orange/sepia grade.
 
-Prefer `XR_META_passthrough_color_lut`, as validated in the separate Mario 64
-Tabletop MR prototype, with the FB brightness/contrast/saturation style as a
-fallback. Drive smooth transitions from the retail clock, old/new weather,
-weather interpolation and current time-cycle colours. Rebuild or update the LUT
-only when the perceptual result changes, not every frame. This first experiment
-does not include lightning flashes or gameplay-event pulses.
+The implementation prefers `XR_META_passthrough_color_lut`, as validated in the
+separate Mario 64 Tabletop MR prototype, with FB brightness/contrast/saturation
+as fallback. GTA's exported rain, fog, cloud and sandstorm intensities already
+carry its weather transitions; an additional 1.35 s compositor smoothing keeps
+time/weather changes gradual. The compact 16-cube LUT updates only after a
+perceptible change and no more than four times per second. This experiment does
+not include lightning flashes or gameplay-event pulses.

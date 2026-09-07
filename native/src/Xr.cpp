@@ -250,6 +250,8 @@ std::atomic<float>        g_stereoUnderWaterness[kStereoSets] = {};
 std::atomic<float>        g_stereoWaterDepth[kStereoSets] = {};
 std::atomic<float>        g_pendingUnderWaterness{0.0f};
 std::atomic<float>        g_pendingWaterDepth{0.0f};
+std::mutex                g_passthroughWeatherMutex;
+PassthroughWeatherState   g_pendingPassthroughWeather{};
 std::atomic<int>          g_stereoEyeW[kStereoSets] = {};
 std::atomic<int>          g_stereoEyeH[kStereoSets] = {};
 std::atomic<int>          g_stereoSeq{-1};   // newest published pair index (-1 = none)
@@ -2154,9 +2156,11 @@ struct State {
 State s;
 
 bool g_hasPassthroughExt = false;
+bool g_hasPassthroughColorLutExt = false;
 std::atomic<bool> g_passthroughActive{false};
 XrPassthroughFB g_passthrough{XR_NULL_HANDLE};
 XrPassthroughLayerFB g_passthroughLayer{XR_NULL_HANDLE};
+XrPassthroughColorLutMETA g_passthroughWeatherLut{XR_NULL_HANDLE};
 PFN_xrCreatePassthroughFB g_xrCreatePassthroughFB{};
 PFN_xrDestroyPassthroughFB g_xrDestroyPassthroughFB{};
 PFN_xrPassthroughStartFB g_xrPassthroughStartFB{};
@@ -2166,6 +2170,286 @@ PFN_xrDestroyPassthroughLayerFB g_xrDestroyPassthroughLayerFB{};
 PFN_xrPassthroughLayerPauseFB g_xrPassthroughLayerPauseFB{};
 PFN_xrPassthroughLayerResumeFB g_xrPassthroughLayerResumeFB{};
 PFN_xrPassthroughLayerSetStyleFB g_xrPassthroughLayerSetStyleFB{};
+PFN_xrCreatePassthroughColorLutMETA
+    g_xrCreatePassthroughColorLutMETA{};
+PFN_xrDestroyPassthroughColorLutMETA
+    g_xrDestroyPassthroughColorLutMETA{};
+PFN_xrUpdatePassthroughColorLutMETA
+    g_xrUpdatePassthroughColorLutMETA{};
+bool g_passthroughWeatherLutReady = false;
+std::uint32_t g_passthroughWeatherLutResolution = 0;
+
+constexpr std::uint32_t kPassthroughWeatherLutResolution = 16;
+constexpr XrDuration kPassthroughWeatherUpdateInterval = 250000000LL;
+
+struct PassthroughGrade {
+    float brightness{};
+    float contrast{};
+    float saturation{1.0f};
+    float tint[3]{1.0f, 1.0f, 1.0f};
+    float tintStrength{};
+};
+
+float Smoothstep(float edge0, float edge1, float value) {
+    if (edge1 <= edge0) return value >= edge1 ? 1.0f : 0.0f;
+    const float t = std::clamp((value - edge0) / (edge1 - edge0),
+                               0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float TimeWindow(float hour, float start, float peak, float end) {
+    if (hour <= start || hour >= end) return 0.0f;
+    return hour <= peak
+        ? Smoothstep(start, peak, hour)
+        : 1.0f - Smoothstep(peak, end, hour);
+}
+
+PassthroughGrade BlendGrade(const PassthroughGrade& from,
+                            const PassthroughGrade& to, float amount) {
+    amount = std::clamp(amount, 0.0f, 1.0f);
+    PassthroughGrade result{};
+    result.brightness = from.brightness +
+        (to.brightness - from.brightness) * amount;
+    result.contrast = from.contrast +
+        (to.contrast - from.contrast) * amount;
+    result.saturation = from.saturation +
+        (to.saturation - from.saturation) * amount;
+    result.tintStrength = from.tintStrength +
+        (to.tintStrength - from.tintStrength) * amount;
+    for (int channel = 0; channel < 3; ++channel) {
+        result.tint[channel] = from.tint[channel] +
+            (to.tint[channel] - from.tint[channel]) * amount;
+    }
+    return result;
+}
+
+PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
+    const PassthroughGrade neutral{};
+    if (!state.valid) return neutral;
+
+    const PassthroughGrade dawn{
+        -0.015f, 0.015f, 1.02f, {1.10f, 1.015f, 0.92f}, 0.28f};
+    const PassthroughGrade sunset{
+        -0.025f, 0.025f, 1.03f, {1.16f, 0.94f, 0.78f}, 0.36f};
+    const PassthroughGrade night{
+        -0.155f, -0.035f, 0.82f, {0.84f, 0.93f, 1.08f}, 0.24f};
+    const PassthroughGrade overcast{
+        -0.018f, -0.035f, 0.94f, {0.94f, 0.98f, 1.03f}, 0.10f};
+    const PassthroughGrade rain{
+        -0.045f, -0.075f, 0.76f, {0.88f, 0.95f, 1.04f}, 0.24f};
+    const PassthroughGrade fog{
+        0.005f, -0.17f, 0.62f, {0.96f, 0.98f, 1.0f}, 0.10f};
+    const PassthroughGrade sandstorm{
+        -0.035f, 0.015f, 0.82f, {1.18f, 0.91f, 0.66f}, 0.48f};
+
+    const float hour = std::clamp(state.hour, 0.0f, 23.999f);
+    const float dawnWeight = TimeWindow(hour, 4.75f, 6.25f, 8.0f);
+    const float sunsetWeight = TimeWindow(hour, 16.75f, 18.5f, 20.75f);
+    const float nightWeight = std::max(
+        1.0f - Smoothstep(4.5f, 6.5f, hour),
+        Smoothstep(19.5f, 22.0f, hour));
+
+    PassthroughGrade result = BlendGrade(neutral, dawn, dawnWeight);
+    result = BlendGrade(result, sunset, sunsetWeight);
+    result = BlendGrade(result, night, nightWeight);
+    result = BlendGrade(result, overcast,
+                        std::clamp(state.clouds, 0.0f, 1.0f) * 0.28f);
+    result = BlendGrade(result, rain,
+                        std::clamp(state.rain, 0.0f, 1.0f) * 0.88f);
+    result = BlendGrade(result, fog,
+                        std::clamp(state.fog, 0.0f, 1.0f) * 0.82f);
+    result = BlendGrade(result, sandstorm,
+                        std::clamp(state.sandstorm, 0.0f, 1.0f) * 0.94f);
+    return result;
+}
+
+float GradeDistance(const PassthroughGrade& a, const PassthroughGrade& b) {
+    float distance = std::max({
+        std::abs(a.brightness - b.brightness),
+        std::abs(a.contrast - b.contrast),
+        std::abs(a.saturation - b.saturation),
+        std::abs(a.tintStrength - b.tintStrength)});
+    for (int channel = 0; channel < 3; ++channel) {
+        distance = std::max(distance,
+            std::abs(a.tint[channel] - b.tint[channel]));
+    }
+    return distance;
+}
+
+void BuildPassthroughWeatherLut(const PassthroughGrade& grade,
+                                std::vector<std::uint8_t>& buffer,
+                                std::uint32_t resolution) {
+    buffer.resize(static_cast<std::size_t>(resolution) * resolution *
+                  resolution * 3u);
+    std::size_t offset = 0;
+    for (std::uint32_t blue = 0; blue < resolution; ++blue) {
+        for (std::uint32_t green = 0; green < resolution; ++green) {
+            for (std::uint32_t red = 0; red < resolution; ++red) {
+                const float input[3]{
+                    static_cast<float>(red) / (resolution - 1u),
+                    static_cast<float>(green) / (resolution - 1u),
+                    static_cast<float>(blue) / (resolution - 1u)};
+                const float luminance = input[0] * 0.2126f +
+                    input[1] * 0.7152f + input[2] * 0.0722f;
+                for (int channel = 0; channel < 3; ++channel) {
+                    float value = luminance +
+                        (input[channel] - luminance) * grade.saturation;
+                    const float tinted = value * grade.tint[channel];
+                    value += (tinted - value) * grade.tintStrength;
+                    value = (value - 0.5f) * (1.0f + grade.contrast) +
+                        0.5f + grade.brightness;
+                    buffer[offset++] = static_cast<std::uint8_t>(
+                        std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+                }
+            }
+        }
+    }
+}
+
+bool InitializePassthroughWeatherStyle() {
+    if (!g_hasPassthroughColorLutExt) {
+        LOGI("[tabletop.passthrough.weather] META LUT unavailable; "
+             "using brightness/contrast/saturation fallback");
+        return false;
+    }
+#define LOAD_PASSTHROUGH_LUT(name) \
+    xrGetInstanceProcAddr(s.instance, "xr" #name, \
+        reinterpret_cast<PFN_xrVoidFunction*>(&g_xr##name))
+    LOAD_PASSTHROUGH_LUT(CreatePassthroughColorLutMETA);
+    LOAD_PASSTHROUGH_LUT(DestroyPassthroughColorLutMETA);
+    LOAD_PASSTHROUGH_LUT(UpdatePassthroughColorLutMETA);
+#undef LOAD_PASSTHROUGH_LUT
+    if (!g_xrCreatePassthroughColorLutMETA ||
+        !g_xrDestroyPassthroughColorLutMETA ||
+        !g_xrUpdatePassthroughColorLutMETA) {
+        LOGW("[tabletop.passthrough.weather] META LUT entrypoints unavailable");
+        return false;
+    }
+
+    XrSystemPassthroughColorLutPropertiesMETA lutProperties{
+        XR_TYPE_SYSTEM_PASSTHROUGH_COLOR_LUT_PROPERTIES_META};
+    XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES};
+    properties.next = &lutProperties;
+    const XrResult propertiesResult = xrGetSystemProperties(
+        s.instance, s.systemId, &properties);
+    if (XR_FAILED(propertiesResult) ||
+        lutProperties.maxColorLutResolution < 2u) {
+        LOGW("[tabletop.passthrough.weather] LUT properties unavailable: %d/%u",
+             static_cast<int>(propertiesResult),
+             lutProperties.maxColorLutResolution);
+        return false;
+    }
+    const std::uint32_t resolution = std::min(
+        kPassthroughWeatherLutResolution,
+        lutProperties.maxColorLutResolution);
+    std::vector<std::uint8_t> buffer;
+    BuildPassthroughWeatherLut(PassthroughGrade{}, buffer, resolution);
+    XrPassthroughColorLutCreateInfoMETA create{
+        XR_TYPE_PASSTHROUGH_COLOR_LUT_CREATE_INFO_META};
+    create.channels = XR_PASSTHROUGH_COLOR_LUT_CHANNELS_RGB_META;
+    create.resolution = resolution;
+    create.data.bufferSize = static_cast<std::uint32_t>(buffer.size());
+    create.data.buffer = buffer.data();
+    const XrResult result = g_xrCreatePassthroughColorLutMETA(
+        g_passthrough, &create, &g_passthroughWeatherLut);
+    if (XR_FAILED(result)) {
+        g_passthroughWeatherLut = XR_NULL_HANDLE;
+        LOGW("[tabletop.passthrough.weather] LUT creation failed: %d",
+             static_cast<int>(result));
+        return false;
+    }
+    g_passthroughWeatherLutResolution = resolution;
+    LOGI("[tabletop.passthrough.weather] META LUT ready resolution=%u",
+         resolution);
+    return true;
+}
+
+void UpdatePassthroughWeatherStyle(XrTime displayTime) {
+    static PassthroughGrade current{};
+    static PassthroughGrade applied{};
+    static XrTime lastSampleTime = 0;
+    static XrTime lastAppliedTime = 0;
+    static bool appliedOnce = false;
+
+    if (!g_passthroughActive.load(std::memory_order_acquire) ||
+        !g_xrPassthroughLayerSetStyleFB) {
+        current = {};
+        applied = {};
+        lastSampleTime = 0;
+        lastAppliedTime = 0;
+        appliedOnce = false;
+        return;
+    }
+
+    PassthroughWeatherState state{};
+    {
+        std::lock_guard<std::mutex> lock(g_passthroughWeatherMutex);
+        state = g_pendingPassthroughWeather;
+    }
+    const PassthroughGrade target = WeatherTarget(state);
+    if (lastSampleTime == 0 || displayTime <= lastSampleTime) {
+        lastSampleTime = displayTime;
+    } else {
+        const float dt = std::clamp(
+            static_cast<float>(displayTime - lastSampleTime) / 1.0e9f,
+            0.0f, 0.25f);
+        const float amount = 1.0f - std::exp(-dt / 1.35f);
+        current = BlendGrade(current, target, amount);
+        lastSampleTime = displayTime;
+    }
+    if (appliedOnce &&
+        displayTime - lastAppliedTime < kPassthroughWeatherUpdateInterval) {
+        return;
+    }
+    if (appliedOnce && GradeDistance(current, applied) < 0.0035f) return;
+
+    XrPassthroughStyleFB style{XR_TYPE_PASSTHROUGH_STYLE_FB};
+    style.textureOpacityFactor = 1.0f;
+    style.edgeColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    XrPassthroughColorMapLutMETA lutMap{
+        XR_TYPE_PASSTHROUGH_COLOR_MAP_LUT_META};
+    XrPassthroughBrightnessContrastSaturationFB basic{
+        XR_TYPE_PASSTHROUGH_BRIGHTNESS_CONTRAST_SATURATION_FB};
+
+    if (g_passthroughWeatherLutReady &&
+        g_passthroughWeatherLut != XR_NULL_HANDLE) {
+        std::vector<std::uint8_t> buffer;
+        BuildPassthroughWeatherLut(current, buffer,
+                                  g_passthroughWeatherLutResolution);
+        XrPassthroughColorLutUpdateInfoMETA update{
+            XR_TYPE_PASSTHROUGH_COLOR_LUT_UPDATE_INFO_META};
+        update.data.bufferSize = static_cast<std::uint32_t>(buffer.size());
+        update.data.buffer = buffer.data();
+        const XrResult updateResult = g_xrUpdatePassthroughColorLutMETA(
+            g_passthroughWeatherLut, &update);
+        if (XR_SUCCEEDED(updateResult)) {
+            lutMap.colorLut = g_passthroughWeatherLut;
+            lutMap.weight = 1.0f;
+            style.next = &lutMap;
+        } else {
+            LOGW("[tabletop.passthrough.weather] LUT update failed: %d; "
+                 "using basic fallback",
+                 static_cast<int>(updateResult));
+            g_passthroughWeatherLutReady = false;
+        }
+    }
+    if (!style.next) {
+        basic.brightness = current.brightness * 100.0f;
+        basic.contrast = std::max(0.0f, 1.0f + current.contrast);
+        basic.saturation = std::max(0.0f, current.saturation);
+        style.next = &basic;
+    }
+    const XrResult result = g_xrPassthroughLayerSetStyleFB(
+        g_passthroughLayer, &style);
+    if (XR_FAILED(result)) {
+        LOGW("[tabletop.passthrough.weather] style rejected: %d",
+             static_cast<int>(result));
+        return;
+    }
+    applied = current;
+    appliedOnce = true;
+    lastAppliedTime = displayTime;
+}
 
 void SetPassthroughActive(bool active) {
     if (g_passthrough == XR_NULL_HANDLE ||
@@ -2244,6 +2528,7 @@ bool InitializePassthrough() {
     style.textureOpacityFactor = 1.0f;
     style.edgeColor = {0.0f, 0.0f, 0.0f, 0.0f};
     g_xrPassthroughLayerSetStyleFB(g_passthroughLayer, &style);
+    g_passthroughWeatherLutReady = InitializePassthroughWeatherStyle();
     g_passthroughActive.store(true, std::memory_order_release);
     LOGI("[tabletop.passthrough] XR_FB_passthrough initialized");
     return true;
@@ -5542,6 +5827,25 @@ void SetUnderwaterState(float underWaterness, float waterDepth) {
     }
 }
 
+void SetPassthroughWeatherState(const PassthroughWeatherState& state) {
+    PassthroughWeatherState next = state;
+    const bool valid = next.valid && std::isfinite(next.hour) &&
+        std::isfinite(next.rain) && std::isfinite(next.fog) &&
+        std::isfinite(next.clouds) && std::isfinite(next.sandstorm);
+    if (!valid) {
+        next = {};
+    } else {
+        next.hour = std::fmod(next.hour, 24.0f);
+        if (next.hour < 0.0f) next.hour += 24.0f;
+        next.rain = std::clamp(next.rain, 0.0f, 1.0f);
+        next.fog = std::clamp(next.fog, 0.0f, 1.0f);
+        next.clouds = std::clamp(next.clouds, 0.0f, 1.0f);
+        next.sandstorm = std::clamp(next.sandstorm, 0.0f, 1.0f);
+    }
+    std::lock_guard<std::mutex> lock(g_passthroughWeatherMutex);
+    g_pendingPassthroughWeather = next;
+}
+
 void SetMobileColorState(const MobileColorState& state) {
     MobileColorState next = state;
     if (next.mode != 1 && next.mode != 2) next = {};
@@ -6395,12 +6699,18 @@ bool Initialize(JavaVM* vm, jobject activity) {
     g_hasPassthroughExt = hasExt(XR_FB_PASSTHROUGH_EXTENSION_NAME);
     if (g_hasPassthroughExt)
         extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
+    g_hasPassthroughColorLutExt = g_hasPassthroughExt &&
+        hasExt(XR_META_PASSTHROUGH_COLOR_LUT_EXTENSION_NAME);
+    if (g_hasPassthroughColorLutExt)
+        extensions.push_back(XR_META_PASSTHROUGH_COLOR_LUT_EXTENSION_NAME);
     LOGI("[perf.init] xr_ext perf_settings=%d thread_settings=%d refresh=%d meta_metrics=%d visibility_mask=%d passthrough=%d",
          g_hasPerfExt ? 1 : 0, g_hasThreadExt ? 1 : 0,
          g_hasDisplayRefreshExt ? 1 : 0,
          g_hasPerformanceMetricsExt ? 1 : 0,
          g_hasVisibilityMaskExt ? 1 : 0,
          g_hasPassthroughExt ? 1 : 0);
+    LOGI("[tabletop.passthrough.weather] color_lut_ext=%d",
+         g_hasPassthroughColorLutExt ? 1 : 0);
     // Capability evidence only. Do not enable foveation here: GTA renders the
     // expensive world into intermediate RenderWare eye textures, so XR-swapchain
     // foveation would currently optimize only the final blit.
@@ -11927,6 +12237,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     }
 
     SyncInput(frameState.predictedDisplayTime);
+    UpdatePassthroughWeatherStyle(frameState.predictedDisplayTime);
 
 #ifdef SAVR_DEV
     // Developer builds: the Vice City grips+A chord toggles the FPS panel.
