@@ -1,5 +1,15 @@
 # Changelog
 
+## Package 29 targeted diagnostic candidate
+
+- Extend the marker draw heartbeat with one compact record per active marker:
+  stable ID, kind, colour family, clip result, RGB, NDC position and GTA-world
+  distance from the current player anchor.
+- Report how many submitted markers used Package 28's synchronized world-point
+  reprojection, distinguishing a missing rebase from a projection/identity
+  error.
+- Preserve Package 28 rendering unchanged. See `PACKAGE_29.md`.
+
 ## Package 28 test candidate
 
 - Fix the grab-zoom marker divergence identified by Package 27 diagnostics:

@@ -10637,7 +10637,8 @@ void DrawStockObjectiveCylinder(const float* mvp,
 void DrawObjectiveHighlights(const float* mvp,
                              const XrVector3f& eyePosition,
                              const ObjectiveMarkerVisual* markers,
-                             int count, bool tabletopMode, int eye) {
+                             int count, bool tabletopMode, int eye,
+                             const TabletopMaskState* tabletopMask) {
     if (!markers || count <= 0) return;
     count = std::min(count, kMaxObjectiveMarkers);
     const float timeSeconds = static_cast<float>(
@@ -10654,9 +10655,17 @@ void DrawObjectiveHighlights(const float* mvp,
     int clipOutside = 0;
     float nearest = 1000000.0f;
     float farthest = 0.0f;
+    static std::uint64_t lastDrawReportNs{};
+    const std::uint64_t nowNs = MonotonicNowNs();
+    const bool reportMarkers = tabletopMode && eye == 0 &&
+        nowNs - lastDrawReportNs >= 2000000000ULL;
+    char markerDetails[3072]{};
+    int markerDetailLength = 0;
+    int reprojectedCount = 0;
     for (int markerIndex = 0; markerIndex < count; ++markerIndex) {
         ObjectiveMarkerVisual marker = markers[markerIndex];
         if (tabletopMode) {
+            if (marker.tabletopWorldPoint) ++reprojectedCount;
             const float x = marker.center.x;
             const float y = marker.center.y;
             const float z = marker.center.z;
@@ -10668,11 +10677,14 @@ void DrawObjectiveHighlights(const float* mvp,
                                 mvp[10] * z + mvp[14];
             const float clipW = mvp[3] * x + mvp[7] * y +
                                 mvp[11] * z + mvp[15];
+            char clipClass = 'V';
             if (!std::isfinite(clipW) || clipW <= 0.001f) {
                 ++clipBehind;
+                clipClass = 'B';
             } else if (std::abs(clipX) > clipW || std::abs(clipY) > clipW ||
                        clipZ < -clipW || clipZ > clipW) {
                 ++clipOutside;
+                clipClass = 'O';
             } else {
                 ++clipVisible;
             }
@@ -10682,6 +10694,51 @@ void DrawObjectiveHighlights(const float* mvp,
             if (std::isfinite(eyeDistance)) {
                 nearest = std::min(nearest, eyeDistance);
                 farthest = std::max(farthest, eyeDistance);
+            }
+            if (reportMarkers && markerDetailLength < 2800) {
+                char colorClass = 'o';
+                if (marker.red >= 160 && marker.red > marker.green * 3 / 2 &&
+                    marker.red > marker.blue * 3 / 2) {
+                    colorClass = 'r';
+                } else if (marker.red >= 140 && marker.green >= 110 &&
+                           marker.blue < 120) {
+                    colorClass = 'y';
+                } else if (marker.blue >= 140 &&
+                           marker.blue > marker.red * 3 / 2 &&
+                           marker.blue > marker.green * 6 / 5) {
+                    colorClass = 'b';
+                }
+                const char kind = marker.cylinder ? 'C'
+                    : (marker.stockCone ? 'A' : 'H');
+                float worldDistance = -1.0f;
+                if (marker.tabletopWorldPoint && tabletopMask) {
+                    const float dx = marker.worldGame[0] -
+                        tabletopMask->playerWorld[0];
+                    const float dy = marker.worldGame[1] -
+                        tabletopMask->playerWorld[1];
+                    const float dz = marker.worldGame[2] -
+                        tabletopMask->playerWorld[2];
+                    worldDistance = std::sqrt(std::max(
+                        0.0f, dx * dx + dy * dy + dz * dz));
+                }
+                const float ndcX = clipW > 0.001f ? clipX / clipW : 99.0f;
+                const float ndcY = clipW > 0.001f ? clipY / clipW : 99.0f;
+                const int wrote = std::snprintf(
+                    markerDetails + markerDetailLength,
+                    sizeof(markerDetails) -
+                        static_cast<std::size_t>(markerDetailLength),
+                    " %llx:%c%c%c rgb=%u/%u/%u ndc=%.2f/%.2f gu=%.1f",
+                    static_cast<unsigned long long>(marker.id), kind,
+                    colorClass, clipClass,
+                    static_cast<unsigned int>(marker.red),
+                    static_cast<unsigned int>(marker.green),
+                    static_cast<unsigned int>(marker.blue),
+                    static_cast<double>(ndcX), static_cast<double>(ndcY),
+                    static_cast<double>(worldDistance));
+                if (wrote > 0)
+                    markerDetailLength += std::min(
+                        wrote, static_cast<int>(sizeof(markerDetails)) -
+                            markerDetailLength - 1);
             }
         }
         if (tabletopMode) {
@@ -10768,20 +10825,18 @@ void DrawObjectiveHighlights(const float* mvp,
     }
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
-    if (tabletopMode && eye == 0) {
-        static std::uint64_t lastDrawReportNs{};
-        const std::uint64_t nowNs = MonotonicNowNs();
-        if (nowNs - lastDrawReportNs >= 2000000000ULL) {
+    if (reportMarkers) {
             __android_log_print(
                 ANDROID_LOG_INFO, SAVR_TAG,
                 "[objective.draw] scale=%.3f submitted=%d clip_visible=%d "
-                "clip_outside=%d clip_behind=%d eye_distance=%.2f..%.2f",
+                "clip_outside=%d clip_behind=%d reprojected=%d "
+                "eye_distance=%.2f..%.2f details:%s",
                 static_cast<double>(tabletop::VisualScale()), count,
                 clipVisible, clipOutside, clipBehind,
+                reprojectedCount,
                 static_cast<double>(nearest < 999999.0f ? nearest : 0.0f),
-                static_cast<double>(farthest));
+                static_cast<double>(farthest), markerDetails);
             lastDrawReportNs = nowNs;
-        }
     }
 }
 
@@ -11568,7 +11623,8 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
                      const ThrowableTrajectory throwableTrajectory[2],
                      const HandPose bakedHands[2],
                      const TwoHandVisualState& bakedTwoHand,
-                     unsigned int hudSourceTex) {
+                     unsigned int hudSourceTex,
+                     const TabletopMaskState& tabletopMask) {
     // The miniature keeps the game's own character/vehicle rendering, while
     // radar/status remain human-scale controller instruments above the map.
     // Weapons, hand meshes and cockpit geometry still stay out of this pass.
@@ -11649,7 +11705,8 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
         glDisable(GL_CULL_FACE);
         glDisable(GL_SCISSOR_TEST);
         DrawObjectiveHighlights(mvp, eyePos, objectiveMarkers,
-                                objectiveMarkerCount, true, e);
+                                objectiveMarkerCount, true, e,
+                                &tabletopMask);
         glUseProgram(0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -11772,7 +11829,7 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
     // depth cannot be copied this frame, omit it instead of drawing on top.
     if (usingGameDepth)
         DrawObjectiveHighlights(mvp, eyePos, objectiveMarkers,
-                                objectiveMarkerCount, false, e);
+                                objectiveMarkerCount, false, e, nullptr);
 
     if (haveHands) {
         glUseProgram(g_handProg);
@@ -12184,7 +12241,8 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
             liveTracers, liveTracerCount,
             liveObjectiveMarkers, liveObjectiveMarkerCount,
             bakedScope, drivingWheel,
-            throwableTrajectory, bakedHands, bakedTwoHand, hudSource);
+            throwableTrajectory, bakedHands, bakedTwoHand, hudSource,
+            tabletopMask);
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         // The second eye above is the final consumer of this ring slot's colour,
         // depth and HUD textures. Validate the generation while the CPU lease
