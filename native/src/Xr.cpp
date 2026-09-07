@@ -2198,6 +2198,10 @@ std::uint32_t g_passthroughWeatherLutResolution = 0;
 
 constexpr std::uint32_t kPassthroughWeatherLutResolution = 16;
 constexpr XrDuration kPassthroughWeatherUpdateInterval = 250000000LL;
+// Package 31 validation profile. Keep this as one knob: after the headset
+// proves every clock/weather state is reaching the compositor, reduce it to
+// the preferred artistic intensity without retuning seven separate palettes.
+constexpr float kPassthroughWeatherIntensity = 2.0f;
 
 struct PassthroughGrade {
     float brightness{};
@@ -2240,6 +2244,28 @@ PassthroughGrade BlendGrade(const PassthroughGrade& from,
     return result;
 }
 
+PassthroughGrade AmplifyWeatherGrade(PassthroughGrade grade) {
+    grade.brightness = std::clamp(
+        grade.brightness * kPassthroughWeatherIntensity, -0.45f, 0.25f);
+    grade.contrast = std::clamp(
+        grade.contrast * kPassthroughWeatherIntensity, -0.45f, 0.35f);
+    grade.saturation = std::clamp(
+        1.0f + (grade.saturation - 1.0f) *
+                   kPassthroughWeatherIntensity,
+        0.20f, 1.35f);
+    // Tint output is approximately (channel delta * strength). Splitting the
+    // multiplier across both terms keeps its visible gain close to the same
+    // single intensity used by brightness, contrast and saturation.
+    const float tintGain = std::sqrt(kPassthroughWeatherIntensity);
+    grade.tintStrength = std::clamp(
+        grade.tintStrength * tintGain, 0.0f, 1.0f);
+    for (float& channel : grade.tint) {
+        channel = std::clamp(
+            1.0f + (channel - 1.0f) * tintGain, 0.35f, 1.75f);
+    }
+    return grade;
+}
+
 PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
     const PassthroughGrade neutral{};
     if (!state.valid) return neutral;
@@ -2277,7 +2303,7 @@ PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
                         std::clamp(state.fog, 0.0f, 1.0f) * 0.82f);
     result = BlendGrade(result, sandstorm,
                         std::clamp(state.sandstorm, 0.0f, 1.0f) * 0.94f);
-    return result;
+    return AmplifyWeatherGrade(result);
 }
 
 float GradeDistance(const PassthroughGrade& a, const PassthroughGrade& b) {
@@ -2387,6 +2413,11 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
     static XrTime lastSampleTime = 0;
     static XrTime lastAppliedTime = 0;
     static bool appliedOnce = false;
+    static int loggedHourBucket = -2;
+    static int loggedRainBucket = -2;
+    static int loggedFogBucket = -2;
+    static int loggedCloudBucket = -2;
+    static int loggedSandBucket = -2;
 
     if (!g_passthroughActive.load(std::memory_order_acquire) ||
         !g_xrPassthroughLayerSetStyleFB) {
@@ -2395,6 +2426,11 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
         lastSampleTime = 0;
         lastAppliedTime = 0;
         appliedOnce = false;
+        loggedHourBucket = -2;
+        loggedRainBucket = -2;
+        loggedFogBucket = -2;
+        loggedCloudBucket = -2;
+        loggedSandBucket = -2;
         return;
     }
 
@@ -2456,6 +2492,7 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
         basic.saturation = std::max(0.0f, current.saturation);
         style.next = &basic;
     }
+    const bool usedLut = style.next == &lutMap;
     const XrResult result = g_xrPassthroughLayerSetStyleFB(
         g_passthroughLayer, &style);
     if (XR_FAILED(result)) {
@@ -2466,6 +2503,43 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
     applied = current;
     appliedOnce = true;
     lastAppliedTime = displayTime;
+
+    const int hourBucket = state.valid
+        ? static_cast<int>(std::floor(state.hour)) : -1;
+    const auto weatherBucket = [](float value) {
+        return static_cast<int>(std::floor(
+            std::clamp(value, 0.0f, 1.0f) * 4.0f + 0.5f));
+    };
+    const int rainBucket = weatherBucket(state.rain);
+    const int fogBucket = weatherBucket(state.fog);
+    const int cloudBucket = weatherBucket(state.clouds);
+    const int sandBucket = weatherBucket(state.sandstorm);
+    if (hourBucket != loggedHourBucket || rainBucket != loggedRainBucket ||
+        fogBucket != loggedFogBucket || cloudBucket != loggedCloudBucket ||
+        sandBucket != loggedSandBucket) {
+        loggedHourBucket = hourBucket;
+        loggedRainBucket = rainBucket;
+        loggedFogBucket = fogBucket;
+        loggedCloudBucket = cloudBucket;
+        loggedSandBucket = sandBucket;
+        LOGI("[tabletop.passthrough.weather.applied] path=%s intensity=%.2f "
+             "hour=%.2f rain=%.2f fog=%.2f clouds=%.2f sand=%.2f "
+             "grade=b%.3f/c%.3f/s%.3f/t%.3f rgb=%.3f/%.3f/%.3f",
+             usedLut ? "META_LUT" : "FB_BASIC",
+             static_cast<double>(kPassthroughWeatherIntensity),
+             static_cast<double>(state.hour),
+             static_cast<double>(state.rain),
+             static_cast<double>(state.fog),
+             static_cast<double>(state.clouds),
+             static_cast<double>(state.sandstorm),
+             static_cast<double>(current.brightness),
+             static_cast<double>(current.contrast),
+             static_cast<double>(current.saturation),
+             static_cast<double>(current.tintStrength),
+             static_cast<double>(current.tint[0]),
+             static_cast<double>(current.tint[1]),
+             static_cast<double>(current.tint[2]));
+    }
 }
 
 void SetPassthroughActive(bool active) {

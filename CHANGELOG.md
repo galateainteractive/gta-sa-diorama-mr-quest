@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 31 passthrough validation candidate
+
+- Amplify the existing gradual GTA clock/weather passthrough treatment to
+  `2.0x` through one centralized validation constant while retaining a neutral
+  clear daytime identity grade.
+- Add bounded successful-application telemetry reporting GTA weather inputs,
+  final grade and the active `META_LUT` or `FB_BASIC` compositor path.
+- Preserve the headset-approved Package 30 marker correction and all gameplay,
+  rendering, controls, data, audio, saves and configuration. See
+  `PACKAGE_31.md`.
+
 ## Package 30 test candidate
 
 - Fix the remaining grab-zoom marker disappearance identified by Package 29:

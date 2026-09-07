@@ -98,3 +98,9 @@ carry its weather transitions; an additional 1.35 s compositor smoothing keeps
 time/weather changes gradual. The compact 16-cube LUT updates only after a
 perceptible change and no more than four times per second. This experiment does
 not include lightning flashes or gameplay-event pulses.
+
+Package 31 temporarily doubles every non-neutral grade through one centralized
+intensity value so headset validation is unambiguous. Successful compositor
+updates report the live clock/weather values, final grade and whether the Quest
+used the META LUT or the basic brightness/contrast/saturation fallback. After
+validation, that single multiplier can be reduced without retuning the palette.
