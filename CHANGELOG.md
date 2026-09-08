@@ -1,5 +1,15 @@
 # Changelog
 
+## Package 38 navigation beacon and weather validation
+
+- Promote the waypoint selected on GTA's pause map to a lightweight translucent
+  tabletop beacon without widening scenery rendering or streaming.
+- Show its true position up to three times the map radius; clamp farther targets
+  just outside the circle in the correct direction. Provide a process-start A/B
+  switch and preserve GTA's retail waypoint ownership.
+- Increase the centralized passthrough weather/clock validation multiplier from
+  `2.0x` to `3.0x`, leaving clear daytime neutral. See `PACKAGE_38.md`.
+
 ## Package 37 translucent objective markers
 
 - Reduce tabletop-only opacity of red, yellow and blue navigation markers to

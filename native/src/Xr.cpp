@@ -693,6 +693,9 @@ constexpr int kMaxObjectiveMarkers = 64;
 // during tabletop zoom. Retain the last known mission marker long enough to
 // bridge that transition, without leaving removed objectives stale for long.
 constexpr std::uint64_t kObjectiveMarkerLifetimeNs = 1250000000ULL;
+constexpr char kFarNavigationBeaconsProperty[] =
+    "debug.savr.tabletop_far_beacons";
+constexpr float kFarNavigationTruePositionRadiusFactor = 3.0f;
 struct ObjectiveMarkerVisual {
     bool valid{false};
     std::uint64_t id{};
@@ -718,6 +721,31 @@ ObjectiveMarkerVisual g_objectiveMarkers[kMaxObjectiveMarkers]{};
 unsigned int g_nextObjectiveMarker = 0;
 std::uint64_t g_objectiveMarkerPoolEvictions{};
 std::uint64_t g_objectiveMarkerExpirations{};
+
+struct NavigationWaypointState {
+    bool valid{};
+    float worldX{};
+    float worldY{};
+};
+std::mutex g_navigationWaypointMutex;
+NavigationWaypointState g_navigationWaypoint{};
+
+bool FarNavigationBeaconsEnabled() {
+    static const bool enabled = [] {
+        char text[PROP_VALUE_MAX]{};
+        bool value = true;
+        if (__system_property_get(kFarNavigationBeaconsProperty, text) > 0) {
+            if (std::strcmp(text, "0") == 0) value = false;
+            else if (std::strcmp(text, "1") != 0)
+                LOGW("[tabletop.navigation] ignoring invalid %s=%s",
+                     kFarNavigationBeaconsProperty, text);
+        }
+        LOGI("[tabletop.navigation] far_beacons=%d property=%s",
+             value ? 1 : 0, kFarNavigationBeaconsProperty);
+        return value;
+    }();
+    return enabled;
+}
 
 std::uint64_t MonotonicNowNs() {
     return static_cast<std::uint64_t>(
@@ -2200,10 +2228,10 @@ std::uint32_t g_passthroughWeatherLutResolution = 0;
 
 constexpr std::uint32_t kPassthroughWeatherLutResolution = 16;
 constexpr XrDuration kPassthroughWeatherUpdateInterval = 250000000LL;
-// Package 31 validation profile. Keep this as one knob: after the headset
+// Package 38 validation profile. Keep this as one knob: after the headset
 // proves every clock/weather state is reaching the compositor, reduce it to
 // the preferred artistic intensity without retuning seven separate palettes.
-constexpr float kPassthroughWeatherIntensity = 2.0f;
+constexpr float kPassthroughWeatherIntensity = 3.0f;
 
 struct PassthroughGrade {
     float brightness{};
@@ -5937,6 +5965,26 @@ void SetPassthroughWeatherState(const PassthroughWeatherState& state) {
     }
     std::lock_guard<std::mutex> lock(g_passthroughWeatherMutex);
     g_pendingPassthroughWeather = next;
+}
+
+void SetNavigationWaypoint(bool valid, float worldX, float worldY) {
+    NavigationWaypointState next{};
+    next.valid = valid && std::isfinite(worldX) && std::isfinite(worldY);
+    if (next.valid) {
+        next.worldX = worldX;
+        next.worldY = worldY;
+    }
+    std::lock_guard<std::mutex> lock(g_navigationWaypointMutex);
+    const bool changed = next.valid != g_navigationWaypoint.valid ||
+        (next.valid &&
+         (std::abs(next.worldX - g_navigationWaypoint.worldX) > 0.01f ||
+          std::abs(next.worldY - g_navigationWaypoint.worldY) > 0.01f));
+    g_navigationWaypoint = next;
+    if (changed) {
+        LOGI("[tabletop.navigation] waypoint valid=%d world=%.2f,%.2f",
+             next.valid ? 1 : 0, static_cast<double>(next.worldX),
+             static_cast<double>(next.worldY));
+    }
 }
 
 void SetMobileColorState(const MobileColorState& state) {
@@ -10559,6 +10607,68 @@ void RebaseObjectiveMarkersToTabletopMask(
     }
 }
 
+int AppendNavigationWaypoint(ObjectiveMarkerVisual* markers, int count,
+                             const TabletopMaskState& mask) {
+    if (!markers || !mask.active || !FarNavigationBeaconsEnabled() ||
+        !std::isfinite(mask.depthScaleMPerGameUnit) ||
+        mask.depthScaleMPerGameUnit <= 0.0f ||
+        !std::isfinite(mask.playerRadiusM) || mask.playerRadiusM <= 0.0f) {
+        return count;
+    }
+    NavigationWaypointState waypoint{};
+    {
+        std::lock_guard<std::mutex> lock(g_navigationWaypointMutex);
+        waypoint = g_navigationWaypoint;
+    }
+    if (!waypoint.valid) return count;
+
+    const XrVector3f playerCenter{
+        mask.playerCenter[0], mask.playerCenter[1], mask.playerCenter[2]};
+    const XrVector3f axisX = vnorm(
+        {mask.axisX[0], mask.axisX[1], mask.axisX[2]});
+    const XrVector3f axisY = vnorm(
+        {mask.axisY[0], mask.axisY[1], mask.axisY[2]});
+    const XrVector3f axisZ = vnorm(vcross(axisX, axisY));
+    const float dxGame = waypoint.worldX - mask.playerWorld[0];
+    const float dyGame = waypoint.worldY - mask.playerWorld[1];
+    const float scale = mask.depthScaleMPerGameUnit;
+    const float distanceM = std::sqrt(std::max(
+        0.0f, dxGame * dxGame + dyGame * dyGame)) * scale;
+    if (!std::isfinite(distanceM)) return count;
+
+    const float outerRadiusM = std::max(
+        mask.playerRadiusM * kFarNavigationTruePositionRadiusFactor,
+        mask.playerRadiusM + 0.25f);
+    const bool boundaryBeacon = distanceM > outerRadiusM;
+    float placementScale = scale;
+    if (boundaryBeacon && distanceM > 0.001f) {
+        const float boundaryDistanceM = mask.playerRadiusM +
+            std::max(mask.featherM, 0.065f);
+        placementScale *= boundaryDistanceM / distanceM;
+    }
+
+    ObjectiveMarkerVisual marker{};
+    marker.valid = true;
+    marker.id = 0x5750594e545f5652ULL; // "WPYNT_VR"
+    marker.radius = boundaryBeacon ? 0.072f : 0.065f;
+    marker.height = 0.20f;
+    marker.red = 255;
+    marker.green = 72;
+    marker.blue = 72;
+    marker.alpha = 255;
+    marker.stockCone = true;
+    marker.center = vadd(
+        playerCenter,
+        vadd(vadd(vscale(axisX, dxGame * placementScale),
+                  vscale(axisY, dyGame * placementScale)),
+             vscale(axisZ, marker.radius * 2.35f)));
+    marker.tabletopWorldPoint = false; // already synchronized to this mask
+    marker.expiresNs = UINT64_MAX;
+    const int slot = std::min(count, kMaxObjectiveMarkers - 1);
+    markers[slot] = marker;
+    return std::min(count + 1, kMaxObjectiveMarkers);
+}
+
 void DrawStockObjectiveArrow(const float* mvp,
                              const ObjectiveMarkerVisual& marker,
                              float opacity) {
@@ -12309,9 +12419,11 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     BulletTracer liveTracers[kMaxBulletTracers]{};
     const int liveTracerCount = SnapshotBulletTracers(liveTracers);
     ObjectiveMarkerVisual liveObjectiveMarkers[kMaxObjectiveMarkers]{};
-    const int liveObjectiveMarkerCount =
+    int liveObjectiveMarkerCount =
         SnapshotObjectiveMarkers(liveObjectiveMarkers);
     RebaseObjectiveMarkersToTabletopMask(
+        liveObjectiveMarkers, liveObjectiveMarkerCount, tabletopMask);
+    liveObjectiveMarkerCount = AppendNavigationWaypoint(
         liveObjectiveMarkers, liveObjectiveMarkerCount, tabletopMask);
 
     GLint prevDraw = 0, prevRead = 0, prevVp[4]{};

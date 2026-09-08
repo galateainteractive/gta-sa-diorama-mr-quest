@@ -31,6 +31,13 @@ to physical metres using the scale captured for the same frame. In tabletop
 mode their coloured surfaces use 58% opacity so the miniature streets, vehicles
 and buildings remain visible behind the navigation cue.
 
+The waypoint selected on the retail pause map is also presented as a small red
+3D navigation beacon without widening scenery culling. It uses its true
+horizontal position up to three times the current radial range. A farther
+waypoint is clamped just outside the circle in the correct direction so it
+remains useful without appearing metres away across the room. Set process-start
+property `debug.savr.tabletop_far_beacons=0` for an exact fallback.
+
 The radial border also has a bounded alpha-overflow stabilizer. When GTA's
 fixed ordinary transparency list fills, up to 96 current-frame static scenery
 entries inside the tabletop coverage can use a shared two-eye spill list.
@@ -131,7 +138,7 @@ time/weather changes gradual. The compact 16-cube LUT updates only after a
 perceptible change and no more than four times per second. This experiment does
 not include lightning flashes or gameplay-event pulses.
 
-Package 31 temporarily doubles every non-neutral grade through one centralized
+Package 38 temporarily triples every non-neutral grade through one centralized
 intensity value so headset validation is unambiguous. Successful compositor
 updates report the live clock/weather values, final grade and whether the Quest
 used the META LUT or the basic brightness/contrast/saturation fallback. After

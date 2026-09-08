@@ -44,3 +44,29 @@ foreach ($call in @(0x4a2280, 0x6dfb74, 0x6e34fc)) {
     }
 }
 Write-Output 'PASS retail hash, spark PLT and three scoped call sites'
+
+# Pause-map waypoint source: PlaceRedMarker reads the map cursor at +0x84/+0x88,
+# creates the coordinate blip and stores its handle at +0x68. The tabletop code
+# only observes these values; it does not replace retail marker creation.
+$waypoint = (& $Objdump -d --start-address=0x71bbac --stop-address=0x71bc74 $LibGame) -join "`n"
+foreach ($word in @('b9406a68', '2d508660', 'b9006a60')) {
+    if ($waypoint -notmatch $word) { throw "PlaceRedMarker layout mismatch: $word" }
+}
+if ($waypoint -notmatch 'SetCoordBlip' -or $waypoint -notmatch 'SetBlipSprite') {
+    throw 'PlaceRedMarker waypoint calls mismatch'
+}
+$mapSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\MapZoom.cpp')
+foreach ($sourcePattern in @('ReadI\(0x68\)', 'ReadF\(0x84\)', 'ReadF\(0x88\)',
+                             'SetNavigationWaypoint\(valid')) {
+    if ($mapSource -notmatch $sourcePattern) {
+        throw "Waypoint source audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS retail pause-map waypoint handle and coordinate layout'
+$xrSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\Xr.cpp')
+if ($xrSource -notmatch 'kPassthroughWeatherIntensity\s*=\s*3\.0f' -or
+    $xrSource -notmatch 'AppendNavigationWaypoint\(' -or
+    $xrSource -notmatch 'kFarNavigationTruePositionRadiusFactor\s*=\s*3\.0f') {
+    throw 'Package 38 navigation/weather source audit failed'
+}
+Write-Output 'PASS Package 38 navigation range and weather validation intensity'

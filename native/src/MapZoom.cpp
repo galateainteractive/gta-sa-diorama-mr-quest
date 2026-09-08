@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "Log.h"
+#include "Xr.h"
 
 // Disasm map (GTA:SA Android 2.11.311 arm64, libGame.so):
 //   Menu_MapUpdate(float)  @0x71bd88 — per-frame map-page logic; called ONLY
@@ -97,6 +98,25 @@ float ReadF(std::size_t offset) {
     return value;
 }
 
+std::int32_t ReadI(std::size_t offset) {
+    std::int32_t value = 0;
+    std::memcpy(&value, g_mobileMenu + offset, sizeof(value));
+    return value;
+}
+
+void PublishNavigationWaypoint() {
+    // PlaceRedMarker stores the packed CRadar handle at +0x68 and the exact
+    // world-space map cursor at +0x84/+0x88. These offsets are verified against
+    // the supported retail arm64 function in test-tabletop-effects.ps1.
+    const std::int32_t handle = ReadI(0x68);
+    const float worldX = ReadF(0x84);
+    const float worldY = ReadF(0x88);
+    const bool valid = handle != 0 && std::isfinite(worldX) &&
+        std::isfinite(worldY) && std::abs(worldX) <= 10000.0f &&
+        std::abs(worldY) <= 10000.0f;
+    savr::xr::SetNavigationWaypoint(valid, worldX, worldY);
+}
+
 void WriteF(std::size_t offset, float value) {
     std::memcpy(g_mobileMenu + offset, &value, sizeof(value));
 }
@@ -114,6 +134,7 @@ float ClampCentre(float centre, float size, float half, float full) {
 void OnMapUpdate(float dt) {
     if (g_origMapUpdate) g_origMapUpdate(dt);
     if (!g_mobileMenu) return;
+    PublishNavigationWaypoint();
     if (!std::isfinite(dt) || dt <= 0.0f || dt > 0.1f) dt = 1.0f / 60.0f;
 
     const bool zoomIn  = g_gripR.load(std::memory_order_relaxed) > kGripOn;
