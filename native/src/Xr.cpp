@@ -10560,7 +10560,8 @@ void RebaseObjectiveMarkersToTabletopMask(
 }
 
 void DrawStockObjectiveArrow(const float* mvp,
-                             const ObjectiveMarkerVisual& marker) {
+                             const ObjectiveMarkerVisual& marker,
+                             float opacity) {
     // Exact low-poly diamond_3 silhouette used by the mobile game: one bright
     // downward tip and an 11-vertex darker translucent ring, with no cap.
     constexpr int ringCount = 11;
@@ -10600,7 +10601,7 @@ void DrawStockObjectiveArrow(const float* mvp,
     glUseProgram(g_arrowProg);
     glUniformMatrix4fv(g_arrowMvpLoc, 1, GL_FALSE, mvp);
     glUniform4f(g_arrowColLoc, marker.red / 255.0f,
-               marker.green / 255.0f, marker.blue / 255.0f, 1.0f);
+               marker.green / 255.0f, marker.blue / 255.0f, opacity);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
@@ -10622,7 +10623,8 @@ void DrawStockObjectiveArrow(const float* mvp,
 }
 
 void DrawStockObjectiveCylinder(const float* mvp,
-                                const ObjectiveMarkerVisual& marker) {
+                                const ObjectiveMarkerVisual& marker,
+                                float opacity) {
     // The retail tube/cylinder pass runs too late to enter either eye capture.
     // Rebuild it as a restrained physical-scale volume: translucent walls make
     // it readable from the side, while the bright annulus and faint centre make
@@ -10635,9 +10637,11 @@ void DrawStockObjectiveCylinder(const float* mvp,
     const float top = marker.center.y + marker.height * 0.5f;
     const float innerRadius = marker.radius * 0.76f;
     const float authoredAlpha = marker.alpha / 255.0f;
-    const float wallAlpha = std::clamp(authoredAlpha, 0.22f, 0.48f);
-    const float ringAlpha = std::clamp(authoredAlpha * 1.8f, 0.55f, 0.90f);
-    const float fillAlpha = std::clamp(authoredAlpha * 0.45f, 0.10f, 0.24f);
+    const float wallAlpha = std::clamp(authoredAlpha, 0.22f, 0.48f) * opacity;
+    const float ringAlpha =
+        std::clamp(authoredAlpha * 1.8f, 0.55f, 0.90f) * opacity;
+    const float fillAlpha =
+        std::clamp(authoredAlpha * 0.45f, 0.10f, 0.24f) * opacity;
     const auto emit = [&](float x, float y, float z, float shade, float alpha) {
         float* out = &vertices[vertexCount++ * 5];
         out[0] = x; out[1] = y; out[2] = z;
@@ -10721,6 +10725,12 @@ void DrawObjectiveHighlights(const float* mvp,
         MonotonicNowNs() % 2000000000ULL) / 1000000000.0f;
     const float pulse = 0.5f + 0.5f * std::sin(
         timeSeconds * 6.2831853071795864769f);
+    // Navigation markers sit above the miniature world and deliberately ignore
+    // terrain depth. Keep them readable, but let roads, vehicles and buildings
+    // remain visible through their coloured volume.
+    constexpr float kTabletopObjectiveOpacity = 0.58f;
+    const float objectiveOpacity = tabletopMode
+        ? kTabletopObjectiveOpacity : 1.0f;
 
     glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
@@ -10839,11 +10849,11 @@ void DrawObjectiveHighlights(const float* mvp,
             }
         }
         if (marker.cylinder) {
-            DrawStockObjectiveCylinder(mvp, marker);
+            DrawStockObjectiveCylinder(mvp, marker, objectiveOpacity);
             continue;
         }
         if (marker.stockCone) {
-            DrawStockObjectiveArrow(mvp, marker);
+            DrawStockObjectiveArrow(mvp, marker, objectiveOpacity);
             continue;
         }
         constexpr int segments = 16;
@@ -10897,7 +10907,8 @@ void DrawObjectiveHighlights(const float* mvp,
         const float green = std::max(0.24f, marker.green / 255.0f);
         const float blue = std::max(0.24f, marker.blue / 255.0f);
         DrawDrivingBoxes(mvp, vertices, vertexCount, indices, indexCount,
-                         red, green, blue, 0.16f + 0.12f * pulse);
+                         red, green, blue,
+                         (0.16f + 0.12f * pulse) * objectiveOpacity);
     }
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);

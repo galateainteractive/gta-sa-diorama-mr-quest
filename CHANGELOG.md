@@ -1,5 +1,12 @@
 # Changelog
 
+## Package 37 translucent objective markers
+
+- Reduce tabletop-only opacity of red, yellow and blue navigation markers to
+  58%, including stock arrows, mission cylinders and highlighted cages.
+- Preserve position, size, pulse, visibility at every miniature zoom and the
+  Package 36 flicker correction. See `PACKAGE_37.md`.
+
 ## Package 36 frame-bound passthrough lifecycle fix
 
 - Fix the second confirmed cross-thread path behind whole-radius scenery

@@ -27,7 +27,9 @@ Red mission areas and coloured objective cones follow the same miniature-world
 transform as CJ. Their presentation has a physical minimum size and is drawn as
 navigation UI, so shrinking the model does not hide them in the ground. Their
 late stereo projection converts the eye pass's game-unit clip distances back
-to physical metres using the scale captured for the same frame.
+to physical metres using the scale captured for the same frame. In tabletop
+mode their coloured surfaces use 58% opacity so the miniature streets, vehicles
+and buildings remain visible behind the navigation cue.
 
 The radial border also has a bounded alpha-overflow stabilizer. When GTA's
 fixed ordinary transparency list fills, up to 96 current-frame static scenery
