@@ -87,8 +87,31 @@ foreach ($sourcePattern in @('TabletopModernAimRaw\(',
 if ($cameraSource -match 'target widget .*bridge=none' -or
     $fireSource -notmatch 'IsTabletopModernAttackActive\(' -or
     $fireSource -notmatch 'targets=lock:%p/free:%p' -or
+    $fireSource -notmatch 'route=classic_pad_target_no_physical_ray' -or
     $mainSource -notmatch 'attackHeld \|\| modernTriggerAttack' -or
     $cameraSource -notmatch 'tabletopCombatReleaseGate') {
     throw 'Package 39 modern combat routing audit failed'
 }
 Write-Output 'PASS Package 39 L2 target lifecycle, R2 attack and prompt isolation'
+
+# Package 40 corrects the first headset finding: controller missions bypass the
+# mobile widget and call CPad targeting directly. R2 must therefore depend only
+# on the physical L2+R2 chord, while nearby-ped safety includes CJ's centre.
+foreach ($sourcePattern in @('_ZN4CPad9GetTargetEb',
+                             '_ZN4CPad17GetEnterTargetingEv',
+                             '_ZN4CPad16GetExitTargetingEv',
+                             'direct pad targeting active=',
+                             '(?s)return TabletopModernAimRaw\(in\).*?in\.triggers\[1\]',
+                             'pedPlayerDistSq < pedSafetySq')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 40 direct targeting/ped safety audit failed: $sourcePattern"
+    }
+}
+$attackBody = [regex]::Match(
+    $cameraSource,
+    '(?s)bool TabletopModernAttackForCombat\([^)]*\)\s*\{(?<body>.*?)\n\}')
+if (-not $attackBody.Success -or
+    $attackBody.Groups['body'].Value -match 'TabletopModernAimForCombat') {
+    throw 'Package 40 R2 still depends on a widget/target poll'
+}
+Write-Output 'PASS Package 40 direct CPad targeting, independent R2 and CJ ped safety'

@@ -32,10 +32,10 @@ bool IsStereoActive();
 // miniature-world camera. Cutscenes and fallback frames remain upstream VR.
 bool IsTabletopActive();
 
-// Modern tabletop combat controls. The mobile game's own widget_target poll
-// remains authoritative: L2 holds aim/lock only while that widget is live,
-// and R2 becomes attack/fire while L2 is held. Vehicles and non-combat touch
-// prompts retain their existing trigger meanings.
+// Modern tabletop combat controls. L2 drives the native CPad target lifecycle
+// (with widget_target retained for mobile-script compatibility), and R2 becomes
+// attack/fire while L2 is held. Vehicles and tabletop grabs retain their
+// existing trigger meanings.
 bool IsTabletopModernAimActive();
 bool IsTabletopModernAttackActive();
 

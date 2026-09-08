@@ -52,7 +52,8 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 '[tabletop.aim.area]',
                 'target widget justpressed=%d bridge=L2 injected=%d',
                 'target widget released=1 bridge=L2',
-                'route=classic_target_widget_no_physical_ray',
+                'route=classic_pad_target_no_physical_ray',
+                'pad enter targeting=1 original=%d bridge=L2',
                 'debug.savr.tabletop_far_beacons'
             )) {
                 if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }

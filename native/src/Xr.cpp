@@ -11606,7 +11606,7 @@ void ObserveTabletopMaskInputs(const TabletopMaskState& mask,
     previous[eye] = mask;
     previousPose[eye] = pose;
     seen[eye] = true;
-    if (eye != 1 || now - w.start < 500000000ULL) return;
+    if (eye != 1 || now - w.start < 2000000000ULL) return;
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
         "[tabletop.flicker.mask_window] package=36 eyes=%d inactive=%d invalid=%d "
         "mode=%d changes=%d bridge=%d changes=%d "
@@ -12598,7 +12598,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                 maxAgeMs = std::max(maxAgeMs, submittedSequenceAgeMs);
                 const std::uint64_t nowNs = MonotonicNowNs();
                 if (lastFlickerStereoLogNs == 0 ||
-                    nowNs - lastFlickerStereoLogNs >= 500000000ULL) {
+                    nowNs - lastFlickerStereoLogNs >= 2000000000ULL) {
                     lastFlickerStereoLogNs = nowNs;
                     __android_log_print(
                         ANDROID_LOG_INFO, SAVR_TAG,
@@ -13250,7 +13250,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
                 projectionTabletop ? 1 : 0,
                 submitPassthrough ? 1 : 0,
                 vrcam::IsTabletopActive() ? 1 : 0);
-            nextPassthroughAuditNs = now + 500000000LL;
+            nextPassthroughAuditNs = now + 2000000000LL;
         }
     }
     if (submitPassthrough) {

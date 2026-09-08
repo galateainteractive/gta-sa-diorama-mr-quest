@@ -5049,6 +5049,13 @@ constexpr int kWeaponTargetWidget = 19; // widget_target / enter targeting
 constexpr float kTabletopCombatTriggerPress = 0.55f;
 constexpr double kWeaponTargetPollFreshMs = 500.0;
 std::atomic<double> g_weaponTargetLastPollMs{0.0};
+// The bottle tutorial and controller combat path do not poll widget_target at
+// all. They consume CPad::GetTarget/GetEnterTargeting/GetExitTargeting, so the
+// direct pad bridge below is the authoritative route; the widget bridge stays
+// as a compatibility path for mobile-only scripts.
+std::atomic<bool> g_tabletopPadTargetBridgeActive{false};
+std::atomic<double> g_tabletopAimPressUntilMs{0.0};
+std::atomic<double> g_tabletopAimReleaseUntilMs{0.0};
 // Raw L2 state from the preceding UpdatePads frame. Touch queries execute
 // inside g_origUpdatePads, before this latch is refreshed, which gives the
 // widget bridge a stable JustPressed/IsReleased edge for the whole frame.
@@ -5095,12 +5102,79 @@ void NoteWeaponTargetPoll() {
 }
 
 bool TabletopModernAimForCombat(const xr::InputState& in) {
-    return TabletopModernAimRaw(in) && WeaponTargetPollFresh();
+    return TabletopModernAimRaw(in) &&
+        (g_tabletopPadTargetBridgeActive.load(std::memory_order_acquire) ||
+         WeaponTargetPollFresh());
 }
 
 bool TabletopModernAttackForCombat(const xr::InputState& in) {
-    return TabletopModernAimForCombat(in) &&
+    // Fire must not depend on a touch-widget poll. The controller/bottle route
+    // never asks for widget 19, which made Package 39 deliberately suppress R2.
+    return TabletopModernAimRaw(in) &&
            in.triggers[1] >= kTabletopCombatTriggerPress;
+}
+
+using PadGetTargetFn = int (*)(void*, bool);
+using PadTargetEdgeFn = int (*)(void*);
+PadGetTargetFn g_origPadGetTarget = nullptr;
+PadTargetEdgeFn g_origPadGetEnterTargetingBody = nullptr;
+PadTargetEdgeFn g_origPadGetExitTargetingBody = nullptr;
+
+bool PadTargetControlsEnabled(const void* pad) {
+    return pad && *reinterpret_cast<const std::uint16_t*>(
+        static_cast<const std::uint8_t*>(pad) + 0x110) == 0;
+}
+
+int OnPadGetTarget(void* pad, bool camera) {
+    const int original = g_origPadGetTarget
+        ? g_origPadGetTarget(pad, camera) : 0;
+    if (!PadTargetControlsEnabled(pad) ||
+        !g_tabletopPadTargetBridgeActive.load(std::memory_order_acquire)) {
+        return original;
+    }
+    xr::InputState in{};
+    xr::GetInput(in);
+    const bool injected = TabletopModernAimRaw(in);
+    static bool previousInjected = false;
+    if (injected != previousInjected) {
+        previousInjected = injected;
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.aim] pad target held=%d original=%d camera=%d bridge=L2",
+            injected ? 1 : 0, original ? 1 : 0, camera ? 1 : 0);
+    }
+    return original || injected;
+}
+
+int OnPadGetEnterTargeting(void* pad) {
+    const int original = PadTargetControlsEnabled(pad) &&
+        g_origPadGetEnterTargetingBody
+            ? g_origPadGetEnterTargetingBody(pad) : 0;
+    const bool injected =
+        g_tabletopPadTargetBridgeActive.load(std::memory_order_acquire) &&
+        NowMs() < g_tabletopAimPressUntilMs.load(std::memory_order_relaxed);
+    if (injected) {
+        g_tabletopAimPressUntilMs.store(0.0, std::memory_order_relaxed);
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.aim] pad enter targeting=1 original=%d bridge=L2",
+            original ? 1 : 0);
+    }
+    return original || injected;
+}
+
+int OnPadGetExitTargeting(void* pad) {
+    const int original = PadTargetControlsEnabled(pad) &&
+        g_origPadGetExitTargetingBody
+            ? g_origPadGetExitTargetingBody(pad) : 0;
+    const bool injected =
+        g_tabletopPadTargetBridgeActive.load(std::memory_order_acquire) &&
+        NowMs() < g_tabletopAimReleaseUntilMs.load(std::memory_order_relaxed);
+    if (injected) {
+        g_tabletopAimReleaseUntilMs.store(0.0, std::memory_order_relaxed);
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.aim] pad exit targeting=1 original=%d bridge=L2",
+            original ? 1 : 0);
+    }
+    return original || injected;
 }
 
 // The skydive/parachute state: on foot, parachute is the active weapon, and
@@ -5563,8 +5637,21 @@ void OnUpdatePads() {
     xr::InputState in{};
     xr::GetInput(in);
     const bool tabletopAimRaw = TabletopModernAimRaw(in);
-    g_tabletopAimPreviousRaw.store(tabletopAimRaw,
-                                   std::memory_order_relaxed);
+    const bool tabletopAimPrevious = g_tabletopAimPreviousRaw.exchange(
+        tabletopAimRaw, std::memory_order_relaxed);
+    const double tabletopAimNowMs = NowMs();
+    if (tabletopAimRaw && !tabletopAimPrevious) {
+        // Player processing asks GetEnterTargeting after UpdatePads, so retain
+        // the controller edge for a few game frames rather than consuming it
+        // inside this input callback.
+        g_tabletopAimPressUntilMs.store(tabletopAimNowMs + 150.0,
+                                        std::memory_order_relaxed);
+        g_tabletopAimReleaseUntilMs.store(0.0, std::memory_order_relaxed);
+    } else if (!tabletopAimRaw && tabletopAimPrevious) {
+        g_tabletopAimReleaseUntilMs.store(tabletopAimNowMs + 150.0,
+                                          std::memory_order_relaxed);
+        g_tabletopAimPressUntilMs.store(0.0, std::memory_order_relaxed);
+    }
     const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     UpdateTabletopControls(in, inputBlocked);
     float mappedMoveX=0.0f,mappedMoveY=0.0f;
@@ -5905,22 +5992,31 @@ void OnUpdatePads() {
         physicalweapon::HeldHandMaskRelaxed() == 0 &&
         !ParachuteStateActive()) {
         static bool promptR2Prev = false, promptL2Prev = false;
-        const bool tabletopCombatAim = TabletopModernAimForCombat(in);
+        const bool tabletopCombatAttack = TabletopModernAttackForCombat(in);
         const bool rawR2 = in.triggers[1] >= 0.70f;
         const bool rawL2 = in.triggers[0] >= 0.70f;
         // Releasing aim before fire is natural. Keep both triggers quarantined
         // from prompts/recruitment until they have BOTH returned to rest, so
         // that release order cannot turn the tail of a shot into ACCEPT.
         static bool tabletopCombatReleaseGate = false;
-        if (tabletopCombatAim) tabletopCombatReleaseGate = true;
+        if (tabletopCombatAttack) {
+            tabletopCombatReleaseGate = true;
+            // A preceding L2 edge may have armed DECLINE before R2 joined the
+            // combat chord. Once the chord is complete, neither trigger may
+            // leak into a touch prompt.
+            g_promptAcceptUntilMs.store(0.0, std::memory_order_relaxed);
+            g_promptDeclineUntilMs.store(0.0, std::memory_order_relaxed);
+            g_promptPressUntilMs.store(0.0, std::memory_order_relaxed);
+            g_promptHudUntilMs.store(0.0, std::memory_order_relaxed);
+        }
         if (tabletopCombatReleaseGate &&
             in.triggers[0] <= 0.30f && in.triggers[1] <= 0.30f) {
             tabletopCombatReleaseGate = false;
         }
-        // While GTA's targeting widget owns L2, suppress the generic prompt
-        // bridge completely. Outside that live combat context the old R2=yes,
-        // L2=no behavior is unchanged.
-        const bool promptTriggersAllowed = !tabletopCombatAim &&
+        // Once L2+R2 becomes a combat chord, suppress the generic prompt
+        // bridge completely. L2 by itself can still decline an actual touch
+        // prompt, retaining the established non-combat control.
+        const bool promptTriggersAllowed = !tabletopCombatAttack &&
             !tabletopCombatReleaseGate;
         const bool r2 = promptTriggersAllowed && rawR2;
         const bool l2 = promptTriggersAllowed && rawL2;
@@ -9473,7 +9569,10 @@ void OnRenderFadingEntities() {
             static ReportState report{};
             const double nowMs = NowMs();
             if (report.startMs <= 0.0) report.startMs = nowMs;
-            if (nowMs - report.startMs >= 500.0) {
+            // The full flicker recorder was intentionally noisy while the
+            // escaped-frame bug was open. Keep the same counters available for
+            // captures, but publish four times less often in normal play.
+            if (nowMs - report.startMs >= 2000.0) {
                 const std::uint64_t captured =
                     g_tabletopAlphaOverflowCaptured.load(
                         std::memory_order_relaxed);
@@ -9747,7 +9846,7 @@ void LogTabletopFlickerWindow(
         window.previous = identity[2];
     }
 
-    if (nowMs - window.startMs < 500.0) return;
+    if (nowMs - window.startMs < 2000.0) return;
     __android_log_print(
         ANDROID_LOG_INFO, SAVR_TAG,
         "[tabletop.flicker.scene] seq=%d frames=%d scale=%.5f radius=%.1f "
@@ -24433,11 +24532,23 @@ bool OnGetIsOnScreen(void* entity) {
             (fdot > 0.0f || fdot * fdot < 0.09f * distSq);
         // A ped within arm/interaction range must never disappear merely
         // because the mono game camera and the physical headset disagree about
-        // the forward cone. Fresh runtime evidence showed surviving ped
-        // entities at 1.4..4.6 m missing from the render list for 300..469 ms.
+        // the forward cone. In tabletop the virtual camera can be many game
+        // metres away from CJ even when an ally is standing beside him, so the
+        // bounded safety is the union of camera distance and CJ/radius-centre
+        // distance. This keeps mission companions stable without widening the
+        // whole pedestrian shell.
         constexpr float kPedOmnidirectionalSafetyM=25.0f;
-        const bool nearPedSafety=entityType==3&&
-            distSq<kPedOmnidirectionalSafetyM*kPedOmnidirectionalSafetyM;
+        float pedPlayerDistSq = std::numeric_limits<float>::infinity();
+        if (entityType == 3 && g_tabletopRadiusCenterValid) {
+            const float pdx = e[0] - g_tabletopRadiusCenter.x;
+            const float pdy = e[1] - g_tabletopRadiusCenter.y;
+            const float pdz = e[2] - g_tabletopRadiusCenter.z;
+            pedPlayerDistSq = pdx * pdx + pdy * pdy + pdz * pdz;
+        }
+        const float pedSafetySq =
+            kPedOmnidirectionalSafetyM * kPedOmnidirectionalSafetyM;
+        const bool nearPedSafety = entityType == 3 &&
+            (distSq < pedSafetySq || pedPlayerDistSq < pedSafetySq);
         // CObject is the remaining large aircraft-only hole in the render
         // union.  Its generic safety used the camera-to-object 3D distance, so
         // at 80 m AGL even an object directly below the aircraft crossed the
@@ -30780,6 +30891,113 @@ bool InstallPedLifecycleRetentionHook() {
     return active;
 }
 
+// GetEnterTargeting/GetExitTargeting share a four-instruction controls-disabled
+// gate containing a PC-relative branch. Like ExitVehicleJustDown, call a thunk
+// beginning at +0x10 after reproducing that gate in the wrappers above.
+void* InstallPadTargetEdgeBodyHook(void* target, void* replacement,
+                                   const char* label) {
+    if (!target || !replacement) return nullptr;
+    static constexpr std::uint32_t kExpected[4] = {
+        0x79422008u, // LDRH W8,[X0,#0x110]
+        0x34000068u, // CBZ W8,function+0x10
+        0x2a1f03e0u, // MOV W0,WZR
+        0xd65f03c0u, // RET
+    };
+    if (std::memcmp(target, kExpected, sizeof(kExpected)) != 0) {
+        const auto* observed = static_cast<const std::uint32_t*>(target);
+        LOGE("[tabletop.aim] %s prologue mismatch: %08x %08x %08x %08x",
+             label, observed[0], observed[1], observed[2], observed[3]);
+        return nullptr;
+    }
+
+    const std::uintptr_t pageSize =
+        static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    void* thunk = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (thunk == MAP_FAILED) {
+        LOGE("[tabletop.aim] %s body thunk mmap failed", label);
+        return nullptr;
+    }
+    auto* t = static_cast<std::uint32_t*>(thunk);
+    t[0] = 0x58000051u; // LDR X17,#8
+    t[1] = 0xd61f0220u; // BR X17
+    *reinterpret_cast<void**>(t + 2) = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) + 16u);
+    __builtin___clear_cache(reinterpret_cast<char*>(t),
+                            reinterpret_cast<char*>(t) + 16);
+
+    auto* code = static_cast<std::uint32_t*>(target);
+    const std::uintptr_t start =
+        reinterpret_cast<std::uintptr_t>(code) & ~(pageSize - 1u);
+    const std::uintptr_t end =
+        (reinterpret_cast<std::uintptr_t>(code) + 16u + pageSize - 1u) &
+        ~(pageSize - 1u);
+    if (mprotect(reinterpret_cast<void*>(start), end - start,
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        LOGE("[tabletop.aim] mprotect failed for %s", label);
+        munmap(thunk, pageSize);
+        return nullptr;
+    }
+    code[0] = 0x58000051u;
+    code[1] = 0xd61f0220u;
+    *reinterpret_cast<void**>(code + 2) = replacement;
+    __builtin___clear_cache(reinterpret_cast<char*>(code),
+                            reinterpret_cast<char*>(code) + 16);
+    return thunk;
+}
+
+bool InstallTabletopPadTargeting() {
+    g_tabletopPadTargetBridgeActive.store(false, std::memory_order_release);
+    void* const gameHandle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!gameHandle || !g.LoadBase) {
+        if (gameHandle) dlclose(gameHandle);
+        LOGW("[tabletop.aim] direct pad targeting unavailable: no libGame/base");
+        return false;
+    }
+    void* const getTarget = dlsym(gameHandle, "_ZN4CPad9GetTargetEb");
+    void* const getEnter = dlsym(gameHandle, "_ZN4CPad17GetEnterTargetingEv");
+    void* const getExit = dlsym(gameHandle, "_ZN4CPad16GetExitTargetingEv");
+    static constexpr std::uint32_t kGetTargetPrologue[4] = {
+        0xa9bd7bfdu, 0xf9000bf5u, 0xa9024ff4u, 0x910003fdu,
+    };
+    static constexpr std::uint32_t kEdgePrologue[4] = {
+        0x79422008u, 0x34000068u, 0x2a1f03e0u, 0xd65f03c0u,
+    };
+    const bool fingerprint = getTarget && getEnter && getExit &&
+        reinterpret_cast<std::uintptr_t>(getTarget) - g.LoadBase == 0x49eb84u &&
+        reinterpret_cast<std::uintptr_t>(getEnter) - g.LoadBase == 0x49e93cu &&
+        reinterpret_cast<std::uintptr_t>(getExit) - g.LoadBase == 0x49ec34u &&
+        std::memcmp(getTarget, kGetTargetPrologue,
+                    sizeof(kGetTargetPrologue)) == 0 &&
+        std::memcmp(getEnter, kEdgePrologue, sizeof(kEdgePrologue)) == 0 &&
+        std::memcmp(getExit, kEdgePrologue, sizeof(kEdgePrologue)) == 0;
+    if (!fingerprint) {
+        LOGW("[tabletop.aim] direct pad targeting disabled: retail 2.11 fingerprint mismatch");
+        dlclose(gameHandle);
+        return false;
+    }
+
+    g_origPadGetTarget = reinterpret_cast<PadGetTargetFn>(InstallTrampoline(
+        getTarget, reinterpret_cast<void*>(&OnPadGetTarget)));
+    g_origPadGetEnterTargetingBody =
+        reinterpret_cast<PadTargetEdgeFn>(InstallPadTargetEdgeBodyHook(
+            getEnter, reinterpret_cast<void*>(&OnPadGetEnterTargeting),
+            "CPad::GetEnterTargeting"));
+    g_origPadGetExitTargetingBody =
+        reinterpret_cast<PadTargetEdgeFn>(InstallPadTargetEdgeBodyHook(
+            getExit, reinterpret_cast<void*>(&OnPadGetExitTargeting),
+            "CPad::GetExitTargeting"));
+    const bool active = g_origPadGetTarget &&
+        g_origPadGetEnterTargetingBody && g_origPadGetExitTargetingBody;
+    g_tabletopPadTargetBridgeActive.store(active, std::memory_order_release);
+    LOGI("[tabletop.aim] direct pad targeting active=%d hold=%d enter=%d exit=%d",
+         active ? 1 : 0, g_origPadGetTarget ? 1 : 0,
+         g_origPadGetEnterTargetingBody ? 1 : 0,
+         g_origPadGetExitTargetingBody ? 1 : 0);
+    dlclose(gameHandle);
+    return active;
+}
+
 // CPad::ExitVehicleJustDown starts with two PC-relative CBNZ gates, so the
 // generic 16-byte trampoline above is not ABI-safe for this one target. Verify
 // the exact libGame.so prologue and build a callable thunk that starts at +0x10,
@@ -31791,6 +32009,10 @@ bool Install() {
             LOGI("[vr] movement hook installed on CPad::UpdatePads");
         }
     }
+
+    // Controller combat uses CPad directly; mobile tutorials such as the
+    // bottle lesson never touch widget_target.
+    InstallTabletopPadTargeting();
 
     if (g.CPad_ExitVehicleJustDown != nullptr) {
         g_origExitVehicleJustDown =

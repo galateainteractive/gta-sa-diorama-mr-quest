@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 40 controller combat and nearby-ped correction
+
+- Route tabletop `L2` through GTA SA Android's native `CPad::GetTarget`,
+  `GetEnterTargeting` and `GetExitTargeting` functions. This covers controller
+  missions such as the bottle tutorial, which never poll `widget_target`.
+- Make `L2` + `R2` feed the classic attack path without requiring a recent
+  touch-widget poll; keep `B` as the alternate attack and retain vehicle/grab
+  isolation.
+- Keep pedestrians within 25 m of either the tabletop camera or CJ in the
+  omnidirectional render safety, preventing nearby mission companions from
+  falling through a camera-centred culling hole. Reduce the legacy flicker
+  telemetry cadence from 0.5 s to 2 s without removing its counters.
+
 ## Package 39 modern tabletop combat controls
 
 - Bridge Quest L2 to GTA Android's retail `widget_target` press, hold and

@@ -323,7 +323,7 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
                  "camera_mode=%d heading=%.3f "
                  "targets=lock:%p/free:%p "
                  "actor_forward=(%.3f,%.3f,%.3f) "
-                 "route=classic_target_widget_no_physical_ray",
+                 "route=classic_pad_target_no_physical_ray",
                  weaponType, slot, vanilla,
                  input.a ? 1 : 0, input.b ? 1 : 0,
                  input.x ? 1 : 0, input.y ? 1 : 0,
