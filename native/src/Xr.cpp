@@ -11421,6 +11421,89 @@ bool ValidTabletopMaskInputs(const TabletopMaskState& mask,
         mask.coverageMode >= 0 && mask.coverageMode <= 2;
 }
 
+// Observe every attempted eye, not only the frame that happens to coincide
+// with a heartbeat. A one-frame global radius/transform jump must survive the
+// half-second aggregation. No readback, screenshot or GPU synchronization.
+void ObserveTabletopMaskInputs(const TabletopMaskState& mask,
+        const XrPosef& pose, int eye, float nearZ, float farZ) {
+    if (eye != 0 && eye != 1) return;
+    struct Window {
+        std::uint64_t start{};
+        int eyes{}, inactive{}, invalid{}, modeChanges{}, bridgeChanges{};
+        float minScale{1.0f}, maxScale{}, minRadius{1.0e9f}, maxRadius{};
+        float minNear{1.0e9f}, maxNear{}, minFar{1.0e9f}, maxFar{};
+        float centerStep{}, viewerStep{}, axisStep{}, scaleStep{}, radiusStep{};
+        float poseStep{}, basisError{};
+    };
+    static Window w{};
+    static TabletopMaskState previous[2]{};
+    static XrPosef previousPose[2]{};
+    static bool seen[2]{};
+    const auto now = MonotonicNowNs();
+    if (!w.start) w.start = now;
+    ++w.eyes;
+    w.inactive += !mask.active;
+    w.invalid += !ValidTabletopMaskInputs(mask, pose, nearZ, farZ);
+    const auto range = [](float v, float& low, float& high) {
+        if (std::isfinite(v)) { low = std::min(low, v); high = std::max(high, v); }
+    };
+    range(mask.depthScaleMPerGameUnit, w.minScale, w.maxScale);
+    range(mask.playerRadiusM, w.minRadius, w.maxRadius);
+    range(nearZ, w.minNear, w.maxNear);
+    range(farZ, w.minFar, w.maxFar);
+    float xx = 0, yy = 0, xy = 0;
+    for (int i = 0; i < 3; ++i) {
+        xx += mask.axisX[i] * mask.axisX[i];
+        yy += mask.axisY[i] * mask.axisY[i];
+        xy += mask.axisX[i] * mask.axisY[i];
+        if (seen[eye]) {
+            w.centerStep = std::max(w.centerStep,
+                std::abs(mask.playerCenter[i] - previous[eye].playerCenter[i]));
+            w.viewerStep = std::max(w.viewerStep,
+                std::abs(mask.viewerCenter[i] - previous[eye].viewerCenter[i]));
+            w.axisStep = std::max({w.axisStep,
+                std::abs(mask.axisX[i] - previous[eye].axisX[i]),
+                std::abs(mask.axisY[i] - previous[eye].axisY[i])});
+        }
+    }
+    w.basisError = std::max({w.basisError, std::abs(xx - 1),
+                            std::abs(yy - 1), std::abs(xy)});
+    if (seen[eye]) {
+        const auto& p = previous[eye];
+        w.modeChanges += mask.coverageMode != p.coverageMode;
+        w.bridgeChanges += mask.bridgeEnabled != p.bridgeEnabled;
+        w.scaleStep = std::max(w.scaleStep,
+            std::abs(mask.depthScaleMPerGameUnit - p.depthScaleMPerGameUnit));
+        w.radiusStep = std::max(w.radiusStep,
+            std::abs(mask.playerRadiusM - p.playerRadiusM));
+        const auto& pp = previousPose[eye].position;
+        w.poseStep = std::max({w.poseStep, std::abs(pose.position.x - pp.x),
+            std::abs(pose.position.y - pp.y), std::abs(pose.position.z - pp.z)});
+    }
+    previous[eye] = mask;
+    previousPose[eye] = pose;
+    seen[eye] = true;
+    if (eye != 1 || now - w.start < 500000000ULL) return;
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.flicker.mask_window] package=34 eyes=%d inactive=%d invalid=%d "
+        "mode=%d changes=%d bridge=%d changes=%d "
+        "scale=%.5f..%.5f radius=%.3f..%.3f near=%.4f..%.4f far=%.1f..%.1f "
+        "max_step=center:%.4f/viewer:%.4f/axis:%.4f/scale:%.5f/radius:%.4f/pose:%.4f "
+        "basis_error=%.5f center=%.3f,%.3f,%.3f viewer=%.3f,%.3f,%.3f "
+        "viewer_radius=%.3f bridge_radius=%.3f feather=%.3f",
+        w.eyes, w.inactive, w.invalid, mask.coverageMode, w.modeChanges,
+        mask.bridgeEnabled ? 1 : 0, w.bridgeChanges,
+        w.minScale, w.maxScale, w.minRadius, w.maxRadius,
+        w.minNear, w.maxNear, w.minFar, w.maxFar,
+        w.centerStep, w.viewerStep, w.axisStep, w.scaleStep, w.radiusStep,
+        w.poseStep, w.basisError,
+        mask.playerCenter[0], mask.playerCenter[1], mask.playerCenter[2],
+        mask.viewerCenter[0], mask.viewerCenter[1], mask.viewerCenter[2],
+        mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
+    w = {};
+    w.start = now;
+}
+
 // RenderWare's post-effects do not preserve a trustworthy alpha channel. Build
 // the compositor mask from the scene depth instead: untouched clear-depth
 // pixels become transparent and every real world fragment becomes opaque.
@@ -11432,6 +11515,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
                                        const TabletopMaskState& mask) {
     if (!vrcam::IsTabletopActive() ||
         !g_passthroughActive.load(std::memory_order_acquire)) return false;
+    ObserveTabletopMaskInputs(mask, renderPose, eye, nearZ, farZ);
     if (!mask.active) {
         ClearTabletopWorldAlpha(targetW, targetH);
         RecordTabletopMaskFallback(TabletopMaskFallbackReason::Inactive, eye);
@@ -12359,6 +12443,16 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
             }
             if (vrcam::IsTabletopActive()) {
                 static std::uint64_t lastFlickerStereoLogNs = 0;
+                static unsigned frames = 0, failedMasks = 0, races = 0,
+                    rejectedPairs = 0, badGenerations = 0;
+                static double maxAgeMs = 0.0;
+                ++frames;
+                failedMasks += !tabletopMaskApplied[0] || !tabletopMaskApplied[1];
+                races += generationRace;
+                rejectedPairs += !ok;
+                badGenerations += expectedGeneration !=
+                    g_stereoGeneration[set].load(std::memory_order_relaxed);
+                maxAgeMs = std::max(maxAgeMs, submittedSequenceAgeMs);
                 const std::uint64_t nowNs = MonotonicNowNs();
                 if (lastFlickerStereoLogNs == 0 ||
                     nowNs - lastFlickerStereoLogNs >= 500000000ULL) {
@@ -12367,7 +12461,9 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                         ANDROID_LOG_INFO, SAVR_TAG,
                         "[tabletop.flicker.stereo] gen=%d/%d set=%d age=%.2fms "
                         "mask=%d/%d color=%u/%u depth=%u/%u "
-                        "near=%.4f/%.4f far=%.1f/%.1f scale=%.5f radius=%.3f",
+                        "near=%.4f/%.4f far=%.1f/%.1f scale=%.5f radius=%.3f "
+                        "window_frames=%u failed_masks=%u races=%u rejected=%u "
+                        "bad_generations=%u max_age=%.2fms",
                         expectedGeneration,
                         g_stereoGeneration[set].load(std::memory_order_relaxed),
                         set, submittedSequenceAgeMs,
@@ -12386,7 +12482,11 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                         static_cast<double>(g_stereoEyeFar[set][1].load(
                             std::memory_order_relaxed)),
                         static_cast<double>(tabletopMask.depthScaleMPerGameUnit),
-                        static_cast<double>(tabletopMask.playerRadiusM));
+                        static_cast<double>(tabletopMask.playerRadiusM),
+                        frames, failedMasks, races, rejectedPairs,
+                        badGenerations, maxAgeMs);
+                    frames = failedMasks = races = rejectedPairs = badGenerations = 0;
+                    maxAgeMs = 0.0;
                 }
             }
             if (gpuRead.PinNow()) {

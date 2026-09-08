@@ -15,6 +15,7 @@
 #include "ScopeAim.h"
 #include "Symbols.h"
 #include "Tabletop.h"
+#include "TabletopFlicker.h"
 #include "TrafficCensus.h"
 #include "Xr.h"
 
@@ -9107,10 +9108,12 @@ bool TabletopAlphaOverflowEnabled() {
         if (__system_property_get(kTabletopAlphaOverflowProperty, text) > 0) {
             if (std::strcmp(text, "0") == 0) value = false;
             else if (std::strcmp(text, "1") == 0) value = true;
-            else LOGW("[tabletop.flicker.fix] ignoring invalid %s=%s (valid 0, 1)",
+            else __android_log_print(ANDROID_LOG_WARN, SAVR_TAG,
+                      "[tabletop.flicker.fix] ignoring invalid %s=%s (valid 0, 1)",
                       kTabletopAlphaOverflowProperty, text);
         }
-        LOGI("[tabletop.flicker.fix] alpha_overflow=%d capacity=%d property=%s",
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+             "[tabletop.flicker.fix] package=34 alpha_overflow=%d capacity=%d property=%s",
              value ? 1 : 0, kTabletopAlphaOverflowCapacity,
              kTabletopAlphaOverflowProperty);
         return value;
@@ -9187,9 +9190,9 @@ bool CaptureTabletopAlphaOverflow(void* entity, float distance) {
                 victim = i;
             }
         }
-        if (victim >= 0 &&
+        if (victim >= 0 && !tabletop_flicker::CanReplaceRank(previousRank,
             g_tabletopAlphaOverflowEntries[static_cast<std::size_t>(victim)]
-                    .previousRank <= previousRank) {
+                    .previousRank)) {
             victim = -1;
         }
     } else {
@@ -9370,7 +9373,8 @@ void OnRenderFadingEntities() {
                     std::memory_order_relaxed);
                 const std::uint64_t drops = g_tabletopAlphaOverflowDrops.load(
                     std::memory_order_relaxed);
-                LOGI("[tabletop.flicker.fix] retained=%d previous=%d "
+                __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                     "[tabletop.flicker.fix] retained=%d previous=%d "
                      "captured=%llu replaced=%llu draws=%llu drops=%llu",
                      g_tabletopAlphaOverflowCount,
                      g_tabletopAlphaOverflowPreviousCount,
@@ -9481,9 +9485,7 @@ struct TabletopRenderListIdentity {
 };
 
 void MixTabletopIdentity(std::uint64_t& hash, std::uintptr_t value) {
-    constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
-    hash ^= static_cast<std::uint64_t>(value);
-    hash *= kFnvPrime;
+    hash += tabletop_flicker::Token(static_cast<std::uint64_t>(value));
 }
 
 bool HashTabletopPointerList(std::uintptr_t offset, int count, int capacity,
@@ -9563,6 +9565,21 @@ struct TabletopFlickerRange {
     }
 };
 
+// GameThread only. These count dispatches, not visible pixels. The model flag
+// is audited in retail RenderEntity at 0x605f20..0x605f30: model+0x2c bit 3
+// sets rwRENDERSTATEZWRITEENABLE (8) to false. It is one known no-depth path,
+// not a claim that all other materials write depth.
+struct TabletopAlphaDepthWitness {
+    int dispatch[2]{};
+    int rejected[2]{};
+    int noZwrite[2]{};
+    int outerPivot[2]{};
+    int missingInstance[2]{};
+    int exampleModel{-1};
+    float maxNoZwriteDistance{};
+};
+thread_local TabletopAlphaDepthWitness g_tabletopAlphaDepthWitness{};
+
 void LogTabletopFlickerWindow(
         const perf::StereoFrameSample& sample,
         const TabletopRenderListIdentity identity[3]) {
@@ -9637,7 +9654,7 @@ void LogTabletopFlickerWindow(
         window.alphaRight.minimum, window.alphaRight.maximum);
     __android_log_print(
         ANDROID_LOG_INFO, SAVR_TAG,
-        "[tabletop.flicker.identity] seq=%d changes=E%d/L%d/S%d/A%d "
+        "[tabletop.flicker.identity] membership=v2 seq=%d changes=E%d/L%d/S%d/A%d "
         "eye_mismatch=E%d/L%d/S%d/A%d invalid=%d "
         "hash=E%016llx/L%016llx/S%016llx/A%016llx",
         sample.sequence,
@@ -9650,6 +9667,19 @@ void LogTabletopFlickerWindow(
         static_cast<unsigned long long>(identity[2].lods),
         static_cast<unsigned long long>(identity[2].superLods),
         static_cast<unsigned long long>(identity[2].alpha));
+    const auto& a = g_tabletopAlphaDepthWitness;
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.flicker.alpha_depth] seq=%d dispatch=%d/%d rejected=%d/%d "
+        "model_no_zwrite=%d/%d outer_pivot=%d/%d missing_instance=%d/%d "
+        "example_model=%d max_no_zwrite_camera_dist=%.1f hooks=%d enabled=%d",
+        sample.sequence, a.dispatch[0], a.dispatch[1],
+        a.rejected[0], a.rejected[1], a.noZwrite[0], a.noZwrite[1],
+        a.outerPivot[0], a.outerPivot[1],
+        a.missingInstance[0], a.missingInstance[1], a.exampleModel,
+        static_cast<double>(a.maxNoZwriteDistance),
+        g_neonOverflowHooksActive.load(std::memory_order_relaxed) ? 1 : 0,
+        TabletopAlphaOverflowEnabled() ? 1 : 0);
+    g_tabletopAlphaDepthWitness = {};
     const TabletopRenderListIdentity previous = window.previous;
     window = {};
     window.startMs = nowMs;
@@ -15312,7 +15342,13 @@ void OnRenderOneNonRoad(void* entity) {
 }
 
 void OnRenderAlphaEntity(void* entity, float distance) {
-    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
+    const int diagnosticEye = g_renderingStereoEyeIndex;
+    const bool diagnostic = g_tabletopActive.load(std::memory_order_relaxed) &&
+        (diagnosticEye == 0 || diagnosticEye == 1);
+    if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) {
+        if (diagnostic) ++g_tabletopAlphaDepthWitness.rejected[diagnosticEye];
+        return;
+    }
     if (!g_tabletopActive.load(std::memory_order_acquire) &&
         !StereoDispatchVisibleForCurrentEye(entity)) return;
     MarkAircraftOrdinaryRenderDispatch(entity, true);
@@ -15323,6 +15359,26 @@ void OnRenderAlphaEntity(void* entity, float distance) {
         ? static_cast<const std::uint8_t*>(entity) : nullptr;
     const int modelId = bytes ? static_cast<int>(
         *reinterpret_cast<const std::int16_t*>(bytes + 0x32)) : -1;
+    if (diagnostic && bytes) {
+        auto& a = g_tabletopAlphaDepthWitness;
+        ++a.dispatch[diagnosticEye];
+        if (!*reinterpret_cast<void* const*>(bytes + 0x20))
+            ++a.missingInstance[diagnosticEye];
+        const auto* model = g.CModelInfo_ms_modelInfoPtrs &&
+            modelId >= 0 && modelId < 20000
+            ? static_cast<const std::uint8_t*>(
+                g.CModelInfo_ms_modelInfoPtrs[modelId]) : nullptr;
+        if (model && (*reinterpret_cast<const std::uint16_t*>(model + 0x2c) & 8)) {
+            ++a.noZwrite[diagnosticEye];
+            a.exampleModel = modelId;
+            if (std::isfinite(distance))
+                a.maxNoZwriteDistance = std::max(a.maxNoZwriteDistance, distance);
+            V3 position{};
+            if (ReadEntityWorldPosition(entity, &position) &&
+                !TabletopWorldInsideCoverage(position, tabletop::RadiusMeters()))
+                ++a.outerPivot[diagnosticEye];
+        }
+    }
 #if defined(SAVR_DEV)
     // The NEW GAME-only drops are GPU-side while GameThread CPU work remains
     // flat.  Capture an allocation-free heavy-hitter sketch of the actual

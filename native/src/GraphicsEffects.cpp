@@ -3157,7 +3157,8 @@ bool OnFireAreaEffect(void* weapon, void* firingEntity,
             }
             const float heading = g.FindPlayerHeading
                 ? g.FindPlayerHeading(0) : 0.0f;
-            LOGI("[tabletop.aim.area] weapon=%d target=%d entity=%d "
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                 "[tabletop.aim.area] weapon=%d target=%d entity=%d "
                  "origin=(%.2f,%.2f,%.2f) actor_forward=(%.3f,%.3f,%.3f) "
                  "target_dir=(%.3f,%.3f,%.3f) heading=%.3f",
                  weaponType, haveTargetDirection ? 1 : 0,

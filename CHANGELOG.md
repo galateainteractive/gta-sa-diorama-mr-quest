@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 34 tabletop flicker correction and diagnostic candidate
+
+- Correct P33 overflow replacement priority for returning entries vs newcomers.
+- Restore bounded overflow and combat telemetry in player APKs and audit the
+  diagnostic strings in the actual packaged native library.
+- Replace order-sensitive render-list hashes with a membership-oriented hash;
+  GTA's per-eye LOD qsort was a false-positive source in P32/P33.
+- Add all-attempt mask-input windows, final-eye stereo anomaly counters and
+  audited no-Z-write alpha-model dispatch witnesses. Preserve the approved
+  fade and all gameplay. See `PACKAGE_34.md` for limits and the manual test.
+
 ## Package 33 tabletop alpha stability candidate
 
 - Add a bounded 96-entry spill list for static alpha scenery rejected when

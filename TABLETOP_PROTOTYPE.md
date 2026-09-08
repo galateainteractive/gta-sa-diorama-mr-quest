@@ -36,6 +36,12 @@ Vehicles and pedestrians are excluded, and no entity is held after it stops
 appearing in the current frame. Set Android process-start property
 `debug.savr.tabletop_alpha_overflow=0` for an exact fallback comparison.
 
+Package 34 corrects returning-entry priority and restores release-build
+overflow/combat logs. Flicker witnesses now ignore per-eye list reordering and
+accumulate mask-transform changes and stereo anomalies over half-second windows.
+No-depth model dispatches are reported separately; these counters are not a
+pixel-level proof of mask correctness. See `PACKAGE_34.md`.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

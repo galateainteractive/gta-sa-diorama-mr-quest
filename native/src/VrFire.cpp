@@ -308,7 +308,8 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
                     haveActorForward = Finite(actorForward);
                 }
             }
-            LOGI("[tabletop.aim] attack edge weapon=%d slot=%d vanilla=%d "
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                 "[tabletop.aim] attack edge weapon=%d slot=%d vanilla=%d "
                  "buttons=A%d/B%d/X%d/Y%d R2=%.2f camera_mode=%d heading=%.3f "
                  "actor_forward=(%.3f,%.3f,%.3f) "
                  "route=classic_no_physical_ray",
