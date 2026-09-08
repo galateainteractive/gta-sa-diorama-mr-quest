@@ -5,6 +5,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $native = Join-Path $BuildRoot 'native\libsavr.so'
 $cache = Join-Path $BuildRoot 'native\CMakeCache.txt'
+$source = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\native\src\Xr.cpp')
+if ($source -notmatch 'DecideMask\(\s*mask\.active, liveActive, passthroughActive\)' -or
+    $source -match '!vrcam::IsTabletopActive\(\)\s*\|\|\s*!g_passthroughActive') {
+    throw 'Synchronized mask snapshot is not authoritative in player source'
+}
+Write-Output 'PASS captured mask snapshot outranks transient live camera flag'
 if (-not (Select-String -LiteralPath $cache -SimpleMatch 'SAVR_DEV:BOOL=OFF' -Quiet)) {
     throw 'Test requires the real player build (SAVR_DEV=OFF)'
 }
@@ -29,12 +35,13 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
             if ($actual -ne $expected) { throw 'Packaged native library differs from tested build' }
             $text = [Text.Encoding]::ASCII.GetString($bytes)
             foreach ($required in @(
-                '[tabletop.flicker.fix] package=34',
+                '[tabletop.flicker.fix] package=35',
                 '[tabletop.flicker.fix] retained=',
                 '[tabletop.flicker.identity] membership=v2',
                 '[tabletop.flicker.alpha_depth]',
-                '[tabletop.flicker.mask_window] package=34',
+                '[tabletop.flicker.mask_window] package=35',
                 'window_frames=%u failed_masks=',
+                'snapshot_authority=%llu',
                 '[tabletop.aim] attack edge',
                 '[tabletop.aim.area]'
             )) {

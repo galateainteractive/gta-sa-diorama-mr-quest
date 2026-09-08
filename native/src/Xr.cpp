@@ -15,6 +15,7 @@
 #include "PerfTelemetry.h"
 #include "ScopeAim.h"
 #include "Tabletop.h"
+#include "TabletopFlicker.h"
 #include "TrafficCensus.h"
 #include "VrCamera.h"
 
@@ -2175,6 +2176,7 @@ State s;
 bool g_hasPassthroughExt = false;
 bool g_hasPassthroughColorLutExt = false;
 std::atomic<bool> g_passthroughActive{false};
+std::atomic<std::uint64_t> g_tabletopMaskSnapshotAuthority{0};
 XrPassthroughFB g_passthrough{XR_NULL_HANDLE};
 XrPassthroughLayerFB g_passthroughLayer{XR_NULL_HANDLE};
 XrPassthroughColorLutMETA g_passthroughWeatherLut{XR_NULL_HANDLE};
@@ -11485,7 +11487,7 @@ void ObserveTabletopMaskInputs(const TabletopMaskState& mask,
     seen[eye] = true;
     if (eye != 1 || now - w.start < 500000000ULL) return;
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-        "[tabletop.flicker.mask_window] package=34 eyes=%d inactive=%d invalid=%d "
+        "[tabletop.flicker.mask_window] package=35 eyes=%d inactive=%d invalid=%d "
         "mode=%d changes=%d bridge=%d changes=%d "
         "scale=%.5f..%.5f radius=%.3f..%.3f near=%.4f..%.4f far=%.1f..%.1f "
         "max_step=center:%.4f/viewer:%.4f/axis:%.4f/scale:%.5f/radius:%.4f/pose:%.4f "
@@ -11513,13 +11515,25 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
                                        const XrPosef& renderPose, int eye,
                                        float nearZ, float farZ,
                                        const TabletopMaskState& mask) {
-    if (!vrcam::IsTabletopActive() ||
-        !g_passthroughActive.load(std::memory_order_acquire)) return false;
+    const bool liveActive = vrcam::IsTabletopActive();
+    const bool passthroughActive =
+        g_passthroughActive.load(std::memory_order_acquire);
+    const auto decision = tabletop_flicker::DecideMask(
+        mask.active, liveActive, passthroughActive);
+    if (decision == tabletop_flicker::MaskDecision::Skip) return false;
     ObserveTabletopMaskInputs(mask, renderPose, eye, nearZ, farZ);
-    if (!mask.active) {
+    if (decision == tabletop_flicker::MaskDecision::FailClosed) {
         ClearTabletopWorldAlpha(targetW, targetH);
         RecordTabletopMaskFallback(TabletopMaskFallbackReason::Inactive, eye);
         return false;
+    }
+    // The mask belongs to the leased colour/depth generation. Never gate that
+    // immutable frame with the live GameThread camera flag: it is intentionally
+    // false for a small interval during every camera rebuild. P34 measured 22
+    // skipped pairs in 13 seconds from exactly this cross-thread race.
+    if (!liveActive) {
+        g_tabletopMaskSnapshotAuthority.fetch_add(1,
+                                                  std::memory_order_relaxed);
     }
     if (!ValidTabletopMaskInputs(mask, renderPose, nearZ, farZ)) {
         ClearTabletopWorldAlpha(targetW, targetH);
@@ -12441,11 +12455,12 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
             } else {
                 submittedSequenceAgeMs = completedCandidate.ageMs;
             }
-            if (vrcam::IsTabletopActive()) {
+            if (tabletopMask.active) {
                 static std::uint64_t lastFlickerStereoLogNs = 0;
                 static unsigned frames = 0, failedMasks = 0, races = 0,
                     rejectedPairs = 0, badGenerations = 0;
                 static double maxAgeMs = 0.0;
+                static std::uint64_t lastSnapshotAuthority = 0;
                 ++frames;
                 failedMasks += !tabletopMaskApplied[0] || !tabletopMaskApplied[1];
                 races += generationRace;
@@ -12463,7 +12478,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                         "mask=%d/%d color=%u/%u depth=%u/%u "
                         "near=%.4f/%.4f far=%.1f/%.1f scale=%.5f radius=%.3f "
                         "window_frames=%u failed_masks=%u races=%u rejected=%u "
-                        "bad_generations=%u max_age=%.2fms",
+                        "bad_generations=%u max_age=%.2fms snapshot_authority=%llu",
                         expectedGeneration,
                         g_stereoGeneration[set].load(std::memory_order_relaxed),
                         set, submittedSequenceAgeMs,
@@ -12484,7 +12499,14 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                         static_cast<double>(tabletopMask.depthScaleMPerGameUnit),
                         static_cast<double>(tabletopMask.playerRadiusM),
                         frames, failedMasks, races, rejectedPairs,
-                        badGenerations, maxAgeMs);
+                        badGenerations, maxAgeMs,
+                        static_cast<unsigned long long>(
+                            g_tabletopMaskSnapshotAuthority.load(
+                                std::memory_order_relaxed) -
+                            lastSnapshotAuthority));
+                    lastSnapshotAuthority =
+                        g_tabletopMaskSnapshotAuthority.load(
+                            std::memory_order_relaxed);
                     frames = failedMasks = races = rejectedPairs = badGenerations = 0;
                     maxAgeMs = 0.0;
                 }

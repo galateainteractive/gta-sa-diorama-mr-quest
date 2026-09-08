@@ -1,5 +1,15 @@
 # Changelog
 
+## Package 35 synchronized-frame radial mask fix
+
+- Fix the confirmed cross-thread race that intermittently skipped the radial
+  alpha mask for one eye and exposed distant scenery outside the whole radius.
+- Make the mask state captured with the leased stereo generation authoritative;
+  the transient live GameThread camera flag can no longer cancel it.
+- Report snapshot-authority interventions and base diagnostic windows on the
+  captured frame. Preserve the approved fade and all gameplay. See
+  `PACKAGE_35.md`.
+
 ## Package 34 tabletop flicker correction and diagnostic candidate
 
 - Correct P33 overflow replacement priority for returning entries vs newcomers.

@@ -16,6 +16,13 @@ constexpr std::uint64_t Token(std::uint64_t value) {
 constexpr bool CanReplaceRank(int incoming, int resident) {
     return incoming >= 0 && (resident < 0 || resident > incoming);
 }
+enum class MaskDecision { Skip, ApplySnapshot, FailClosed };
+constexpr MaskDecision DecideMask(bool snapshotActive, bool liveActive,
+                                  bool passthroughActive) {
+    if (!passthroughActive) return MaskDecision::Skip;
+    if (snapshotActive) return MaskDecision::ApplySnapshot;
+    return liveActive ? MaskDecision::FailClosed : MaskDecision::Skip;
+}
 static_assert(CanReplaceRank(3, -1)); // P33 regression: newcomer was rejected.
 static_assert(CanReplaceRank(3, 7));
 static_assert(!CanReplaceRank(3, 2));
@@ -24,4 +31,11 @@ static_assert(!CanReplaceRank(-1, -1));
 static_assert(Token(10) + Token(20) == Token(20) + Token(10));
 static_assert(Token(10) + Token(20) != Token(10) + Token(21));
 static_assert(Token(10) + Token(10) != 0);
+// A synchronized tabletop frame always wins over the transient live camera
+// flag. The GameThread deliberately drops that flag while rebuilding a frame.
+static_assert(DecideMask(true, false, true) == MaskDecision::ApplySnapshot);
+static_assert(DecideMask(true, true, true) == MaskDecision::ApplySnapshot);
+static_assert(DecideMask(false, true, true) == MaskDecision::FailClosed);
+static_assert(DecideMask(false, false, true) == MaskDecision::Skip);
+static_assert(DecideMask(true, true, false) == MaskDecision::Skip);
 } // namespace savr::tabletop_flicker

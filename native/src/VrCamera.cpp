@@ -9113,7 +9113,7 @@ bool TabletopAlphaOverflowEnabled() {
                       kTabletopAlphaOverflowProperty, text);
         }
         __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-             "[tabletop.flicker.fix] package=34 alpha_overflow=%d capacity=%d property=%s",
+             "[tabletop.flicker.fix] package=35 alpha_overflow=%d capacity=%d property=%s",
              value ? 1 : 0, kTabletopAlphaOverflowCapacity,
              kTabletopAlphaOverflowProperty);
         return value;

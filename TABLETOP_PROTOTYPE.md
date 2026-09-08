@@ -42,6 +42,12 @@ accumulate mask-transform changes and stereo anomalies over half-second windows.
 No-depth model dispatches are reported separately; these counters are not a
 pixel-level proof of mask correctness. See `PACKAGE_34.md`.
 
+Package 35 fixes a measured cross-thread race in radial-mask presentation. The
+XR thread now trusts the tabletop state captured with the exact leased colour
+and depth generation, rather than the live camera flag that briefly becomes
+false during each GameThread rebuild. This prevents a valid tabletop eye from
+skipping both mask application and fail-closed alpha clearing.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.
