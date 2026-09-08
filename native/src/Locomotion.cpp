@@ -56,10 +56,17 @@ std::atomic<int> g_cutsceneMode{0};
 std::atomic<int> g_gameCutsceneMode{2};
 std::atomic<bool> g_welcomeSeen{false};
 std::map<std::string, int> g_cutsceneCameras;
-// Gameplay bindings. L3/R3 are included but raw stick-click chords used by
-// menus, recentering and cutscenes are deliberately handled before this map.
-constexpr int kBindingDefault[BIND_SRC_COUNT]={
+// Gameplay bindings. Quest splits its face buttons between both hands, unlike
+// a conventional gamepad. Keep movement and sprint on the left hand while the
+// right hand owns jump; X remains a classic attack compatibility button.
+// L3/R3 are included but raw stick-click chords used by menus, recentering and
+// cutscenes are deliberately handled before this map.
+constexpr int kBindingsVersion = 2;
+constexpr int kBindingLegacyDefault[BIND_SRC_COUNT]={
     BIND_ACT_SPRINT, BIND_ACT_ATTACK, BIND_ACT_JUMP, BIND_ACT_ENTER,
+    BIND_ACT_CROUCH, BIND_ACT_NONE};
+constexpr int kBindingDefault[BIND_SRC_COUNT]={
+    BIND_ACT_JUMP, BIND_ACT_SPRINT, BIND_ACT_ATTACK, BIND_ACT_ENTER,
     BIND_ACT_CROUCH, BIND_ACT_NONE};
 constexpr int kBindingSwapped[BIND_SRC_COUNT]={
     BIND_ACT_JUMP, BIND_ACT_ENTER, BIND_ACT_SPRINT, BIND_ACT_ATTACK,
@@ -92,6 +99,7 @@ void Save() {
     for (const auto& [scene, camera] : g_cutsceneCameras)
         std::fprintf(file,"CutsceneCamera.%s=%d\n",scene.c_str(),camera);
     std::fprintf(file,"WelcomeShown=%d\n",g_welcomeSeen.load()?1:0);
+    std::fprintf(file,"BindingsVersion=%d\n",kBindingsVersion);
     std::fprintf(file,"BindA=%d\n",g_binding[0].load());
     std::fprintf(file,"BindB=%d\n",g_binding[1].load());
     std::fprintf(file,"BindX=%d\n",g_binding[2].load());
@@ -113,6 +121,7 @@ void Load() {
     int cutsceneMode=0;
     int gameCutsceneMode=2;
     int welcomeSeen=0;
+    int bindingsVersion=0;
     int bind[BIND_SRC_COUNT]={kBindingDefault[0],kBindingDefault[1],
                               kBindingDefault[2],kBindingDefault[3],
                               kBindingDefault[4],kBindingDefault[5]};
@@ -151,6 +160,8 @@ void Load() {
                 }
                 if (std::sscanf(line,"WelcomeShown=%d",&value)==1)
                     welcomeSeen=value;
+                else if (std::sscanf(line,"BindingsVersion=%d",&value)==1)
+                    bindingsVersion=value;
                 else if (std::sscanf(line,"BindA=%d",&value)==1) bind[0]=value;
                 else if (std::sscanf(line,"BindB=%d",&value)==1) bind[1]=value;
                 else if (std::sscanf(line,"BindX=%d",&value)==1) bind[2]=value;
@@ -165,6 +176,15 @@ void Load() {
             }
         }
         std::fclose(file);
+    }
+    // APK-only updates preserve vr_locomotion.ini. Migrate only the exact
+    // shipped pre-P41 layout; a custom mapping (including SWAPPED HANDS) is
+    // user-owned and must survive untouched.
+    bool legacyDefault = bindingsVersion < kBindingsVersion;
+    for (int i=0;i<BIND_SRC_COUNT;++i)
+        legacyDefault = legacyDefault && bind[i] == kBindingLegacyDefault[i];
+    if (legacyDefault) {
+        for (int i=0;i<BIND_SRC_COUNT;++i) bind[i]=kBindingDefault[i];
     }
     g_movement.store(std::clamp(movement,0,MOVEMENT_COUNT-1));
     g_turn.store(std::clamp(turn,0,TURN_COUNT-1));
@@ -192,6 +212,11 @@ void Load() {
     LOGI("[locomotion] movement=%s turn=%s sensitivity=%d%% snap=%d bob=%d",
          movementName,turnName,g_turnSensitivity.load(),
          g_snapAngle.load(),g_headBob.load());
+    if (legacyDefault) {
+        LOGI("[locomotion] migrated Quest bindings v%d: A=JUMP B=SPRINT X=ATTACK Y=ENTER L3=CROUCH",
+             kBindingsVersion);
+        Save();
+    }
 }
 
 void EnsureInit() { std::call_once(g_initOnce,Load); }

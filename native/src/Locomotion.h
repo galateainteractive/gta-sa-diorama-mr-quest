@@ -90,9 +90,9 @@ void TransformMoveStick(float localHeadYaw, float* x, float* y);
 // menu laser/cursor and its navigation can never be affected by these knobs.
 enum ButtonAction {
     BIND_ACT_NONE = 0,
-    BIND_ACT_SPRINT,   // Cross
-    BIND_ACT_JUMP,     // Square
-    BIND_ACT_ATTACK,   // Circle (vehicle fire stays on the shipped button)
+    BIND_ACT_SPRINT,   // Quest B in the shipped tabletop layout
+    BIND_ACT_JUMP,     // Quest A in the shipped tabletop layout
+    BIND_ACT_ATTACK,   // Quest X compatibility attack; R2 is modern fire
     BIND_ACT_ENTER,    // Triangle
     BIND_ACT_CROUCH,   // L3 in the shipped layout
     BIND_ACT_COUNT

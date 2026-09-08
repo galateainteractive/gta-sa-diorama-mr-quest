@@ -1947,12 +1947,13 @@ bool OnGetSprint(void* pad,int sprintType) {
         if (g_inputBlocked.load(std::memory_order_acquire)||HasPlayerVehicle())
             return false;
         xr::InputState input{}; xr::GetInput(input);
-        // Vice City Cross mapping through the remappable bindings: any face
-        // button assigned to SPRINT feeds Cross, plus R2 as before.
+        // Any face button assigned to SPRINT feeds Cross. In tabletop R2 owns
+        // modern aimed fire and must not also sprint; retain the older R2
+        // sprint alias only in the regular immersive VR camera.
         return locomotion::ActionHeld(locomotion::BIND_ACT_SPRINT,
                                       input.a,input.b,input.x,input.y,
-                                      input.l3,input.r3,true)||
-               input.triggers[1]>=0.50f;
+                                      input.l3,input.r3,true) ||
+               (!vrcam::IsTabletopActive() && input.triggers[1]>=0.50f);
     }
     return g_origSprint?g_origSprint(pad,sprintType):false;
 }

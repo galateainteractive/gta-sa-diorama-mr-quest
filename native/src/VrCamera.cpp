@@ -2700,6 +2700,8 @@ void RequestTabletopRecenter(const char* reason) {
 void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     static bool l3WasDown{};
     static bool r3WasDown{};
+    static bool suppressL3UntilRelease{};
+    static bool suppressLeftGripUntilRelease{};
     static bool initialized{};
     if (!initialized) {
         g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
@@ -2713,11 +2715,14 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
 
     if (!tabletop::Enabled()) return;
 
+    const bool resetChordHeld = input.l3 && input.r3;
     const bool coverageChord = input.grip[1] >= 0.65f && r3Edge;
-    if (!blocked && input.l3 && input.r3 && (l3Edge || r3Edge)) {
+    const bool viewChord = input.grip[0] >= 0.65f && l3Edge && !input.r3;
+    if (!blocked && resetChordHeld && (l3Edge || r3Edge)) {
         ResetTabletopTransform(true);
         xr::TriggerHaptic(0, 0.65f, 90.0f, 70.0f);
         xr::TriggerHaptic(1, 0.65f, 90.0f, 70.0f);
+        suppressL3UntilRelease = true;
     } else if (!blocked && coverageChord) {
         const int next = (g_tabletopCoverageMode.load(
             std::memory_order_relaxed) + 1) % 3;
@@ -2727,7 +2732,7 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
             "[tabletop.diag.event] coverage=%s",
             TabletopCoverageModeName(static_cast<TabletopCoverageMode>(next)));
         xr::TriggerHaptic(1, 0.72f, 115.0f, 75.0f);
-    } else if (!blocked && l3Edge) {
+    } else if (!blocked && viewChord) {
         const int next = (static_cast<int>(g_tabletopTransform.mode) + 1) % 3;
         g_tabletopTransform.mode = static_cast<TabletopViewMode>(next);
         // A mode change deliberately focuses the live player and re-latches
@@ -2738,6 +2743,8 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
             "[tabletop.diag.event] view=%s",
             TabletopViewModeName(g_tabletopTransform.mode));
         xr::TriggerHaptic(0, 0.55f, 80.0f, 55.0f);
+        suppressL3UntilRelease = true;
+        suppressLeftGripUntilRelease = true;
     } else if (!blocked && r3Edge) {
         const float radius = tabletop::CycleRadiusPreset();
         LOGI("[tabletop.controls] radius=%.0fm preset=%d",
@@ -2745,10 +2752,14 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
         xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
     }
 
-    // L3/R3 are tabletop test controls and must not leak into GTA bindings.
-    input.l3 = false;
+    // Plain L3 now belongs to GTA's crouch toggle. Consume it only when it was
+    // part of a tabletop chord; R3 remains wholly owned by tabletop controls.
+    if (!input.l3) suppressL3UntilRelease = false;
+    if (suppressL3UntilRelease) input.l3 = false;
     input.r3 = false;
     if (coverageChord) input.grip[1] = 0.0f;
+    if (input.grip[0] < 0.45f) suppressLeftGripUntilRelease = false;
+    if (suppressLeftGripUntilRelease) input.grip[0] = 0.0f;
 
     if (blocked || !g_origin.valid) {
         g_tabletopTransform.gestureActive = false;
@@ -5054,8 +5065,13 @@ std::atomic<double> g_weaponTargetLastPollMs{0.0};
 // direct pad bridge below is the authoritative route; the widget bridge stays
 // as a compatibility path for mobile-only scripts.
 std::atomic<bool> g_tabletopPadTargetBridgeActive{false};
-std::atomic<double> g_tabletopAimPressUntilMs{0.0};
-std::atomic<double> g_tabletopAimReleaseUntilMs{0.0};
+constexpr std::uint32_t kNoAimEdgeFrame =
+    std::numeric_limits<std::uint32_t>::max();
+std::atomic<std::uint32_t> g_tabletopAimPressFrame{kNoAimEdgeFrame};
+std::atomic<std::uint32_t> g_tabletopAimReleaseFrame{kNoAimEdgeFrame};
+// Only used if the verified retail frame counter is unexpectedly unavailable.
+std::atomic<double> g_tabletopAimPressFallbackUntilMs{0.0};
+std::atomic<double> g_tabletopAimReleaseFallbackUntilMs{0.0};
 // Raw L2 state from the preceding UpdatePads frame. Touch queries execute
 // inside g_origUpdatePads, before this latch is refreshed, which gives the
 // widget bridge a stable JustPressed/IsReleased edge for the whole frame.
@@ -5146,33 +5162,55 @@ int OnPadGetTarget(void* pad, bool camera) {
 }
 
 int OnPadGetEnterTargeting(void* pad) {
-    const int original = PadTargetControlsEnabled(pad) &&
+    const bool controlsEnabled = PadTargetControlsEnabled(pad);
+    const int original = controlsEnabled &&
         g_origPadGetEnterTargetingBody
             ? g_origPadGetEnterTargetingBody(pad) : 0;
-    const bool injected =
+    const std::uint32_t currentFrame = g.CTimer_m_FrameCounter
+        ? *g.CTimer_m_FrameCounter : kNoAimEdgeFrame;
+    const bool sameFrame = currentFrame != kNoAimEdgeFrame &&
+        currentFrame == g_tabletopAimPressFrame.load(std::memory_order_relaxed);
+    const bool fallback = currentFrame == kNoAimEdgeFrame &&
+        NowMs() < g_tabletopAimPressFallbackUntilMs.load(
+                      std::memory_order_relaxed);
+    const bool injected = controlsEnabled &&
         g_tabletopPadTargetBridgeActive.load(std::memory_order_acquire) &&
-        NowMs() < g_tabletopAimPressUntilMs.load(std::memory_order_relaxed);
+        (sameFrame || fallback);
     if (injected) {
-        g_tabletopAimPressUntilMs.store(0.0, std::memory_order_relaxed);
-        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.aim] pad enter targeting=1 original=%d bridge=L2",
-            original ? 1 : 0);
+        static std::uint32_t loggedFrame = kNoAimEdgeFrame;
+        if (currentFrame == kNoAimEdgeFrame || currentFrame != loggedFrame) {
+            loggedFrame = currentFrame;
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.aim] pad enter targeting=1 original=%d frame=%u bridge=L2",
+                original ? 1 : 0, currentFrame);
+        }
     }
     return original || injected;
 }
 
 int OnPadGetExitTargeting(void* pad) {
-    const int original = PadTargetControlsEnabled(pad) &&
+    const bool controlsEnabled = PadTargetControlsEnabled(pad);
+    const int original = controlsEnabled &&
         g_origPadGetExitTargetingBody
             ? g_origPadGetExitTargetingBody(pad) : 0;
-    const bool injected =
+    const std::uint32_t currentFrame = g.CTimer_m_FrameCounter
+        ? *g.CTimer_m_FrameCounter : kNoAimEdgeFrame;
+    const bool sameFrame = currentFrame != kNoAimEdgeFrame &&
+        currentFrame == g_tabletopAimReleaseFrame.load(std::memory_order_relaxed);
+    const bool fallback = currentFrame == kNoAimEdgeFrame &&
+        NowMs() < g_tabletopAimReleaseFallbackUntilMs.load(
+                      std::memory_order_relaxed);
+    const bool injected = controlsEnabled &&
         g_tabletopPadTargetBridgeActive.load(std::memory_order_acquire) &&
-        NowMs() < g_tabletopAimReleaseUntilMs.load(std::memory_order_relaxed);
+        (sameFrame || fallback);
     if (injected) {
-        g_tabletopAimReleaseUntilMs.store(0.0, std::memory_order_relaxed);
-        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.aim] pad exit targeting=1 original=%d bridge=L2",
-            original ? 1 : 0);
+        static std::uint32_t loggedFrame = kNoAimEdgeFrame;
+        if (currentFrame == kNoAimEdgeFrame || currentFrame != loggedFrame) {
+            loggedFrame = currentFrame;
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.aim] pad exit targeting=1 original=%d frame=%u bridge=L2",
+                original ? 1 : 0, currentFrame);
+        }
     }
     return original || injected;
 }
@@ -5640,17 +5678,29 @@ void OnUpdatePads() {
     const bool tabletopAimPrevious = g_tabletopAimPreviousRaw.exchange(
         tabletopAimRaw, std::memory_order_relaxed);
     const double tabletopAimNowMs = NowMs();
+    const std::uint32_t tabletopAimFrame = g.CTimer_m_FrameCounter
+        ? *g.CTimer_m_FrameCounter : kNoAimEdgeFrame;
     if (tabletopAimRaw && !tabletopAimPrevious) {
-        // Player processing asks GetEnterTargeting after UpdatePads, so retain
-        // the controller edge for a few game frames rather than consuming it
-        // inside this input callback.
-        g_tabletopAimPressUntilMs.store(tabletopAimNowMs + 150.0,
+        // Every GetEnterTargeting consumer in this GTA frame must see the
+        // edge. P40 consumed it on the first caller, which could leave the
+        // authoritative player task without the event.
+        g_tabletopAimPressFrame.store(tabletopAimFrame,
+                                      std::memory_order_relaxed);
+        g_tabletopAimReleaseFrame.store(kNoAimEdgeFrame,
                                         std::memory_order_relaxed);
-        g_tabletopAimReleaseUntilMs.store(0.0, std::memory_order_relaxed);
+        g_tabletopAimPressFallbackUntilMs.store(tabletopAimNowMs + 150.0,
+                                                std::memory_order_relaxed);
+        g_tabletopAimReleaseFallbackUntilMs.store(0.0,
+                                                  std::memory_order_relaxed);
     } else if (!tabletopAimRaw && tabletopAimPrevious) {
-        g_tabletopAimReleaseUntilMs.store(tabletopAimNowMs + 150.0,
-                                          std::memory_order_relaxed);
-        g_tabletopAimPressUntilMs.store(0.0, std::memory_order_relaxed);
+        g_tabletopAimReleaseFrame.store(tabletopAimFrame,
+                                        std::memory_order_relaxed);
+        g_tabletopAimPressFrame.store(kNoAimEdgeFrame,
+                                      std::memory_order_relaxed);
+        g_tabletopAimReleaseFallbackUntilMs.store(tabletopAimNowMs + 150.0,
+                                                  std::memory_order_relaxed);
+        g_tabletopAimPressFallbackUntilMs.store(0.0,
+                                                std::memory_order_relaxed);
     }
     const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     UpdateTabletopControls(in, inputBlocked);
@@ -5673,7 +5723,7 @@ void OnUpdatePads() {
     yWasDown = enterHeld;
 
     const bool bothGrips = in.grip[0] >= 0.75f && in.grip[1] >= 0.75f;
-    const bool openChord = bothGrips && (in.menu || in.y);   // B is weapon fire now
+    const bool openChord = bothGrips && (in.menu || in.y);
     const bool stereo = ShouldRunStereo();
     // Tabletop changes the camera and consumes grips only while the fixed map
     // is being manipulated. It must not block the ordinary vehicle queries:
@@ -5894,7 +5944,7 @@ void OnUpdatePads() {
         }
     }
 
-    // On-foot jump through the remappable bindings (VC default: X).
+    // On-foot jump through the remappable bindings (Quest default: A).
     // ButtonSquare (ns[14]) is SA's jump.
     if (vehicle == nullptr &&
         locomotion::ActionHeld(locomotion::BIND_ACT_JUMP,
@@ -5906,7 +5956,7 @@ void OnUpdatePads() {
                                in.a,in.b,in.x,in.y,in.l3,in.r3,true))
         ns[17] = 255;
     // GTA V-style tabletop controls: L2 keeps the stock mobile targeting
-    // widget held, and R2 feeds the same classic attack button as B. This
+    // widget held, and R2 feeds the same classic attack button as X. This
     // deliberately stays out of vehicles and requires a fresh target-widget
     // poll so trigger-driven dialogs do not turn into punches.
     if (vehicle == nullptr && TabletopModernAttackForCombat(in))

@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 41 Quest controller ergonomics and aim release
+
+- Change the shipped on-foot Quest layout to `A` jump, `B` sprint, `X`
+  alternate attack and `Y` enter/exit. Migrate only the exact old default in
+  the preserved locomotion configuration; keep custom mappings untouched.
+- Return plain `L3` to GTA's crouch toggle and move tabletop view cycling to
+  left grip + `L3`. Keep `R3` radius, right grip + `R3` coverage and
+  `L3` + `R3` reset.
+- Publish L2 enter/exit-targeting edges to every consumer in the exact GTA
+  frame rather than consuming them on the first query, so releasing L2
+  reliably lowers the weapon. Reserve tabletop `R2` for aimed fire instead of
+  simultaneously treating it as sprint.
+
 ## Package 40 controller combat and nearby-ped correction
 
 - Route tabletop `L2` through GTA SA Android's native `CPad::GetTarget`,

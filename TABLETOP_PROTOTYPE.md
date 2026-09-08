@@ -16,7 +16,15 @@ the retail game's coordinate system.
 
 Runtime controls:
 
-- `L3`: alternate between the original follow-player view and a fixed table;
+- `A`: jump on foot;
+- `B`: sprint on foot;
+- `X`: alternate classic attack on foot;
+- `Y`: enter or exit a vehicle;
+- `L2`: hold GTA's native targeting state; releasing it lowers the weapon;
+- `R2`: fire while `L2` is held;
+- `L3`: toggle crouch on foot;
+- left grip + `L3`: cycle the original follow-player, fixed-table and
+  conveyor-style views;
 - fixed table + one grip: drag the model through the room;
 - fixed table + both grips: move, rotate and resize the model (hands farther
   apart make it larger; hands closer make it smaller);
@@ -72,7 +80,9 @@ aiming. The modern trigger layout routes `L2` through GTA Android's native
 `CPad::GetTarget`, `GetEnterTargeting` and `GetExitTargeting` lifecycle, while
 retaining `widget_target` as a mobile-script compatibility path. `L2` + `R2`
 merges into `CPad::GetWeapon` for punches, melee, guns and spray weapons without
-depending on a touch-widget poll; `B` remains a compatibility attack binding.
+depending on a touch-widget poll; `X` remains a compatibility attack binding.
+Targeting press/release edges remain visible to every native consumer for the
+exact GTA frame, so one early query cannot steal the L2-release event from CJ.
 The bridge stays on foot and outside tabletop grabs, preserving vehicle trigger
 controls. Diagnostic captures report `[tabletop.aim]` for the direct pad/widget
 target lifecycle, attack source and GTA's selected target pointers;

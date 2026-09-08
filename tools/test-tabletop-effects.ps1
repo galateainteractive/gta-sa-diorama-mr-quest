@@ -115,3 +115,36 @@ if (-not $attackBody.Success -or
     throw 'Package 40 R2 still depends on a widget/target poll'
 }
 Write-Output 'PASS Package 40 direct CPad targeting, independent R2 and CJ ped safety'
+
+# Package 41 makes the controller layout fit Quest's split face buttons and
+# makes targeting edges frame-coherent instead of first-caller one-shots.
+$locomotionSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\Locomotion.cpp')
+$drivingSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\Driving.cpp')
+foreach ($sourcePattern in @(
+        '(?s)kBindingDefault\[BIND_SRC_COUNT\].*?BIND_ACT_JUMP,\s*BIND_ACT_SPRINT,\s*BIND_ACT_ATTACK,\s*BIND_ACT_ENTER',
+        'BindingsVersion=%d',
+        'kBindingLegacyDefault',
+        'migrated Quest bindings')) {
+    if ($locomotionSource -notmatch $sourcePattern) {
+        throw "Package 41 Quest binding/migration audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'viewChord = input\.grip\[0\].*?l3Edge',
+        'suppressL3UntilRelease',
+        'if \(suppressL3UntilRelease\) input\.l3 = false',
+        'g_tabletopAimPressFrame',
+        'g_tabletopAimReleaseFrame',
+        'currentFrame == g_tabletopAimReleaseFrame',
+        'frame=%u bridge=L2')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 41 tabletop control/aim audit failed: $sourcePattern"
+    }
+}
+if ($cameraSource -match '(?m)^\s*input\.l3 = false;' -or
+    $drivingSource -notmatch '!vrcam::IsTabletopActive\(\).*?input\.triggers\[1\]') {
+    throw 'Package 41 still consumes plain L3 or lets tabletop R2 sprint'
+}
+Write-Output 'PASS Package 41 Quest bindings, crouch ownership and frame-coherent L2 release'
