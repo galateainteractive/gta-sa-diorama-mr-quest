@@ -1938,9 +1938,11 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         const bool attackHeld = savr::locomotion::ActionHeld(
             savr::locomotion::BIND_ACT_ATTACK,
             in.a,in.b,in.x,in.y,in.l3,in.r3,!driving);
+        const bool modernTriggerAttack = !driving &&
+            savr::vrcam::IsTabletopModernAttackActive();
         static bool pa = false, pb = false, px = false;
         edge(sprintHeld, pa, 0);
-        edge(driving ? false : attackHeld, pb, 1);
+        edge(driving ? false : (attackHeld || modernTriggerAttack), pb, 1);
         // In a vehicle X is owned by Driving's exact NextStationJustUp hook;
         // keep Square released so it cannot compete with the L2 brake mapping.
         edge(driving ? false : jumpHeld, px, 2);

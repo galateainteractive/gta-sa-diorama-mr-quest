@@ -70,3 +70,25 @@ if ($xrSource -notmatch 'kPassthroughWeatherIntensity\s*=\s*3\.0f' -or
     throw 'Package 38 navigation/weather source audit failed'
 }
 Write-Output 'PASS Package 38 navigation range and weather validation intensity'
+
+# Package 39 keeps combat on GTA's classic task, but supplies a complete
+# mobile target-widget lifecycle and a context-gated modern trigger alias.
+$cameraSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\VrCamera.cpp')
+$fireSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\VrFire.cpp')
+$mainSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\main.cpp')
+foreach ($sourcePattern in @('TabletopModernAimRaw\(',
+                             'TabletopModernAttackForCombat\(',
+                             'target widget justpressed=.*bridge=L2',
+                             'target widget released=1 bridge=L2')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 39 target bridge audit failed: $sourcePattern"
+    }
+}
+if ($cameraSource -match 'target widget .*bridge=none' -or
+    $fireSource -notmatch 'IsTabletopModernAttackActive\(' -or
+    $fireSource -notmatch 'targets=lock:%p/free:%p' -or
+    $mainSource -notmatch 'attackHeld \|\| modernTriggerAttack' -or
+    $cameraSource -notmatch 'tabletopCombatReleaseGate') {
+    throw 'Package 39 modern combat routing audit failed'
+}
+Write-Output 'PASS Package 39 L2 target lifecycle, R2 attack and prompt isolation'

@@ -32,6 +32,13 @@ bool IsStereoActive();
 // miniature-world camera. Cutscenes and fallback frames remain upstream VR.
 bool IsTabletopActive();
 
+// Modern tabletop combat controls. The mobile game's own widget_target poll
+// remains authoritative: L2 holds aim/lock only while that widget is live,
+// and R2 becomes attack/fire while L2 is held. Vehicles and non-combat touch
+// prompts retain their existing trigger meanings.
+bool IsTabletopModernAimActive();
+bool IsTabletopModernAttackActive();
+
 // Re-evaluate the stereo/theater gate. Called once per frame from the input
 // pump: the camera hook that normally maintains it stops running while the
 // game's own pause menu owns the frame, which used to freeze the last stereo

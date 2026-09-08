@@ -1,5 +1,15 @@
 # Changelog
 
+## Package 39 modern tabletop combat controls
+
+- Bridge Quest L2 to GTA Android's retail `widget_target` press, hold and
+  release lifecycle while Tabletop combat is active.
+- Merge R2 into the classic attack query while L2 is held, covering firearms,
+  spray weapons and melee; keep `B` as a compatibility attack binding.
+- Preserve vehicle brake/accelerator triggers, tabletop grips and non-combat
+  R2/L2 prompt answers through context gating. Add target-pointer diagnostics
+  for headset validation. See `PACKAGE_39.md`.
+
 ## Package 38 navigation beacon and weather validation
 
 - Promote the waypoint selected on GTA's pause map to a lightweight translucent

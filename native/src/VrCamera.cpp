@@ -5046,6 +5046,13 @@ constexpr int kParachuteDeployWidget = 187;
 // ANSWER0..ANSWER5 / CELSKIP GXT keys — the incoming-call answer flow.
 constexpr int kPhoneAnswerWidget = 8;
 constexpr int kWeaponTargetWidget = 19; // widget_target / enter targeting
+constexpr float kTabletopCombatTriggerPress = 0.55f;
+constexpr double kWeaponTargetPollFreshMs = 500.0;
+std::atomic<double> g_weaponTargetLastPollMs{0.0};
+// Raw L2 state from the preceding UpdatePads frame. Touch queries execute
+// inside g_origUpdatePads, before this latch is refreshed, which gives the
+// widget bridge a stable JustPressed/IsReleased edge for the whole frame.
+std::atomic<bool> g_tabletopAimPreviousRaw{false};
 // DrawHelpIcon name map (2.11 chain @0x502270): the world "press to start /
 // quit" prompt widgets scripts poll near mission markers and minigame gear,
 // and the basketball shot button basketb.scm HOLDS (opcode 0A51 maps to
@@ -5064,6 +5071,37 @@ std::atomic<bool> g_parachuteDeployPullRequested{false};
 // ownership is untouched and becomes visible again as soon as the canopy is
 // open or the parachute state ends.
 std::atomic<bool> g_hideWeaponsForChuteDeploy{false};
+
+bool TabletopModernAimRaw(const xr::InputState& in) {
+    if (!g_tabletopActive.load(std::memory_order_acquire) ||
+        g_inputBlocked.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    if (g.FindPlayerVehicle && g.FindPlayerVehicle(-1, false)) return false;
+    // Either grip belongs to tabletop manipulation and its menu chords. Never
+    // let a map grab also enter GTA's targeting state.
+    if (in.grip[0] >= 0.55f || in.grip[1] >= 0.55f) return false;
+    return in.triggers[0] >= kTabletopCombatTriggerPress;
+}
+
+bool WeaponTargetPollFresh() {
+    const double last = g_weaponTargetLastPollMs.load(std::memory_order_relaxed);
+    const double now = NowMs();
+    return last > 0.0 && now >= last && now - last <= kWeaponTargetPollFreshMs;
+}
+
+void NoteWeaponTargetPoll() {
+    g_weaponTargetLastPollMs.store(NowMs(), std::memory_order_relaxed);
+}
+
+bool TabletopModernAimForCombat(const xr::InputState& in) {
+    return TabletopModernAimRaw(in) && WeaponTargetPollFresh();
+}
+
+bool TabletopModernAttackForCombat(const xr::InputState& in) {
+    return TabletopModernAimForCombat(in) &&
+           in.triggers[1] >= kTabletopCombatTriggerPress;
+}
 
 // The skydive/parachute state: on foot, parachute is the active weapon, and
 // the ped is genuinely airborne.
@@ -5237,6 +5275,12 @@ int OnWidgetHeldDown(int widgetId, int touchIndex) {
     const int original = g_origWidgetHeldDown
         ? g_origWidgetHeldDown(widgetId, touchIndex) : 0;
     LogWidgetPoll("held", widgetId);
+    if (widgetId == kWeaponTargetWidget) {
+        NoteWeaponTargetPoll();
+        xr::InputState aimIn{};
+        xr::GetInput(aimIn);
+        if (!original && TabletopModernAimRaw(aimIn)) return 1;
+    }
     if ((widgetId == 160 || widgetId == 156) &&
         NowMs() >= g_promptStatsUntilMs.load(std::memory_order_relaxed))
         return original;
@@ -5276,14 +5320,25 @@ int OnWidgetJustPressed(int widgetId, void* outTouchPos, int touchIndex) {
     const int original = g_origWidgetJustPressed
         ? g_origWidgetJustPressed(widgetId, outTouchPos, touchIndex) : 0;
     LogWidgetPoll("justpressed", widgetId);
-    if (widgetId == kWeaponTargetWidget &&
-        g_tabletopActive.load(std::memory_order_acquire)) {
+    if (widgetId == kWeaponTargetWidget) {
+        NoteWeaponTargetPoll();
+        xr::InputState aimIn{};
+        xr::GetInput(aimIn);
+        const bool aimHeld = TabletopModernAimRaw(aimIn);
+        const bool injected = aimHeld &&
+            !g_tabletopAimPreviousRaw.load(std::memory_order_relaxed);
         static double lastAimLogMs = 0.0;
         const double nowMs = NowMs();
-        if (original || nowMs - lastAimLogMs >= 2000.0) {
+        if ((original || injected) && nowMs - lastAimLogMs >= 250.0) {
             lastAimLogMs = nowMs;
-            LOGI("[tabletop.aim] target widget justpressed=%d bridge=none",
-                 original ? 1 : 0);
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.aim] target widget justpressed=%d bridge=L2 injected=%d",
+                original ? 1 : 0, injected ? 1 : 0);
+        }
+        if (!original && injected) {
+            FillTouchPos(outTouchPos);
+            return 1;
         }
     }
     if (!original && PromptAnswerableWidget(widgetId) &&
@@ -5300,14 +5355,25 @@ int OnWidgetTouchedQuery(int widgetId, void* outTouchPos, int touchIndex) {
     const int original = g_origWidgetTouched
         ? g_origWidgetTouched(widgetId, outTouchPos, touchIndex) : 0;
     LogWidgetPoll("touched", widgetId);
-    if (widgetId == kWeaponTargetWidget &&
-        g_tabletopActive.load(std::memory_order_acquire)) {
+    if (widgetId == kWeaponTargetWidget) {
+        NoteWeaponTargetPoll();
+        xr::InputState aimIn{};
+        xr::GetInput(aimIn);
+        const bool injected = TabletopModernAimRaw(aimIn);
+        const bool aimEdge = injected &&
+            !g_tabletopAimPreviousRaw.load(std::memory_order_relaxed);
         static double lastAimLogMs = 0.0;
         const double nowMs = NowMs();
-        if (original || nowMs - lastAimLogMs >= 2000.0) {
+        if (aimEdge || (injected && nowMs - lastAimLogMs >= 2000.0)) {
             lastAimLogMs = nowMs;
-            LOGI("[tabletop.aim] target widget held=%d bridge=none",
-                 original ? 1 : 0);
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.aim] target widget held=%d bridge=L2 injected=%d",
+                original ? 1 : 0, injected ? 1 : 0);
+        }
+        if (!original && injected) {
+            FillTouchPos(outTouchPos);
+            return 1;
         }
     }
     // Basketball shot charge: basketb.scm holds widget_basketball_shoot via
@@ -5346,6 +5412,23 @@ bool PromptAnswerableWidget(int widgetId);
 bool OnWidgetReleased(int widgetId, void* outTouchPos, int touchIndex) {
     const bool original = g_origWidgetReleased &&
         g_origWidgetReleased(widgetId, outTouchPos, touchIndex);
+    if (widgetId == kWeaponTargetWidget) {
+        NoteWeaponTargetPoll();
+        xr::InputState aimIn{};
+        xr::GetInput(aimIn);
+        const bool released = !TabletopModernAimRaw(aimIn) &&
+            g_tabletopAimPreviousRaw.load(std::memory_order_relaxed);
+        if (!original && released) {
+            FillTouchPos(outTouchPos);
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.aim] target widget released=1 bridge=L2");
+            return true;
+        }
+        // Target is a live gameplay control, never a candidate for the
+        // generic two-widget accept/decline prompt detector below.
+        return original;
+    }
     // HUD tutorial buttons (stats view and friends) accept a direct R2 tap
     // through their own window: the continuously-polled 168/31 yes/no pair
     // consumes the shared accept window before these are ever asked.
@@ -5479,6 +5562,9 @@ void OnUpdatePads() {
 
     xr::InputState in{};
     xr::GetInput(in);
+    const bool tabletopAimRaw = TabletopModernAimRaw(in);
+    g_tabletopAimPreviousRaw.store(tabletopAimRaw,
+                                   std::memory_order_relaxed);
     const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     UpdateTabletopControls(in, inputBlocked);
     float mappedMoveX=0.0f,mappedMoveY=0.0f;
@@ -5732,6 +5818,12 @@ void OnUpdatePads() {
         locomotion::ActionHeld(locomotion::BIND_ACT_ATTACK,
                                in.a,in.b,in.x,in.y,in.l3,in.r3,true))
         ns[17] = 255;
+    // GTA V-style tabletop controls: L2 keeps the stock mobile targeting
+    // widget held, and R2 feeds the same classic attack button as B. This
+    // deliberately stays out of vehicles and requires a fresh target-widget
+    // poll so trigger-driven dialogs do not turn into punches.
+    if (vehicle == nullptr && TabletopModernAttackForCombat(in))
+        ns[17] = 255;
 
     // Crouch on L3, driven straight through the duck secondary task. Every
     // mobile PAD path is dead: GetDuck (@0x49ef8c) and DuckJustDown
@@ -5813,8 +5905,25 @@ void OnUpdatePads() {
         physicalweapon::HeldHandMaskRelaxed() == 0 &&
         !ParachuteStateActive()) {
         static bool promptR2Prev = false, promptL2Prev = false;
-        const bool r2 = in.triggers[1] >= 0.70f;
-        const bool l2 = in.triggers[0] >= 0.70f;
+        const bool tabletopCombatAim = TabletopModernAimForCombat(in);
+        const bool rawR2 = in.triggers[1] >= 0.70f;
+        const bool rawL2 = in.triggers[0] >= 0.70f;
+        // Releasing aim before fire is natural. Keep both triggers quarantined
+        // from prompts/recruitment until they have BOTH returned to rest, so
+        // that release order cannot turn the tail of a shot into ACCEPT.
+        static bool tabletopCombatReleaseGate = false;
+        if (tabletopCombatAim) tabletopCombatReleaseGate = true;
+        if (tabletopCombatReleaseGate &&
+            in.triggers[0] <= 0.30f && in.triggers[1] <= 0.30f) {
+            tabletopCombatReleaseGate = false;
+        }
+        // While GTA's targeting widget owns L2, suppress the generic prompt
+        // bridge completely. Outside that live combat context the old R2=yes,
+        // L2=no behavior is unchanged.
+        const bool promptTriggersAllowed = !tabletopCombatAim &&
+            !tabletopCombatReleaseGate;
+        const bool r2 = promptTriggersAllowed && rawR2;
+        const bool l2 = promptTriggersAllowed && rawL2;
         const double nowPromptMs = NowMs();
         if (r2 && !promptR2Prev)
             g_promptAcceptUntilMs.store(nowPromptMs + 300.0,
@@ -5958,8 +6067,10 @@ void OnUpdatePads() {
             g_promptHudUntilMs.store(nowPromptMs + 400.0,
                                      std::memory_order_relaxed);
         }
-        promptR2Prev = r2;
-        promptL2Prev = l2;
+        // Track physical levels even while gated. Once combat releases, a
+        // still-held trigger is not misread as a new prompt edge.
+        promptR2Prev = rawR2;
+        promptL2Prev = rawL2;
         g_promptHoldActive.store(r2 && stickQuiet,
                                  std::memory_order_relaxed);
     } else {
@@ -30945,6 +31056,18 @@ bool InstallTrafficShell() {
 }
 
 } // namespace
+
+bool IsTabletopModernAimActive() {
+    xr::InputState in{};
+    xr::GetInput(in);
+    return TabletopModernAimForCombat(in);
+}
+
+bool IsTabletopModernAttackActive() {
+    xr::InputState in{};
+    xr::GetInput(in);
+    return TabletopModernAttackForCombat(in);
+}
 
 void BeginGameFrameTelemetry(double callbackStartMonoMs,
                              double callbackStartCpuMs) {

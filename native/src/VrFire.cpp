@@ -265,9 +265,12 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
         (!g.FindPlayerVehicle || g.FindPlayerVehicle(-1, false) == nullptr)) {
         xr::InputState input{};
         xr::GetInput(input);
-        const bool attack = locomotion::ActionHeld(
+        const bool buttonAttack = locomotion::ActionHeld(
             locomotion::BIND_ACT_ATTACK, input.a, input.b, input.x, input.y,
             input.l3, input.r3, true);
+        const bool modernTriggerAttack =
+            vrcam::IsTabletopModernAttackActive();
+        const bool attack = buttonAttack || modernTriggerAttack;
         int slot = -1;
         int weaponType = 0;
         if (playerPed) {
@@ -294,11 +297,17 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
             }
             const float heading = g.FindPlayerHeading
                 ? g.FindPlayerHeading(0) : 0.0f;
+            void* lockTarget = nullptr;
+            void* freeAimTarget = nullptr;
             Vec3 actorForward{};
             bool haveActorForward = false;
             if (playerPed) {
                 const auto* const pedBytes =
                     static_cast<const std::uint8_t*>(playerPed);
+                std::memcpy(&lockTarget, pedBytes + 0x8E0,
+                            sizeof(lockTarget));
+                std::memcpy(&freeAimTarget, pedBytes + 0x8E8,
+                            sizeof(freeAimTarget));
                 const auto* const matrix =
                     *reinterpret_cast<const std::uint8_t* const*>(
                         pedBytes + 0x18);
@@ -310,14 +319,19 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
             }
             __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
                  "[tabletop.aim] attack edge weapon=%d slot=%d vanilla=%d "
-                 "buttons=A%d/B%d/X%d/Y%d R2=%.2f camera_mode=%d heading=%.3f "
+                 "buttons=A%d/B%d/X%d/Y%d L2/R2=%.2f/%.2f modern=%d "
+                 "camera_mode=%d heading=%.3f "
+                 "targets=lock:%p/free:%p "
                  "actor_forward=(%.3f,%.3f,%.3f) "
-                 "route=classic_no_physical_ray",
+                 "route=classic_target_widget_no_physical_ray",
                  weaponType, slot, vanilla,
                  input.a ? 1 : 0, input.b ? 1 : 0,
                  input.x ? 1 : 0, input.y ? 1 : 0,
-                 static_cast<double>(input.triggers[1]), cameraMode,
+                 static_cast<double>(input.triggers[0]),
+                 static_cast<double>(input.triggers[1]),
+                 modernTriggerAttack ? 1 : 0, cameraMode,
                  static_cast<double>(heading),
+                 lockTarget, freeAimTarget,
                  haveActorForward ? static_cast<double>(actorForward.x) : 0.0,
                  haveActorForward ? static_cast<double>(actorForward.y) : 0.0,
                  haveActorForward ? static_cast<double>(actorForward.z) : 0.0);

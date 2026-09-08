@@ -68,9 +68,14 @@ selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.
 
 Tabletop attacks use GTA's classic combat task rather than tracked physical-hand
-aiming. `B` is merged into `CPad::GetWeapon` for punches, melee, guns and spray
-weapons. Diagnostic captures report `[tabletop.aim]` for attack edges and
-`[tabletop.aim.area]` for the actual spray-area arguments and actor direction.
+aiming. The modern trigger layout holds GTA Android's own `widget_target` with
+`L2`, then merges `R2` into `CPad::GetWeapon` for punches, melee, guns and spray
+weapons. `B` remains a compatibility attack binding. The trigger bridge is live
+only on foot while the retail target widget is being polled, so vehicle
+`L2`/`R2`, tabletop grips and non-combat prompt answers keep their established
+meanings. Diagnostic captures report `[tabletop.aim]` for target lifecycle,
+attack source and GTA's selected target pointers; `[tabletop.aim.area]` reports
+the actual spray-area arguments and actor direction.
 
 The fixed view captures the current player/vehicle frame once. Character and
 vehicle controls continue to use the stock gameplay path while the physical

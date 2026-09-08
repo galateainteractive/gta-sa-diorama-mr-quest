@@ -50,6 +50,9 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 'snapshot_authority=%llu',
                 '[tabletop.aim] attack edge',
                 '[tabletop.aim.area]',
+                'target widget justpressed=%d bridge=L2 injected=%d',
+                'target widget released=1 bridge=L2',
+                'route=classic_target_widget_no_physical_ray',
                 'debug.savr.tabletop_far_beacons'
             )) {
                 if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }
