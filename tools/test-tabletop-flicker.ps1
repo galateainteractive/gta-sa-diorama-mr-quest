@@ -11,6 +11,11 @@ if ($source -notmatch 'DecideMask\(\s*mask\.active, liveActive, passthroughActiv
     throw 'Synchronized mask snapshot is not authoritative in player source'
 }
 Write-Output 'PASS captured mask snapshot outranks transient live camera flag'
+if ($source -match 'SetPassthroughActive\(\s*tabletop::PassthroughEnabled\(\)\s*&&\s*vrcam::IsTabletopActive' -or
+    $source -notmatch 'ShouldSubmitPassthrough\(\s*projectionTabletop') {
+    throw 'Passthrough lifecycle still follows the transient live camera flag'
+}
+Write-Output 'PASS passthrough lifecycle follows synchronized projection state'
 if (-not (Select-String -LiteralPath $cache -SimpleMatch 'SAVR_DEV:BOOL=OFF' -Quiet)) {
     throw 'Test requires the real player build (SAVR_DEV=OFF)'
 }
@@ -39,7 +44,8 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 '[tabletop.flicker.fix] retained=',
                 '[tabletop.flicker.identity] membership=v2',
                 '[tabletop.flicker.alpha_depth]',
-                '[tabletop.flicker.mask_window] package=35',
+                '[tabletop.flicker.mask_window] package=36',
+                '[tabletop.flicker.passthrough] package=36',
                 'window_frames=%u failed_masks=',
                 'snapshot_authority=%llu',
                 '[tabletop.aim] attack edge',

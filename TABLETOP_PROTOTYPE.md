@@ -48,6 +48,12 @@ and depth generation, rather than the live camera flag that briefly becomes
 false during each GameThread rebuild. This prevents a valid tabletop eye from
 skipping both mask application and fail-closed alpha clearing.
 
+Package 36 closes the second consumer of that transient flag. Passthrough stays
+running while the focused session is configured for it, and its composition
+layer is submitted only when the exact synchronized projection (including a
+cached repeat) is a tabletop frame. Camera rebuild timing therefore cannot turn
+one accepted tabletop projection into an opaque full-world flash.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

@@ -23,6 +23,14 @@ constexpr MaskDecision DecideMask(bool snapshotActive, bool liveActive,
     if (snapshotActive) return MaskDecision::ApplySnapshot;
     return liveActive ? MaskDecision::FailClosed : MaskDecision::Skip;
 }
+// Passthrough presentation follows the exact projection frame selected by the
+// XR consumer. It must not follow the GameThread's transient live camera flag,
+// which is deliberately cleared while the next tabletop camera is rebuilt.
+constexpr bool ShouldSubmitPassthrough(bool projectionTabletop,
+                                       bool backendActive,
+                                       bool configured) {
+    return projectionTabletop && backendActive && configured;
+}
 static_assert(CanReplaceRank(3, -1)); // P33 regression: newcomer was rejected.
 static_assert(CanReplaceRank(3, 7));
 static_assert(!CanReplaceRank(3, 2));
@@ -38,4 +46,8 @@ static_assert(DecideMask(true, true, true) == MaskDecision::ApplySnapshot);
 static_assert(DecideMask(false, true, true) == MaskDecision::FailClosed);
 static_assert(DecideMask(false, false, true) == MaskDecision::Skip);
 static_assert(DecideMask(true, true, false) == MaskDecision::Skip);
+static_assert(ShouldSubmitPassthrough(true, true, true));
+static_assert(!ShouldSubmitPassthrough(false, true, true));
+static_assert(!ShouldSubmitPassthrough(true, false, true));
+static_assert(!ShouldSubmitPassthrough(true, true, false));
 } // namespace savr::tabletop_flicker

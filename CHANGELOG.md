@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 36 frame-bound passthrough lifecycle fix
+
+- Fix the second confirmed cross-thread path behind whole-radius scenery
+  flashes: the XR loop can no longer pause passthrough because the GameThread
+  briefly clears its live camera flag during a normal tabletop rebuild.
+- Keep the backend alive while focused, but submit its layer only for the exact
+  synchronized tabletop projection frame; preserve that decision in cached
+  repeated frames.
+- Add bounded lifecycle telemetry for a decisive headset confirmation. Preserve
+  fade, radii, gameplay, audio and user data. See `PACKAGE_36.md`.
+
 ## Package 35 synchronized-frame radial mask fix
 
 - Fix the confirmed cross-thread race that intermittently skipped the radial

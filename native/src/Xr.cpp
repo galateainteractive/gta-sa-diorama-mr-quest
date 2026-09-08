@@ -11487,7 +11487,7 @@ void ObserveTabletopMaskInputs(const TabletopMaskState& mask,
     seen[eye] = true;
     if (eye != 1 || now - w.start < 500000000ULL) return;
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-        "[tabletop.flicker.mask_window] package=35 eyes=%d inactive=%d invalid=%d "
+        "[tabletop.flicker.mask_window] package=36 eyes=%d inactive=%d invalid=%d "
         "mode=%d changes=%d bridge=%d changes=%d "
         "scale=%.5f..%.5f radius=%.3f..%.3f near=%.4f..%.4f far=%.1f..%.1f "
         "max_step=center:%.4f/viewer:%.4f/axis:%.4f/scale:%.5f/radius:%.4f/pose:%.4f "
@@ -12084,6 +12084,7 @@ void DrawHandsForEye(const XrPosef& rp, int e, int fbW, int fbH,
 // slot's GPU lease with another fence.
 struct StereoRepeatProjectionCache {
     bool valid{};
+    bool tabletop{};
     std::uint64_t epoch{};
     int sequence{-1};
     XrSession session{XR_NULL_HANDLE};
@@ -12122,7 +12123,8 @@ bool BuildCachedStereoEyeProjection(
         int requestedSequence, std::uint64_t epoch,
         double sequenceAgeMs, int& submittedSequence,
         double& submittedSequenceAgeMs,
-        perf::StereoProjectionOutcome& outcome) {
+        perf::StereoProjectionOutcome& outcome,
+        bool& submittedTabletop) {
     const auto& cache = g_stereoRepeatProjectionCache;
     if (g_zeroCopyRepeatDisabledUntilRestart || !cache.valid ||
         requestedSequence < 0 || requestedSequence != cache.sequence ||
@@ -12147,12 +12149,13 @@ bool BuildCachedStereoEyeProjection(
     submittedSequence = requestedSequence;
     submittedSequenceAgeMs = sequenceAgeMs;
     outcome = perf::StereoProjectionOutcome::Submitted;
+    submittedTabletop = cache.tabletop;
     return true;
 }
 
 void CommitStereoRepeatProjectionCache(
         int sequence, std::uint64_t epoch,
-        const XrCompositionLayerProjectionView views[2]) {
+        const XrCompositionLayerProjectionView views[2], bool tabletop) {
     if (sequence < 0 || s.session == XR_NULL_HANDLE ||
         s.space == XR_NULL_HANDLE || s.swapchains.size() < 2 ||
         s.swapchains[0].poisoned || s.swapchains[1].poisoned) {
@@ -12162,6 +12165,7 @@ void CommitStereoRepeatProjectionCache(
 
     StereoRepeatProjectionCache next{};
     next.valid = true;
+    next.tabletop = tabletop;
     next.epoch = epoch;
     next.sequence = sequence;
     next.session = s.session;
@@ -12189,7 +12193,8 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                                double& submittedSequenceAgeMs,
                                perf::StereoProjectionOutcome& outcome,
                                unsigned int& eyeReleaseFailureMask,
-                               FxaaFrameStats& fxaaStats) {
+                               FxaaFrameStats& fxaaStats,
+                               bool& submittedTabletop) {
     BeginXrStageProfilerFrame();
     // From the first acquire onward, a partial left/right failure can change the
     // runtime's implicit image for only one eye.  Retire the old pair before any
@@ -12599,6 +12604,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     layer.viewCount = 2;
     layer.views     = views;
     submittedSequence = expectedGeneration;
+    submittedTabletop = tabletopMask.active;
     outcome = perf::StereoProjectionOutcome::Submitted;
     return true;
 }
@@ -12626,9 +12632,12 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         nanosleep(&idle, nullptr);
         return;
     }
-    SetPassthroughActive(
-        tabletop::PassthroughEnabled() && vrcam::IsTabletopActive() &&
-        s.sessionState == XR_SESSION_STATE_FOCUSED);
+    // Keep the backend alive for the focused session. GameThread temporarily
+    // clears IsTabletopActive while rebuilding a camera; using that live signal
+    // here used to pause the FB layer between two synchronized tabletop frames,
+    // producing a one-frame full-world flash outside the radial mask.
+    SetPassthroughActive(tabletop::PassthroughEnabled() &&
+                         s.sessionState == XR_SESSION_STATE_FOCUSED);
 
     // (Re)apply CPU/GPU perf hints and the app-main thread pin when they change
     // (menu edit, or the GameThread TID first arriving). Cheap when not dirty.
@@ -12793,6 +12802,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     bool zeroCopyRepeat = false;
     bool repeatCopyFallback = false;
     bool projectionLayerSubmitted = false;
+    bool projectionTabletop = false;
     bool projectionFullCopy = false;
     std::uint64_t projectionEpoch = 0;
     int telemetryRecoveryProgress = 0;
@@ -13027,7 +13037,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
                     eyeProjection, eyeViews, candidate.sequence,
                     candidateEpoch, candidate.ageMs,
                     submittedStereoSequence, submittedStereoSequenceAgeMs,
-                    stereoProjectionOutcome)) {
+                    stereoProjectionOutcome, projectionTabletop)) {
                 zeroCopyRepeat = true;
                 projectionReady = true;
             } else if (submitProjection) {
@@ -13037,7 +13047,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
                     eyeProjection, eyeViews, candidate.sequence,
                     submittedStereoSequence, stereoGenerationRace,
                     submittedStereoSequenceAgeMs, stereoProjectionOutcome,
-                    eyeReleaseFailureMask, fxaaStats);
+                    eyeReleaseFailureMask, fxaaStats, projectionTabletop);
                 projectionFullCopy = projectionReady;
             }
 
@@ -13098,10 +13108,28 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         }
     }
 
+    const bool passthroughBackendActive =
+        g_passthroughActive.load(std::memory_order_acquire);
     const bool submitPassthrough = frameState.shouldRender == XR_TRUE &&
         projectionLayerSubmitted &&
-        g_passthroughActive.load(std::memory_order_acquire) &&
-        tabletop::PassthroughEnabled();
+        tabletop_flicker::ShouldSubmitPassthrough(
+            projectionTabletop, passthroughBackendActive,
+            tabletop::PassthroughEnabled());
+    if (tabletop::PassthroughEnabled()) {
+        static long long nextPassthroughAuditNs = 0;
+        const long long now = nowNs();
+        if (now >= nextPassthroughAuditNs) {
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.flicker.passthrough] package=36 backend=%d "
+                "projection=%d submit=%d live=%d",
+                passthroughBackendActive ? 1 : 0,
+                projectionTabletop ? 1 : 0,
+                submitPassthrough ? 1 : 0,
+                vrcam::IsTabletopActive() ? 1 : 0);
+            nextPassthroughAuditNs = now + 500000000LL;
+        }
+    }
     if (submitPassthrough) {
         eyeProjection.layerFlags |=
             XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
@@ -13136,7 +13164,8 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
             if (projectionEpoch ==
                 g_stereoResetEpoch.load(std::memory_order_acquire)) {
                 CommitStereoRepeatProjectionCache(
-                    submittedStereoSequence, projectionEpoch, eyeViews);
+                    submittedStereoSequence, projectionEpoch, eyeViews,
+                    projectionTabletop);
             } else {
                 InvalidateStereoRepeatProjectionCache();
             }
