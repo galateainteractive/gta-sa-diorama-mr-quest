@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 42 bounded XR slowdown diagnostic
+
+- Expose one compact release-build `[tabletop.perf42]` aggregate per second,
+  using counters already collected for adaptive pacing. It correlates GTA frame
+  production with OpenXR presentation, runtime CPU/GPU frame time, compositor
+  waits, application work, `xrEndFrame`, repeated frames, synchronization/fence
+  waits and scene pressure.
+- Report once at startup whether Quest exposes the META CPU/GPU performance
+  counters, and report only event-driven OpenXR performance/thermal warning and
+  recovery transitions.
+- Add no per-frame logging, file output, GL query, runtime query or rendering
+  change. Preserve Package 41 graphics, controls, passthrough and game data.
+
 ## Package 41 Quest controller ergonomics and aim release
 
 - Change the shipped on-foot Quest layout to `A` jump, `B` sprint, `X`

@@ -148,3 +148,32 @@ if ($cameraSource -match '(?m)^\s*input\.l3 = false;' -or
     throw 'Package 41 still consumes plain L3 or lets tabletop R2 sprint'
 }
 Write-Output 'PASS Package 41 Quest bindings, crouch ownership and frame-coherent L2 release'
+
+# Package 42 promotes only a compact once-per-window aggregate and event-driven
+# thermal transitions into player logs. Full CSV/dev telemetry stays disabled.
+$perfSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\PerfTelemetry.cpp')
+foreach ($sourcePattern in @(
+        '\[tabletop\.perf42\]',
+        'g_debugStats\.renderedHz\.load',
+        'w\.last\.runtimeGpuValid \? metaGpu',
+        'w\.waitFrame\.P95\(\)',
+        'w\.work\.P95\(\)',
+        'w\.endFrame\.P95\(\)',
+        'w\.writeFenceWaitTimeouts')) {
+    if ($perfSource -notmatch $sourcePattern) {
+        throw "Package 42 bounded performance audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        '\[tabletop\.perf42\.init\]',
+        '\[tabletop\.perf42\.thermal\]',
+        'XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 42 runtime/thermal audit failed: $sourcePattern"
+    }
+}
+if ($perfSource -match '(?s)void SubmitPresentFrame\([^)]*\).*?\[tabletop\.perf42\]') {
+    throw 'Package 42 diagnostic escaped the one-second aggregate into the per-frame path'
+}
+Write-Output 'PASS Package 42 bounded release XR/GPU and thermal diagnostics'

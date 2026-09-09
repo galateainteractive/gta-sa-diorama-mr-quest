@@ -71,6 +71,15 @@ layer is submitted only when the exact synchronized projection (including a
 cached repeat) is a tabletop frame. Camera rebuild timing therefore cannot turn
 one accepted tabletop projection into an opaque full-world flash.
 
+Package 42 adds a bounded release-build performance witness for intermittent
+headset slowdowns. `[tabletop.perf42]` is emitted once per completed one-second
+window and correlates GTA production rate with XR presentation/fresh-frame rate,
+runtime CPU/GPU frame time, pacing, compositor/application work, `xrEndFrame`,
+stereo repeats, synchronization waits and current scene counts. It reuses
+measurements that were already collected; it adds no per-frame formatting,
+file output or GPU query. `[tabletop.perf42.thermal]` is event-driven and records
+OpenXR performance warning and recovery transitions when Quest supplies them.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

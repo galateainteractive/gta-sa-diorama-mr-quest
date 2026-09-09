@@ -55,7 +55,10 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 'route=classic_pad_target_no_physical_ray',
                 'pad enter targeting=1 original=%d frame=%u bridge=L2',
                 'pad exit targeting=1 original=%d frame=%u bridge=L2',
-                'debug.savr.tabletop_far_beacons'
+                'debug.savr.tabletop_far_beacons',
+                '[tabletop.perf42]',
+                '[tabletop.perf42.init]',
+                '[tabletop.perf42.thermal]'
             )) {
                 if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }
                 Write-Output "PASS packaged release log: $required"

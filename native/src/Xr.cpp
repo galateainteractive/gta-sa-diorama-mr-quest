@@ -3274,6 +3274,16 @@ void ResolveDiagnosticExtensions() {
          g_hasPerformanceMetricsExt ? 1 : 0,
          g_appCpuFrameTimePath != XR_NULL_PATH ? 1 : 0,
          g_appGpuFrameTimePath != XR_NULL_PATH ? 1 : 0);
+    // Package 42 keeps only this one startup witness in player builds.  It
+    // tells the capture whether Quest exposes the runtime frame-time counters;
+    // no polling is added here.
+    __android_log_print(
+        ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.perf42.init] refresh=%d meta_metrics=%d cpu_path=%d gpu_path=%d",
+        g_hasDisplayRefreshExt ? 1 : 0,
+        g_hasPerformanceMetricsExt ? 1 : 0,
+        g_appCpuFrameTimePath != XR_NULL_PATH ? 1 : 0,
+        g_appGpuFrameTimePath != XR_NULL_PATH ? 1 : 0);
 }
 
 void InitializeSessionDiagnostics() {
@@ -3519,6 +3529,16 @@ void PollEvents() {
                 *reinterpret_cast<XrEventDataPerfSettingsEXT*>(&event);
             const bool warning =
                 changed.toLevel != XR_PERF_SETTINGS_NOTIF_LEVEL_NORMAL_EXT;
+            // Event-driven and therefore effectively free during normal play.
+            // Keep both the warning and its recovery visible in release logs,
+            // otherwise a thermal throttle looks identical to raw GPU load.
+            __android_log_print(
+                warning ? ANDROID_LOG_WARN : ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.perf42.thermal] domain=%d subdomain=%d level=%d->%d warning=%d",
+                static_cast<int>(changed.domain),
+                static_cast<int>(changed.subDomain),
+                static_cast<int>(changed.fromLevel),
+                static_cast<int>(changed.toLevel), warning ? 1 : 0);
             if (warning) {
                 LOGW("[perf.event] domain=%d subdomain=%d level=%d->%d",
                      static_cast<int>(changed.domain),

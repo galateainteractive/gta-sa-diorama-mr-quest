@@ -2445,6 +2445,55 @@ void EmitPresentWindow(double endMs) {
     g_debugStats.revision.fetch_add(1, std::memory_order_release);
     }
 
+    // Package 42 release diagnostic.  Player APKs deliberately compile the
+    // large LOGI/CSV profiler out, but an intermittent compositor slowdown
+    // cannot be attributed from game-frame counters alone.  Keep one bounded
+    // line per completed one-second window with the measurements that separate
+    // game production, runtime GPU pressure and XR/driver waits.  This performs
+    // no per-frame formatting, file I/O, GL query or additional runtime query;
+    // all values were already collected for adaptive pacing and the debug HUD.
+    const bool gameValid =
+        g_debugStats.gameValid.load(std::memory_order_acquire);
+    const double gameHz = gameValid
+        ? g_debugStats.renderedHz.load(std::memory_order_relaxed) : -1.0;
+    const double gameWallMs = gameValid
+        ? g_debugStats.frameWallMs.load(std::memory_order_relaxed) : -1.0;
+    const double gameCpuMs = gameValid
+        ? g_debugStats.frameCpuMs.load(std::memory_order_relaxed) : -1.0;
+    const double gameBlockedMs = gameValid
+        ? g_debugStats.frameBlockedMs.load(std::memory_order_relaxed) : -1.0;
+    const double entities = gameValid
+        ? g_debugStats.entities.load(std::memory_order_relaxed) : -1.0;
+    const double lods = gameValid
+        ? g_debugStats.visibleLods.load(std::memory_order_relaxed) : -1.0;
+    const double alpha = gameValid
+        ? std::max(g_debugStats.alphaAfterLeft.load(std::memory_order_relaxed),
+                   g_debugStats.alphaAfterRight.load(std::memory_order_relaxed))
+        : -1.0;
+    __android_log_print(
+        ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.perf42] game=%.1fHz W/C/B=%.2f/%.2f/%.2fms "
+        "xr=%.1fHz fresh=%.1fHz display=%.1fHz budget=%.2fms "
+        "metaCPU/GPU=%.2f/%.2fms loop=%.2f/%.2f/%.2fms "
+        "wait=%.2f/%.2f/%.2fms work=%.2f/%.2f/%.2fms "
+        "end=%.2f/%.2f/%.2fms xrCPU=%.2fms "
+        "repeat=%d syncW/T=%d/%d fenceW/T=%d/%d "
+        "sceneE/L/A=%.0f/%.0f/%.0f",
+        gameHz, gameWallMs, gameCpuMs, gameBlockedMs,
+        presentHz, freshHz,
+        w.last.displayRefreshValid ? w.last.displayRefreshHz : -1.0f,
+        budgetMs,
+        w.last.runtimeCpuValid ? metaCpu : -1.0f,
+        w.last.runtimeGpuValid ? metaGpu : -1.0f,
+        w.loopPeriod.Average(), w.loopPeriod.P95(), w.loopPeriod.maximum,
+        w.waitFrame.Average(), w.waitFrame.P95(), w.waitFrame.maximum,
+        w.work.Average(), w.work.P95(), w.work.maximum,
+        w.endFrame.Average(), w.endFrame.P95(), w.endFrame.maximum,
+        w.threadCpu.Average(), w.repeatedSequences,
+        w.stereoSyncWaits, w.stereoSyncTimeouts,
+        w.writeFenceWaitCalls, w.writeFenceWaitTimeouts,
+        entities, lods, alpha);
+
     LOGI("[perf.xr] v2 win=%.2fs present=%d(%.1fHz) attempts=%d endFail=%d lastEnd=%d ringRace=%d writeBusy/rescue=%d/%d "
          "fresh=%d(%.1fHz) repeat=%d "
          "noStereo=%d jumps=%d layers0=%d should0=%d theater=%d display=%d/%.1fHz "
