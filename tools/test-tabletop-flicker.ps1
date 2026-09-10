@@ -59,12 +59,15 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 '[tabletop.perf42]',
                 '[tabletop.perf42.init]',
                 '[tabletop.perf42.thermal]',
-                '[tabletop.passthrough.weather.preview]',
                 '[tabletop.passthrough.weather.applied]'
             )) {
                 if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }
                 Write-Output "PASS packaged release log: $required"
             }
+            if ($text.Contains('[tabletop.passthrough.weather.preview]')) {
+                throw 'Retired Package 43 weather preview remains in player APK'
+            }
+            Write-Output 'PASS manual weather preview removed from player APK'
             Write-Output "PASS APK/native SHA256 $actual"
         } finally { $stream.Dispose(); $memory.Dispose() }
     } finally { $zip.Dispose() }

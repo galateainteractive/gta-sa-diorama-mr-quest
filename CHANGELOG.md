@@ -1,5 +1,19 @@
 # Changelog
 
+## Package 45 passthrough behind GTA menus
+
+- Retire the successful manual weather-palette preview and restore plain `R3`
+  to its normal tabletop radius-preset cycle. Keep the stronger automatic dawn,
+  cloud and rain palettes from Package 44.
+- Present the existing opaque theater quad over passthrough while GTA's boot
+  frontend or in-game pause/map menu is open, leaving the surrounding room
+  visible instead of black.
+- Publish the retail mobile-menu state from GameThread through an atomic
+  snapshot; the XR presentation thread never reads GTA frontend memory.
+- Limit the new composition path to a successfully rendered game-surface menu.
+  Cutscenes, shop interfaces and black stereo-recovery fallbacks retain their
+  previous presentation.
+
 ## Package 44 stronger dawn and wet-weather passthrough
 
 - Strengthen dawn warmth after the Package 43 headset preview showed that the

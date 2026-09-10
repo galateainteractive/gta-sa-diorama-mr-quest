@@ -95,6 +95,13 @@ approved fog palette's desaturation and softened contrast, but stay darker and
 less white. Automatic weather uses an earlier smooth response for GTA rain and
 cloud transitions, with a cloud dead zone that protects clear daytime colour.
 
+Package 45 retires the palette-preview input and gives plain `R3` back to the
+radius presets. The boot frontend and in-game pause/map menu now keep the
+passthrough layer behind their existing opaque theater quad, so only the menu
+screen is dark and the room remains visible around it. A GameThread-owned
+atomic snapshot gates this path; cutscenes, shops and stereo fallback screens
+do not inherit the menu passthrough behaviour.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

@@ -2746,10 +2746,9 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
         suppressL3UntilRelease = true;
         suppressLeftGripUntilRelease = true;
     } else if (!blocked && r3Edge) {
-        // Package 43 temporary colour validation: plain R3 previews each
-        // passthrough palette. Chorded R3 actions above keep their normal
-        // meanings, and the last palette restores automatic GTA weather.
-        xr::CyclePassthroughWeatherPreview();
+        const float radius = tabletop::CycleRadiusPreset();
+        LOGI("[tabletop.controls] radius=%.0fm preset=%d",
+             static_cast<double>(radius), tabletop::RadiusPresetIndex());
         xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
     }
 
@@ -3097,6 +3096,9 @@ bool     g_logicalVrCameraValid = false;
 CamBasis g_tabletopRenderCamera{};
 bool     g_tabletopRenderCameraValid = false;
 std::atomic<bool> g_tabletopActive{false};
+// Written by the surviving GameThread input pump and consumed by the XR
+// compositor. Never inspect gMobileMenu directly from the presentation thread.
+std::atomic<bool> g_mobileMenuOpenSnapshot{false};
 
 // GTA already excludes frontend/radio streams before asking this helper for a
 // world-relative position. Redirect only those positional effects through the
@@ -31716,13 +31718,15 @@ bool RecruitGestureActive() {
 }
 
 void RefreshStereoGate() {
+    g_mobileMenuOpenSnapshot.store(MobileMenuOpen(),
+                                   std::memory_order_release);
     const bool stereo = ShouldRunStereo();
     g_stereoActive.store(stereo, std::memory_order_relaxed);
     if (!stereo) g_tabletopActive.store(false, std::memory_order_release);
 }
 
 bool IsMobileMenuOpen() {
-    return MobileMenuOpen();
+    return g_mobileMenuOpenSnapshot.load(std::memory_order_acquire);
 }
 
 bool ParachuteWeaponInteractionBlocked() {

@@ -178,25 +178,6 @@ if ($perfSource -match '(?s)void SubmitPresentFrame\([^)]*\).*?\[tabletop\.perf4
 }
 Write-Output 'PASS Package 42 bounded release XR/GPU and thermal diagnostics'
 
-# Package 43 temporarily gives plain R3 to a deterministic passthrough colour
-# preview. It must use the production palettes, keep chorded R3 actions ahead
-# of the preview, and expose only transition-driven release telemetry.
-foreach ($sourcePattern in @(
-        'enum class PassthroughWeatherPreview',
-        'CyclePassthroughWeatherPreview\(\)',
-        '\[tabletop\.passthrough\.weather\.preview\]',
-        '\[tabletop\.passthrough\.weather\.applied\].*preview=%s')) {
-    if ($xrSource -notmatch $sourcePattern) {
-        throw "Package 43 passthrough preview audit failed: $sourcePattern"
-    }
-}
-$cameraSource = Get-Content -Raw -LiteralPath (
-    Join-Path $projectRoot 'native\src\VrCamera.cpp')
-if ($cameraSource -notmatch '(?s)coverageChord.*?viewChord.*?r3Edge.*?CyclePassthroughWeatherPreview') {
-    throw 'Package 43 R3 preview does not preserve chord priority'
-}
-Write-Output 'PASS Package 43 deterministic weather preview and bounded telemetry'
-
 # Package 44 strengthens the three palettes identified on-headset while keeping
 # clear weather neutral and making low GTA rain transitions visible sooner.
 foreach ($sourcePattern in @(
@@ -212,3 +193,16 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 44 stronger dawn, overcast and rain response'
+
+# Package 45 retires the successful manual preview, restores plain R3 radius
+# selection and places the existing opaque theater menu over passthrough. The
+# GameThread publishes menu state atomically so XR never reads GTA UI memory.
+if ($xrSource -match 'PassthroughWeatherPreview|CyclePassthroughWeatherPreview' -or
+    $cameraSource -notmatch '(?s)r3Edge.*?CycleRadiusPreset\(\)' -or
+    $cameraSource -notmatch 'g_mobileMenuOpenSnapshot\.store\(MobileMenuOpen\(\)' -or
+    $xrSource -notmatch 'submitMenuPassthrough' -or
+    $xrSource -notmatch '(?s)submitMenuPassthrough\s*=.*?IsMobileMenuOpen\(\).*?GameSurface' -or
+    $xrSource -notmatch 'if \(submitTabletopPassthrough\)') {
+    throw 'Package 45 menu passthrough/R3 restoration audit failed'
+}
+Write-Output 'PASS Package 45 menu-only passthrough and plain R3 radius restore'
