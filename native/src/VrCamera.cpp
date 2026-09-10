@@ -2564,6 +2564,11 @@ struct TabletopTransformState {
     TabletopViewMode mode{TabletopViewMode::Track};
     bool fixedBaseValid{};
     CamBasis fixedBase{};
+    // Track normally follows all three translation axes. Aircraft instead
+    // latch their entry/recenter altitude so the miniature ground stays on the
+    // table while the plane or helicopter visibly climbs above it.
+    bool trackAircraftAltitudeValid{};
+    float trackAircraftAltitudeZ{};
     V3 physicalAnchor{};
     float mapYaw{};
     bool gestureActive{};
@@ -2682,6 +2687,7 @@ void RequestTabletopRecenter(const char* reason) {
     if (!tabletop::Enabled()) return;
     g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
     g_tabletopTransform.fixedBaseValid = false;
+    g_tabletopTransform.trackAircraftAltitudeValid = false;
     g_tabletopTransform.gestureActive = false;
     g_tabletopTransform.recenterOnNextCamera = true;
     // Rebase room-space facing as well as the miniature transform. Without
@@ -2911,6 +2917,21 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
             anchorBase.right = g_tabletopTransform.fixedBase.right;
             anchorBase.forward = g_tabletopTransform.fixedBase.forward;
             anchorBase.up = g_tabletopTransform.fixedBase.up;
+            const bool aircraft = driving::GetActiveVehicleType() ==
+                driving::VEHICLE_PLANE;
+            if (aircraft) {
+                if (!g_tabletopTransform.trackAircraftAltitudeValid) {
+                    g_tabletopTransform.trackAircraftAltitudeZ =
+                        liveLevelBase.pos.z;
+                    g_tabletopTransform.trackAircraftAltitudeValid = true;
+                    LOGI("[tabletop.controls] track aircraft altitude latched z=%.2f",
+                         static_cast<double>(liveLevelBase.pos.z));
+                }
+                anchorBase.pos.z =
+                    g_tabletopTransform.trackAircraftAltitudeZ;
+            } else {
+                g_tabletopTransform.trackAircraftAltitudeValid = false;
+            }
         }
     }
     const float yaw = g_tabletopTransform.mapYaw;
@@ -3100,6 +3121,7 @@ std::atomic<bool> g_tabletopActive{false};
 // compositor. Never inspect gMobileMenu directly from the presentation thread.
 std::atomic<bool> g_mobileMenuOpenSnapshot{false};
 std::atomic<bool> g_loadingScreenSnapshot{true};
+std::atomic<bool> g_cutsceneRunningSnapshot{false};
 
 // GTA already excludes frontend/radio streams before asking this helper for a
 // world-relative position. Redirect only those positional effects through the
@@ -31733,6 +31755,8 @@ void RefreshStereoGate() {
                                    std::memory_order_release);
     g_loadingScreenSnapshot.store(loadingScreen,
                                   std::memory_order_release);
+    g_cutsceneRunningSnapshot.store(cutsceneRunning,
+                                    std::memory_order_release);
     const bool stereo = ShouldRunStereo();
     g_stereoActive.store(stereo, std::memory_order_relaxed);
     if (!stereo) g_tabletopActive.store(false, std::memory_order_release);
@@ -31744,6 +31768,10 @@ bool IsMobileMenuOpen() {
 
 bool IsLoadingScreenActive() {
     return g_loadingScreenSnapshot.load(std::memory_order_acquire);
+}
+
+bool IsCutsceneActive() {
+    return g_cutsceneRunningSnapshot.load(std::memory_order_acquire);
 }
 
 bool ParachuteWeaponInteractionBlocked() {

@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 47 cutscene surround and tabletop aircraft
+
+- Submit passthrough behind GTA's finite story-cutscene video quad, leaving the
+  video itself opaque and readable while replacing the black room surround.
+  Menu and loading presentation keep their Package 45/46 behavior.
+- Force fixed-wing pitch to the conventional left stick while tabletop is
+  active, regardless of a persisted immersive-yoke setting. `R2` accelerates;
+  pulling the left stick back raises the nose.
+- In `Track`/Esteira view, latch altitude when entering an airplane or
+  helicopter and follow only its horizontal translation. The ground remains at
+  table height while the aircraft visibly climbs; recentering establishes a
+  fresh altitude reference.
+
 ## Package 46 passthrough loading and tabletop startup defaults
 
 - Start gameplay in the translation-following `Track`/Esteira view, which keeps

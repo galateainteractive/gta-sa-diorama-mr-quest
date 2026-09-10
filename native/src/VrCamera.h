@@ -54,6 +54,11 @@ bool IsMobileMenuOpen();
 // The XR compositor uses it to show passthrough alone without reading GTA
 // camera/frontend state from the presentation thread.
 bool IsLoadingScreenActive();
+
+// GameThread-published retail story-cutscene state. Theater cutscenes use it
+// to submit passthrough behind the finite video quad without exposing GTA
+// frontend memory to the XR presentation thread.
+bool IsCutsceneActive();
 // True during freefall before the deploy widget confirms the canopy. Physical
 // weapon/throwable grabs are blocked while the deploy ring owns both hands.
 bool ParachuteWeaponInteractionBlocked();

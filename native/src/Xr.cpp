@@ -13165,19 +13165,24 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         tabletop_flicker::ShouldSubmitPassthrough(
             projectionTabletop, passthroughBackendActive,
             tabletop::PassthroughEnabled());
-    // The retail frontend and pause/map screen already live on a finite,
-    // opaque theater quad. Submit passthrough behind that quad only while the
-    // GameThread's published menu state is open. Cutscenes, shops and black
-    // stereo-recovery fallbacks deliberately remain unchanged.
+    // The retail frontend, pause/map screen and story video already live on a
+    // finite opaque theater quad. Submit passthrough behind that quad when the
+    // GameThread identifies a menu or cutscene. Shops and black stereo-recovery
+    // fallbacks deliberately remain unchanged.
     const bool submitMenuPassthrough =
         frameState.shouldRender == XR_TRUE && s.theaterMode &&
         vrcam::IsMobileMenuOpen() &&
         stereoFallbackSource == perf::StereoFallbackSource::GameSurface &&
         passthroughBackendActive && tabletop::PassthroughEnabled();
+    const bool submitCutscenePassthrough =
+        frameState.shouldRender == XR_TRUE && s.theaterMode &&
+        vrcam::IsCutsceneActive() &&
+        stereoFallbackSource == perf::StereoFallbackSource::GameSurface &&
+        passthroughBackendActive && tabletop::PassthroughEnabled();
     const bool submitLoadingPassthrough = loadingPassthroughOnly;
     const bool submitPassthrough =
         submitTabletopPassthrough || submitMenuPassthrough ||
-        submitLoadingPassthrough;
+        submitCutscenePassthrough || submitLoadingPassthrough;
     if (tabletop::PassthroughEnabled()) {
         static long long nextPassthroughAuditNs = 0;
         const long long now = nowNs();
@@ -13185,10 +13190,11 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
             __android_log_print(
                 ANDROID_LOG_INFO, SAVR_TAG,
                 "[tabletop.flicker.passthrough] package=36 backend=%d "
-                "projection=%d menu=%d loading=%d submit=%d live=%d",
+                "projection=%d menu=%d cutscene=%d loading=%d submit=%d live=%d",
                 passthroughBackendActive ? 1 : 0,
                 projectionTabletop ? 1 : 0,
                 submitMenuPassthrough ? 1 : 0,
+                submitCutscenePassthrough ? 1 : 0,
                 submitLoadingPassthrough ? 1 : 0,
                 submitPassthrough ? 1 : 0,
                 vrcam::IsTabletopActive() ? 1 : 0);

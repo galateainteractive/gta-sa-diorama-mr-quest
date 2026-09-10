@@ -1886,6 +1886,17 @@ int OnGetSteeringUpDown(void* pad) {
     EnsureInit();
     if (VrGameplayInputAllowed()&&HasPlayerVehicle()) {
         const int appearance=GetActiveVehicleAppearance();
+        if (appearance==5&&vrcam::IsTabletopActive()) {
+            // Tabletop is a conventional third-person profile. A persisted
+            // IMMERSIVE aircraft setting used to replace pitch with a physical
+            // yoke even though the miniature exposes no cockpit interaction.
+            // Always make left-stick back = nose up and forward = nose down.
+            xr::InputState input{}; xr::GetInput(input);
+            float moveX=0.0f,moveY=0.0f,turnX=0.0f,turnY=0.0f;
+            ReadMappedGameplaySticks(input,moveX,moveY,turnX,turnY);
+            return static_cast<int>(
+                -std::clamp(moveY,-1.0f,1.0f)*128.0f);
+        }
         if (appearance==2&&ModeForAppearance(2)==MODE_IMMERSIVE) {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             // CBike negates this pad query before applying m_fLeanInput. VC's

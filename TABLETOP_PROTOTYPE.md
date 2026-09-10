@@ -7,12 +7,12 @@ the retail game's coordinate system.
 
 ## Views and controls
 
-- visual scale: `0.04` (one game metre appears as four centimetres);
+- startup visual scale: `0.01` (one game metre appears as one centimetre);
 - physical anchor: 1.25 m forward and 0.55 m below the recentered headset;
 - default game anchor: the existing player/vehicle camera anchor, refreshed every frame;
 - orientation: the normal player/vehicle yaw plus 1:1 headset rotation;
 - HUD: the existing classic VR HUD remains at readable human scale;
-- cutscenes: use the unchanged upstream VR camera.
+- theater cutscenes: keep GTA's video quad with passthrough around it.
 
 Runtime controls:
 
@@ -39,12 +39,10 @@ to physical metres using the scale captured for the same frame. In tabletop
 mode their coloured surfaces use 58% opacity so the miniature streets, vehicles
 and buildings remain visible behind the navigation cue.
 
-The waypoint selected on the retail pause map is also presented as a small red
-3D navigation beacon without widening scenery culling. It uses its true
-horizontal position up to three times the current radial range. A farther
-waypoint is clamped just outside the circle in the correct direction so it
-remains useful without appearing metres away across the room. Set process-start
-property `debug.savr.tabletop_far_beacons=0` for an exact fallback.
+The waypoint selected on the retail pause map remains inside GTA's map only.
+The experimental custom 3D boundary beacon was removed after headset testing;
+official red, yellow and blue world/mission markers retain their late stereo
+tabletop presentation.
 
 The radial border also has a bounded alpha-overflow stabilizer. When GTA's
 fixed ordinary transparency list fills, up to 96 current-frame static scenery
@@ -112,6 +110,15 @@ alone; otherwise GTA's loading quad remains the fallback. Cutscene videos keep
 their existing theater presentation and black surround. The experimental 3D
 beacon derived from a user point on the pause map is removed, while the retail
 map zoom and official mission-marker bridge are unchanged.
+
+Package 47 puts passthrough behind the finite story-cutscene theater quad, so
+the video remains unchanged but no longer sits in an entirely black room.
+Tabletop fixed-wing pitch always comes from the conventional left stick even
+when an old immersive-yoke preference is preserved. In `Track`/Esteira view,
+aircraft latch their current altitude on entry or recenter and subsequently
+follow only horizontal translation: the miniature ground stays at table height
+while planes and helicopters visibly rise above it. Leaving the aircraft clears
+that altitude latch.
 
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is

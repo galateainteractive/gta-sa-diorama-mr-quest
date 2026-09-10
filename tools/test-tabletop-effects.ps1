@@ -249,3 +249,30 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 46 far zoom, Track start, safe loading passthrough and waypoint removal'
+
+# Package 47 keeps story video on GTA's finite theater quad but submits the
+# room behind it, restores conventional tabletop plane pitch regardless of a
+# saved immersive yoke, and makes Track follow aircraft horizontally only.
+foreach ($sourcePattern in @(
+        'g_cutsceneRunningSnapshot\.store\(cutsceneRunning',
+        'bool IsCutsceneActive\(\)',
+        'trackAircraftAltitudeValid',
+        'trackAircraftAltitudeZ',
+        '(?s)TabletopViewMode::Track.*?GetActiveVehicleType\(\).*?VEHICLE_PLANE.*?anchorBase\.pos\.z')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 47 cutscene/aircraft Track audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'const bool submitCutscenePassthrough',
+        'vrcam::IsCutsceneActive\(\)',
+        'submitCutscenePassthrough \|\| submitLoadingPassthrough')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 47 cutscene passthrough audit failed: $sourcePattern"
+    }
+}
+if ($drivingSource -notmatch
+        '(?s)appearance==5&&vrcam::IsTabletopActive\(\).*?ReadMappedGameplaySticks.*?-std::clamp\(moveY') {
+    throw 'Package 47 tabletop airplane pitch override audit failed'
+}
+Write-Output 'PASS Package 47 cutscene surround, tabletop plane pitch and aircraft altitude Track'

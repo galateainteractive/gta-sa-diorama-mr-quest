@@ -73,6 +73,9 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
             if (-not $text.Contains('loading=%d')) {
                 throw 'Missing Package 46 loading passthrough audit marker'
             }
+            if (-not $text.Contains('cutscene=%d')) {
+                throw 'Missing Package 47 cutscene passthrough audit marker'
+            }
             Write-Output 'PASS manual weather preview removed from player APK'
             Write-Output "PASS APK/native SHA256 $actual"
         } finally { $stream.Dispose(); $memory.Dispose() }
