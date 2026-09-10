@@ -252,10 +252,6 @@ struct PassthroughWeatherState {
 };
 void SetPassthroughWeatherState(const PassthroughWeatherState& state);
 
-// User waypoint selected on the retail pause-map. The compositor presents it
-// as a lightweight tabletop navigation beacon without widening scene culling.
-void SetNavigationWaypoint(bool valid, float worldX, float worldY);
-
 // Retail Android's final MobileRender colour transform for the current game
 // frame. The GameThread publishes it before the matching eye-texture pair; the
 // compositor applies it inside the existing resolve (no extra full-screen pass).

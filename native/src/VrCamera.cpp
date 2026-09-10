@@ -2561,7 +2561,7 @@ const char* TabletopViewModeName(TabletopViewMode mode) {
 }
 
 struct TabletopTransformState {
-    TabletopViewMode mode{TabletopViewMode::Follow};
+    TabletopViewMode mode{TabletopViewMode::Track};
     bool fixedBaseValid{};
     CamBasis fixedBase{};
     V3 physicalAnchor{};
@@ -2662,7 +2662,7 @@ V3 DefaultTabletopPhysicalAnchor() {
 
 void ResetTabletopTransform(bool keepMode) {
     const TabletopViewMode mode = keepMode ? g_tabletopTransform.mode
-                                            : TabletopViewMode::Follow;
+                                            : TabletopViewMode::Track;
     g_tabletopTransform = {};
     g_tabletopTransform.mode = mode;
     g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
@@ -3099,6 +3099,7 @@ std::atomic<bool> g_tabletopActive{false};
 // Written by the surviving GameThread input pump and consumed by the XR
 // compositor. Never inspect gMobileMenu directly from the presentation thread.
 std::atomic<bool> g_mobileMenuOpenSnapshot{false};
+std::atomic<bool> g_loadingScreenSnapshot{true};
 
 // GTA already excludes frontend/radio streams before asking this helper for a
 // world-relative position. Redirect only those positional effects through the
@@ -31718,8 +31719,20 @@ bool RecruitGestureActive() {
 }
 
 void RefreshStereoGate() {
-    g_mobileMenuOpenSnapshot.store(MobileMenuOpen(),
+    const bool mobileMenuOpen = MobileMenuOpen();
+    const bool cutsceneRunning = g.CCutsceneMgr_ms_running &&
+        *g.CCutsceneMgr_ms_running;
+    const bool playerExists = g.FindPlayerPed && g.FindPlayerPed(-1);
+    const bool fullyFaded = g.CCamera_GetScreenFadeStatus && g.TheCamera &&
+        g.CCamera_GetScreenFadeStatus(g.TheCamera) == 2;
+    // No-player and full-fade theater frames are the retail loading surface,
+    // except when an actual frontend or cutscene owns that flat presentation.
+    const bool loadingScreen = !mobileMenuOpen && !cutsceneRunning &&
+        (!playerExists || fullyFaded);
+    g_mobileMenuOpenSnapshot.store(mobileMenuOpen,
                                    std::memory_order_release);
+    g_loadingScreenSnapshot.store(loadingScreen,
+                                  std::memory_order_release);
     const bool stereo = ShouldRunStereo();
     g_stereoActive.store(stereo, std::memory_order_relaxed);
     if (!stereo) g_tabletopActive.store(false, std::memory_order_release);
@@ -31727,6 +31740,10 @@ void RefreshStereoGate() {
 
 bool IsMobileMenuOpen() {
     return g_mobileMenuOpenSnapshot.load(std::memory_order_acquire);
+}
+
+bool IsLoadingScreenActive() {
+    return g_loadingScreenSnapshot.load(std::memory_order_acquire);
 }
 
 bool ParachuteWeaponInteractionBlocked() {

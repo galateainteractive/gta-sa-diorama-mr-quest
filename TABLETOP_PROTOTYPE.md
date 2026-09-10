@@ -102,6 +102,17 @@ screen is dark and the room remains visible around it. A GameThread-owned
 atomic snapshot gates this path; cutscenes, shops and stereo fallback screens
 do not inherit the menu passthrough behaviour.
 
+Package 46 makes the requested presentation defaults explicit: gameplay starts
+at `visual_scale=0.010` in the translation-following `Track`/Esteira view. A
+preserved settings file is migrated only when its scale is exactly the former
+shipped `0.040`, so a deliberately customized value is not overwritten. A
+GameThread snapshot also separates loading from menus and cutscenes. While the
+passthrough backend is live, a classified loading frame submits passthrough
+alone; otherwise GTA's loading quad remains the fallback. Cutscene videos keep
+their existing theater presentation and black surround. The experimental 3D
+beacon derived from a user point on the pause map is removed, while the retail
+map zoom and official mission-marker bridge are unchanged.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.
@@ -145,7 +156,7 @@ Supported process-start values:
 ```ini
 enabled=1
 passthrough=1
-visual_scale=0.040
+visual_scale=0.010
 anchor_forward_m=1.25
 anchor_down_m=0.55
 radius_preset=1

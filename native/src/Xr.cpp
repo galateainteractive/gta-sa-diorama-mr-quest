@@ -693,9 +693,6 @@ constexpr int kMaxObjectiveMarkers = 64;
 // during tabletop zoom. Retain the last known mission marker long enough to
 // bridge that transition, without leaving removed objectives stale for long.
 constexpr std::uint64_t kObjectiveMarkerLifetimeNs = 1250000000ULL;
-constexpr char kFarNavigationBeaconsProperty[] =
-    "debug.savr.tabletop_far_beacons";
-constexpr float kFarNavigationTruePositionRadiusFactor = 3.0f;
 struct ObjectiveMarkerVisual {
     bool valid{false};
     std::uint64_t id{};
@@ -721,31 +718,6 @@ ObjectiveMarkerVisual g_objectiveMarkers[kMaxObjectiveMarkers]{};
 unsigned int g_nextObjectiveMarker = 0;
 std::uint64_t g_objectiveMarkerPoolEvictions{};
 std::uint64_t g_objectiveMarkerExpirations{};
-
-struct NavigationWaypointState {
-    bool valid{};
-    float worldX{};
-    float worldY{};
-};
-std::mutex g_navigationWaypointMutex;
-NavigationWaypointState g_navigationWaypoint{};
-
-bool FarNavigationBeaconsEnabled() {
-    static const bool enabled = [] {
-        char text[PROP_VALUE_MAX]{};
-        bool value = true;
-        if (__system_property_get(kFarNavigationBeaconsProperty, text) > 0) {
-            if (std::strcmp(text, "0") == 0) value = false;
-            else if (std::strcmp(text, "1") != 0)
-                LOGW("[tabletop.navigation] ignoring invalid %s=%s",
-                     kFarNavigationBeaconsProperty, text);
-        }
-        LOGI("[tabletop.navigation] far_beacons=%d property=%s",
-             value ? 1 : 0, kFarNavigationBeaconsProperty);
-        return value;
-    }();
-    return enabled;
-}
 
 std::uint64_t MonotonicNowNs() {
     return static_cast<std::uint64_t>(
@@ -5995,26 +5967,6 @@ void SetPassthroughWeatherState(const PassthroughWeatherState& state) {
     g_pendingPassthroughWeather = next;
 }
 
-void SetNavigationWaypoint(bool valid, float worldX, float worldY) {
-    NavigationWaypointState next{};
-    next.valid = valid && std::isfinite(worldX) && std::isfinite(worldY);
-    if (next.valid) {
-        next.worldX = worldX;
-        next.worldY = worldY;
-    }
-    std::lock_guard<std::mutex> lock(g_navigationWaypointMutex);
-    const bool changed = next.valid != g_navigationWaypoint.valid ||
-        (next.valid &&
-         (std::abs(next.worldX - g_navigationWaypoint.worldX) > 0.01f ||
-          std::abs(next.worldY - g_navigationWaypoint.worldY) > 0.01f));
-    g_navigationWaypoint = next;
-    if (changed) {
-        LOGI("[tabletop.navigation] waypoint valid=%d world=%.2f,%.2f",
-             next.valid ? 1 : 0, static_cast<double>(next.worldX),
-             static_cast<double>(next.worldY));
-    }
-}
-
 void SetMobileColorState(const MobileColorState& state) {
     MobileColorState next = state;
     if (next.mode != 1 && next.mode != 2) next = {};
@@ -10635,68 +10587,6 @@ void RebaseObjectiveMarkersToTabletopMask(
     }
 }
 
-int AppendNavigationWaypoint(ObjectiveMarkerVisual* markers, int count,
-                             const TabletopMaskState& mask) {
-    if (!markers || !mask.active || !FarNavigationBeaconsEnabled() ||
-        !std::isfinite(mask.depthScaleMPerGameUnit) ||
-        mask.depthScaleMPerGameUnit <= 0.0f ||
-        !std::isfinite(mask.playerRadiusM) || mask.playerRadiusM <= 0.0f) {
-        return count;
-    }
-    NavigationWaypointState waypoint{};
-    {
-        std::lock_guard<std::mutex> lock(g_navigationWaypointMutex);
-        waypoint = g_navigationWaypoint;
-    }
-    if (!waypoint.valid) return count;
-
-    const XrVector3f playerCenter{
-        mask.playerCenter[0], mask.playerCenter[1], mask.playerCenter[2]};
-    const XrVector3f axisX = vnorm(
-        {mask.axisX[0], mask.axisX[1], mask.axisX[2]});
-    const XrVector3f axisY = vnorm(
-        {mask.axisY[0], mask.axisY[1], mask.axisY[2]});
-    const XrVector3f axisZ = vnorm(vcross(axisX, axisY));
-    const float dxGame = waypoint.worldX - mask.playerWorld[0];
-    const float dyGame = waypoint.worldY - mask.playerWorld[1];
-    const float scale = mask.depthScaleMPerGameUnit;
-    const float distanceM = std::sqrt(std::max(
-        0.0f, dxGame * dxGame + dyGame * dyGame)) * scale;
-    if (!std::isfinite(distanceM)) return count;
-
-    const float outerRadiusM = std::max(
-        mask.playerRadiusM * kFarNavigationTruePositionRadiusFactor,
-        mask.playerRadiusM + 0.25f);
-    const bool boundaryBeacon = distanceM > outerRadiusM;
-    float placementScale = scale;
-    if (boundaryBeacon && distanceM > 0.001f) {
-        const float boundaryDistanceM = mask.playerRadiusM +
-            std::max(mask.featherM, 0.065f);
-        placementScale *= boundaryDistanceM / distanceM;
-    }
-
-    ObjectiveMarkerVisual marker{};
-    marker.valid = true;
-    marker.id = 0x5750594e545f5652ULL; // "WPYNT_VR"
-    marker.radius = boundaryBeacon ? 0.072f : 0.065f;
-    marker.height = 0.20f;
-    marker.red = 255;
-    marker.green = 72;
-    marker.blue = 72;
-    marker.alpha = 255;
-    marker.stockCone = true;
-    marker.center = vadd(
-        playerCenter,
-        vadd(vadd(vscale(axisX, dxGame * placementScale),
-                  vscale(axisY, dyGame * placementScale)),
-             vscale(axisZ, marker.radius * 2.35f)));
-    marker.tabletopWorldPoint = false; // already synchronized to this mask
-    marker.expiresNs = UINT64_MAX;
-    const int slot = std::min(count, kMaxObjectiveMarkers - 1);
-    markers[slot] = marker;
-    return std::min(count + 1, kMaxObjectiveMarkers);
-}
-
 void DrawStockObjectiveArrow(const float* mvp,
                              const ObjectiveMarkerVisual& marker,
                              float opacity) {
@@ -12451,9 +12341,6 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         SnapshotObjectiveMarkers(liveObjectiveMarkers);
     RebaseObjectiveMarkersToTabletopMask(
         liveObjectiveMarkers, liveObjectiveMarkerCount, tabletopMask);
-    liveObjectiveMarkerCount = AppendNavigationWaypoint(
-        liveObjectiveMarkers, liveObjectiveMarkerCount, tabletopMask);
-
     GLint prevDraw = 0, prevRead = 0, prevVp[4]{};
     FxaaGlState fxaaGlState{};
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDraw);
@@ -12957,6 +12844,16 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     bool projectionFullCopy = false;
     std::uint64_t projectionEpoch = 0;
     int telemetryRecoveryProgress = 0;
+    const bool passthroughBackendActive =
+        g_passthroughActive.load(std::memory_order_acquire);
+    // Hide only a positively classified retail loading surface, and only when
+    // passthrough can actually replace it. Menus and cutscenes are excluded by
+    // the GameThread snapshot; failure to start passthrough retains the stock
+    // loading image instead of ending a frame with no visible layer.
+    const bool loadingPassthroughOnly =
+        frameState.shouldRender == XR_TRUE && s.theaterMode &&
+        vrcam::IsLoadingScreenActive() && passthroughBackendActive &&
+        tabletop::PassthroughEnabled();
     StereoSyncWaitResult stereoSyncWait{};
     FxaaFrameStats fxaaStats{};
     fxaaStats.requested = FxaaRequested();
@@ -13068,8 +12965,11 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         if (s.theaterMode) {
             g_directStereoProjectionHealthy.store(false,
                                                    std::memory_order_release);
-            if (RenderTheaterQuad(s.space, theaterQuad, false,
-                                  TheaterFrameSource::GameSurface)) {
+            if (loadingPassthroughOnly) {
+                // Passthrough is inserted below with no opaque loading quad.
+                stereoFallbackSource = perf::StereoFallbackSource::None;
+            } else if (RenderTheaterQuad(s.space, theaterQuad, false,
+                                         TheaterFrameSource::GameSurface)) {
                 layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(
                     &theaterQuad);
                 layerCount = 1;
@@ -13259,8 +13159,6 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         }
     }
 
-    const bool passthroughBackendActive =
-        g_passthroughActive.load(std::memory_order_acquire);
     const bool submitTabletopPassthrough =
         frameState.shouldRender == XR_TRUE &&
         projectionLayerSubmitted &&
@@ -13276,8 +13174,10 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         vrcam::IsMobileMenuOpen() &&
         stereoFallbackSource == perf::StereoFallbackSource::GameSurface &&
         passthroughBackendActive && tabletop::PassthroughEnabled();
+    const bool submitLoadingPassthrough = loadingPassthroughOnly;
     const bool submitPassthrough =
-        submitTabletopPassthrough || submitMenuPassthrough;
+        submitTabletopPassthrough || submitMenuPassthrough ||
+        submitLoadingPassthrough;
     if (tabletop::PassthroughEnabled()) {
         static long long nextPassthroughAuditNs = 0;
         const long long now = nowNs();
@@ -13285,10 +13185,11 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
             __android_log_print(
                 ANDROID_LOG_INFO, SAVR_TAG,
                 "[tabletop.flicker.passthrough] package=36 backend=%d "
-                "projection=%d menu=%d submit=%d live=%d",
+                "projection=%d menu=%d loading=%d submit=%d live=%d",
                 passthroughBackendActive ? 1 : 0,
                 projectionTabletop ? 1 : 0,
                 submitMenuPassthrough ? 1 : 0,
+                submitLoadingPassthrough ? 1 : 0,
                 submitPassthrough ? 1 : 0,
                 vrcam::IsTabletopActive() ? 1 : 0);
             nextPassthroughAuditNs = now + 2000000000LL;

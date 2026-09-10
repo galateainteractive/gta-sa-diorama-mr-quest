@@ -45,31 +45,31 @@ foreach ($call in @(0x4a2280, 0x6dfb74, 0x6e34fc)) {
 }
 Write-Output 'PASS retail hash, spark PLT and three scoped call sites'
 
-# Pause-map waypoint source: PlaceRedMarker reads the map cursor at +0x84/+0x88,
-# creates the coordinate blip and stores its handle at +0x68. The tabletop code
-# only observes these values; it does not replace retail marker creation.
-$waypoint = (& $Objdump -d --start-address=0x71bbac --stop-address=0x71bc74 $LibGame) -join "`n"
-foreach ($word in @('b9406a68', '2d508660', 'b9006a60')) {
-    if ($waypoint -notmatch $word) { throw "PlaceRedMarker layout mismatch: $word" }
-}
-if ($waypoint -notmatch 'SetCoordBlip' -or $waypoint -notmatch 'SetBlipSprite') {
-    throw 'PlaceRedMarker waypoint calls mismatch'
-}
+# Pause-map grip zoom remains isolated from marker creation. Package 46 removes
+# the experimental compositor beacon for a user-placed map point; GTA's own
+# blip stays inside the retail map and official world markers remain untouched.
 $mapSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\MapZoom.cpp')
-foreach ($sourcePattern in @('ReadI\(0x68\)', 'ReadF\(0x84\)', 'ReadF\(0x88\)',
-                             'SetNavigationWaypoint\(valid')) {
+foreach ($sourcePattern in @('OnMapUpdate\(float dt\)',
+                             'g_gripR.*?kGripOn',
+                             'g_gripL.*?kGripOn',
+                             'ReadF\(0x78\)',
+                             'WriteF\(0x78, next\)')) {
     if ($mapSource -notmatch $sourcePattern) {
-        throw "Waypoint source audit failed: $sourcePattern"
+        throw "Pause-map zoom source audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS retail pause-map waypoint handle and coordinate layout'
+if ($mapSource -match 'NavigationWaypoint|ReadI\(0x68\)|ReadF\(0x84\)|ReadF\(0x88\)') {
+    throw 'Retired custom pause-map waypoint publisher remains in source'
+}
+Write-Output 'PASS pause-map grip zoom retained and custom waypoint publisher removed'
 $xrSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\Xr.cpp')
 if ($xrSource -notmatch 'kPassthroughWeatherIntensity\s*=\s*3\.0f' -or
-    $xrSource -notmatch 'AppendNavigationWaypoint\(' -or
-    $xrSource -notmatch 'kFarNavigationTruePositionRadiusFactor\s*=\s*3\.0f') {
-    throw 'Package 38 navigation/weather source audit failed'
+    $xrSource -match 'NavigationWaypoint|FarNavigation|tabletop_far_beacons' -or
+    $xrSource -notmatch 'SnapshotObjectiveMarkers\(' -or
+    $xrSource -notmatch 'RebaseObjectiveMarkersToTabletopMask\(') {
+    throw 'Package 46 official-marker/custom-waypoint isolation audit failed'
 }
-Write-Output 'PASS Package 38 navigation range and weather validation intensity'
+Write-Output 'PASS official marker pipeline retained and custom waypoint beacon removed'
 
 # Package 39 keeps combat on GTA's classic task, but supplies a complete
 # mobile target-widget lifecycle and a context-gated modern trigger alias.
@@ -199,10 +199,53 @@ Write-Output 'PASS Package 44 stronger dawn, overcast and rain response'
 # GameThread publishes menu state atomically so XR never reads GTA UI memory.
 if ($xrSource -match 'PassthroughWeatherPreview|CyclePassthroughWeatherPreview' -or
     $cameraSource -notmatch '(?s)r3Edge.*?CycleRadiusPreset\(\)' -or
-    $cameraSource -notmatch 'g_mobileMenuOpenSnapshot\.store\(MobileMenuOpen\(\)' -or
+    $cameraSource -notmatch 'g_mobileMenuOpenSnapshot\.store\(mobileMenuOpen' -or
     $xrSource -notmatch 'submitMenuPassthrough' -or
     $xrSource -notmatch '(?s)submitMenuPassthrough\s*=.*?IsMobileMenuOpen\(\).*?GameSurface' -or
     $xrSource -notmatch 'if \(submitTabletopPassthrough\)') {
     throw 'Package 45 menu passthrough/R3 restoration audit failed'
 }
 Write-Output 'PASS Package 45 menu-only passthrough and plain R3 radius restore'
+
+# Package 46 starts at the requested small/far tabletop scale and translation-
+# following Track view. Loading hides its opaque retail quad only when an active
+# passthrough backend can replace it; menus and cutscenes remain classified out.
+$tabletopSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\Tabletop.cpp')
+$defaultsSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'defaults\quest\vr_tabletop.ini')
+foreach ($sourcePattern in @(
+        'visual_scale=0\.010',
+        'farthest/smallest tabletop zoom')) {
+    if ($defaultsSource -notmatch $sourcePattern) {
+        throw "Package 46 default scale audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'float visualScale\{0\.01f\}',
+        'std::atomic<float> g_visualScale\{0\.01f\}',
+        '(?s)loadedSettingsFile.*?0\.040f.*?0\.010f')) {
+    if ($tabletopSource -notmatch $sourcePattern) {
+        throw "Package 46 scale migration audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'TabletopViewMode mode\{TabletopViewMode::Track\}',
+        ': TabletopViewMode::Track',
+        'g_loadingScreenSnapshot\.store\(loadingScreen',
+        '!mobileMenuOpen && !cutsceneRunning',
+        'bool IsLoadingScreenActive\(\)')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 46 Track/loading classification audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'loadingPassthroughOnly',
+        'vrcam::IsLoadingScreenActive\(\)',
+        'const bool submitLoadingPassthrough = loadingPassthroughOnly',
+        'submitTabletopPassthrough \|\| submitMenuPassthrough \|\|')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 46 loading passthrough audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 46 far zoom, Track start, safe loading passthrough and waypoint removal'

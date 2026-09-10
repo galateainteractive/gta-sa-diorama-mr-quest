@@ -55,7 +55,6 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 'route=classic_pad_target_no_physical_ray',
                 'pad enter targeting=1 original=%d frame=%u bridge=L2',
                 'pad exit targeting=1 original=%d frame=%u bridge=L2',
-                'debug.savr.tabletop_far_beacons',
                 '[tabletop.perf42]',
                 '[tabletop.perf42.init]',
                 '[tabletop.perf42.thermal]',
@@ -66,6 +65,13 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
             }
             if ($text.Contains('[tabletop.passthrough.weather.preview]')) {
                 throw 'Retired Package 43 weather preview remains in player APK'
+            }
+            if ($text.Contains('debug.savr.tabletop_far_beacons') -or
+                $text.Contains('WPYNT_VR')) {
+                throw 'Retired custom pause-map waypoint remains in player APK'
+            }
+            if (-not $text.Contains('loading=%d')) {
+                throw 'Missing Package 46 loading passthrough audit marker'
             }
             Write-Output 'PASS manual weather preview removed from player APK'
             Write-Output "PASS APK/native SHA256 $actual"

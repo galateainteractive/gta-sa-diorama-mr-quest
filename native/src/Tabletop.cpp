@@ -25,7 +25,7 @@ constexpr char kScaleProperty[] = "debug.savr.tabletop_scale";
 struct Settings {
     bool enabled{true};
     bool passthrough{true};
-    float visualScale{0.04f};
+    float visualScale{0.01f};
     float anchorForwardMeters{1.25f};
     float anchorDownMeters{0.55f};
     int radiusPreset{1};
@@ -33,7 +33,7 @@ struct Settings {
 
 Settings g_settings{};
 std::once_flag g_loadOnce;
-std::atomic<float> g_visualScale{0.04f};
+std::atomic<float> g_visualScale{0.01f};
 std::atomic<int> g_radiusPreset{1};
 // Preset 3 is deliberately a 75 m A/B step. 90 m was already close enough
 // to the expensive 120 m disk that it did not answer whether the stable 60 m
@@ -72,7 +72,9 @@ float ParseFloat(const char* value, float fallback) {
 
 void LoadSettings() {
     Settings loaded{};
+    bool loadedSettingsFile = false;
     if (FILE* file = std::fopen(kSettingsPath, "r")) {
+        loadedSettingsFile = true;
         char line[192]{};
         while (std::fgets(line, sizeof(line), file)) {
             if (char* comment = std::strchr(line, '#')) *comment = '\0';
@@ -100,6 +102,14 @@ void LoadSettings() {
             }
         }
         std::fclose(file);
+    }
+
+    // Personal-update installers preserve the existing settings file. Migrate
+    // only the exact shipped 0.040 default so Package 46 reaches the requested
+    // farthest startup zoom without trampling any other custom scale.
+    if (loadedSettingsFile &&
+        std::abs(loaded.visualScale - 0.040f) < 0.0001f) {
+        loaded.visualScale = 0.010f;
     }
 
     char property[PROP_VALUE_MAX]{};

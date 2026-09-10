@@ -49,6 +49,11 @@ void RefreshStereoGate();
 // is up, read from gMobileMenu's authoritative fields. The input pump uses it
 // to hold the game's user pause for the whole pause-menu visit.
 bool IsMobileMenuOpen();
+
+// GameThread-published classification of the retail flat loading surface.
+// The XR compositor uses it to show passthrough alone without reading GTA
+// camera/frontend state from the presentation thread.
+bool IsLoadingScreenActive();
 // True during freefall before the deploy widget confirms the canopy. Physical
 // weapon/throwable grabs are blocked while the deploy ring owns both hands.
 bool ParachuteWeaponInteractionBlocked();

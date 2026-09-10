@@ -1,5 +1,21 @@
 # Changelog
 
+## Package 46 passthrough loading and tabletop startup defaults
+
+- Start gameplay in the translation-following `Track`/Esteira view, which keeps
+  the miniature centred without rotating the room when CJ or a vehicle turns.
+- Start at the farthest/smallest tabletop scale (`0.010`). Personal updates
+  migrate only the exact former shipped `0.040` value, preserving any other
+  custom scale and the process-level debug override.
+- Replace GTA's opaque flat loading surface with passthrough alone when loading
+  is positively identified and the passthrough backend is active. If it is not
+  available, keep the original loading surface as a safe fallback.
+- Keep cutscene/story video presentation unchanged on its theater quad with a
+  black surround, and keep the Package 45 menu-over-passthrough presentation.
+- Remove the experimental custom 3D beacon for a pause-map user waypoint after
+  headset testing. Preserve pause-map grip zoom and every official red, yellow
+  and blue world/mission marker.
+
 ## Package 45 passthrough behind GTA menus
 
 - Retire the successful manual weather-palette preview and restore plain `R3`
