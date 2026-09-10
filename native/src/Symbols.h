@@ -452,6 +452,12 @@ struct GameSymbols {
     std::uint32_t* CWaterLevel_m_nNumOfWaterQuads;
     void* CWaterLevel_m_aTriangles;
     void* CWaterLevel_m_aQuads;
+    // Stable (no-wave) water height at a GTA world coordinate. The tabletop
+    // mask supplies a bounded surface-level Z probe so aircraft altitude does
+    // not prevent ocean lookup.
+    bool  (*CWaterLevel_GetWaterLevelNoWaves)(float x, float y, float z,
+                                               float* level,
+                                               float* waveA, float* waveB);
 
     // LOD handoff diagnostics plus the request-only linked-map prefetch A/B.
     // SetupMapEntityVisibility owns the linked building/detail-model decision;

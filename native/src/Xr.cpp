@@ -9148,6 +9148,9 @@ GLint  g_tabletopAlphaAxisXLoc = -1, g_tabletopAlphaAxisYLoc = -1;
 GLint  g_tabletopAlphaRadiiLoc = -1, g_tabletopAlphaDepthScaleLoc = -1;
 GLint  g_tabletopAlphaModeLoc = -1;
 GLint  g_tabletopAlphaBridgeLoc = -1;
+GLint  g_tabletopAlphaWaterPointLoc = -1;
+GLint  g_tabletopAlphaWaterNormalLoc = -1;
+GLint  g_tabletopAlphaWaterActiveLoc = -1;
 int    g_handDepthRetryCountdown = 0;
 int    g_handDepthFailedW = 0, g_handDepthFailedH = 0;
 GLint  g_handDepthFailedFormat = 0;
@@ -11328,22 +11331,24 @@ bool EnsureTabletopAlphaProgram() {
                      "uniform vec2 uNearFar; uniform vec2 uTan;\n"
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
+                     "uniform vec3 uWaterPoint,uWaterNormal; uniform int uWaterActive;\n"
                      "uniform vec4 uRadii; uniform float uDepthScale; uniform int uMode,uBridge;\n"
                      "vec2 plane(vec3 p,vec3 c){vec3 d=p-c;return vec2(dot(d,uAxisX),dot(d,uAxisY));}\n"
                      "float capsule(vec2 p,vec2 a,vec2 b,float r){vec2 ab=b-a;float q=dot(ab,ab);float t=q>1e-6?clamp(dot(p-a,ab)/q,0.0,1.0):0.0;return length(p-(a+ab*t))-r;}\n"
+                     "float coverage(vec3 p){vec2 pp=plane(p,uPlayer),pv=plane(uViewer,uPlayer);float sd=length(pp)-uRadii.x;if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}if(isnan(sd)||isinf(sd))return 0.0;return 1.0-smoothstep(-uRadii.w,0.0,sd);}\n"
                      "void main(){\n"
                      " if(uUseDepth==0){o=vec4(0);return;}\n"
                      " float d=texture(uDepth,vUv).r;if(!(d>=0.0&&d<0.999999))discard;\n"
                      " float n=uNearFar.x,f=uNearFar.y,z=d*2.0-1.0;\n"
                      " float vz=((2.0*n*f)/max(1e-5,f+n-z*(f-n)))*uDepthScale;\n"
                      " vec2 ndc=vUv*2.0-1.0;\n"
-                     " vec3 p=uEye+uRight*(ndc.x*uTan.x*vz)+uUp*(ndc.y*uTan.y*vz)+uForward*vz;\n"
-                     " vec2 pp=plane(p,uPlayer),pv=plane(uViewer,uPlayer);\n"
-                     " float sd=length(pp)-uRadii.x;\n"
-                     " if(uMode==1)sd=capsule(pp,vec2(0),pv,uRadii.x);\n"
-                     " if(uMode==2){sd=min(sd,length(pp-pv)-uRadii.y);if(uBridge!=0)sd=min(sd,capsule(pp,vec2(0),pv,uRadii.z));}\n"
-                     " if(isnan(sd)||isinf(sd))discard;\n"
-                     " float a=1.0-smoothstep(-uRadii.w,0.0,sd);\n"
+                     " vec3 ray=uRight*(ndc.x*uTan.x)+uUp*(ndc.y*uTan.y)+uForward;\n"
+                     " vec3 p=uEye+ray*vz; float a=coverage(p);\n"
+                     // Only replace a seabed-derived boundary decision. The
+                     // depth fragment must be materially below the confirmed
+                     // water plane and the ray must cross that plane before it
+                     // reaches the fragment. Clear-depth sky remains discarded.
+                     " if(uWaterActive!=0){float den=dot(ray,uWaterNormal);float below=dot(uWaterPoint-p,uWaterNormal);if(abs(den)>1e-5&&below>max(0.002,uDepthScale*0.5)){float t=dot(uWaterPoint-uEye,uWaterNormal)/den;if(t>0.0&&t<vz)a=max(a,coverage(uEye+ray*t));}}\n"
                      " o=vec4(0,0,0,a);\n"
                      "}\n";
     const GLuint vertex = CompileHandShader(GL_VERTEX_SHADER, vs);
@@ -11382,6 +11387,12 @@ bool EnsureTabletopAlphaProgram() {
         glGetUniformLocation(g_tabletopAlphaProgram, "uDepthScale");
     g_tabletopAlphaModeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uMode");
     g_tabletopAlphaBridgeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uBridge");
+    g_tabletopAlphaWaterPointLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uWaterPoint");
+    g_tabletopAlphaWaterNormalLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uWaterNormal");
+    g_tabletopAlphaWaterActiveLoc =
+        glGetUniformLocation(g_tabletopAlphaProgram, "uWaterActive");
     LOGI("[tabletop.passthrough] depth alpha-mask program ready");
     return g_tabletopAlphaVao != 0;
 }
@@ -11444,6 +11455,17 @@ bool ValidTabletopMaskInputs(const TabletopMaskState& mask,
             !std::isfinite(mask.viewerCenter[i]) ||
             !std::isfinite(mask.axisX[i]) || !std::isfinite(mask.axisY[i]))
             return false;
+    }
+    if (mask.waterSurfaceActive) {
+        float normalLengthSq = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            if (!std::isfinite(mask.waterSurfacePoint[i]) ||
+                !std::isfinite(mask.waterSurfaceNormal[i])) return false;
+            normalLengthSq += mask.waterSurfaceNormal[i] *
+                mask.waterSurfaceNormal[i];
+        }
+        if (!std::isfinite(normalLengthSq) ||
+            std::abs(normalLengthSq - 1.0f) > 0.02f) return false;
     }
     const auto positive = [](float value) {
         return std::isfinite(value) && value > 0.0f;
@@ -11723,6 +11745,12 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
                     std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
         glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);
         glUniform1i(g_tabletopAlphaBridgeLoc, mask.bridgeEnabled ? 1 : 0);
+        glUniform3fv(g_tabletopAlphaWaterPointLoc, 1,
+                     mask.waterSurfacePoint);
+        glUniform3fv(g_tabletopAlphaWaterNormalLoc, 1,
+                     mask.waterSurfaceNormal);
+        glUniform1i(g_tabletopAlphaWaterActiveLoc,
+                    mask.waterSurfaceActive ? 1 : 0);
     }
     glBindVertexArray(g_tabletopAlphaVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -11773,10 +11801,11 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         if (nowNs - lastHealthNs >= 5000000000ULL) {
             __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
                 "[tabletop.mask] health right_ok=%u profile=%d radius=%.3f "
-                "depthScale=%.5f depth_sampler=highp",
+                "depthScale=%.5f depth_sampler=highp water_surface=%d",
                 successfulPairs, mask.coverageMode,
                 static_cast<double>(mask.playerRadiusM),
-                static_cast<double>(mask.depthScaleMPerGameUnit));
+                static_cast<double>(mask.depthScaleMPerGameUnit),
+                mask.waterSurfaceActive ? 1 : 0);
             lastHealthNs = nowNs;
             successfulPairs = 0;
         }

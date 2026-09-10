@@ -120,6 +120,18 @@ follow only horizontal translation: the miniature ground stays at table height
 while planes and helicopters visibly rise above it. Leaving the aircraft clears
 that altitude latch.
 
+Package 48 corrects deep-water masking without changing GTA's water renderer.
+Transparent water often leaves only the opaque seabed in the shared depth
+buffer; at an oblique tabletop view that distant seabed can project beyond the
+radial boundary even though the water surface is inside it. The GameThread now
+queries GTA's own stable water level beneath the live player/vehicle and stores
+that plane with the matching stereo generation. For a depth fragment confirmed
+below the plane, the compositor evaluates the radius at the ray/water-surface
+intersection and combines it with the ordinary depth result. It never fills a
+clear-depth sky pixel, so the correction cannot manufacture water where GTA
+rendered no scene. This path is tabletop-only and can be disabled at process
+start with `debug.savr.tabletop_water_mask=0`.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

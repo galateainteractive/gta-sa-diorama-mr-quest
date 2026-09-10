@@ -239,6 +239,7 @@ bool ResolveGameSymbols(void* handle) {
         {"_ZN11CWaterLevel18m_nNumOfWaterQuadsE",                                reinterpret_cast<void**>(&g.CWaterLevel_m_nNumOfWaterQuads), false},
         {"_ZN11CWaterLevel12m_aTrianglesE",                                      reinterpret_cast<void**>(&g.CWaterLevel_m_aTriangles), false},
         {"_ZN11CWaterLevel8m_aQuadsE",                                           reinterpret_cast<void**>(&g.CWaterLevel_m_aQuads), false},
+        {"_ZN11CWaterLevel20GetWaterLevelNoWavesEfffPfS0_S0_",                  reinterpret_cast<void**>(&g.CWaterLevel_GetWaterLevelNoWaves), false},
         {"_ZN9CRenderer26SetupBigBuildingVisibilityEP7CEntityRf",              reinterpret_cast<void**>(&g.CRenderer_SetupBigBuildingVisibility), false},
         {"_ZN9CRenderer24SetupMapEntityVisibilityEP7CEntityP14CBaseModelInfofb", reinterpret_cast<void**>(&g.CRenderer_SetupMapEntityVisibility), false},
         {"_ZN9CRenderer21ShouldModelBeStreamedEP7CEntityRK7CVectorf",             reinterpret_cast<void**>(&g.CRenderer_ShouldModelBeStreamed), false},

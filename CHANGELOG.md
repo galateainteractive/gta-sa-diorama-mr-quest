@@ -1,5 +1,19 @@
 # Changelog
 
+## Package 48 deep-water tabletop mask
+
+- Preserve GTA's transparent water surface inside the tabletop radial fade
+  when the opaque seabed lies much farther below it. The compositor now tests
+  the view ray against a retail-confirmed water plane instead of applying the
+  radius at the seabed position.
+- Limit the correction to water positively returned by GTA beneath the live
+  player/vehicle anchor and to pixels with real scene depth below that surface.
+  Clear-depth sky remains transparent, and land/object rendering, streaming
+  radii and immersive VR are unchanged.
+- Carry the water plane in the same synchronized stereo snapshot as the eye
+  textures and mask transform. Add the process-start A/B property
+  `debug.savr.tabletop_water_mask=0` for an exact fallback comparison.
+
 ## Package 47 cutscene surround and tabletop aircraft
 
 - Submit passthrough behind GTA's finite story-cutscene video quad, leaving the

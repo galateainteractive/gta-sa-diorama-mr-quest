@@ -58,7 +58,8 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 '[tabletop.perf42]',
                 '[tabletop.perf42.init]',
                 '[tabletop.perf42.thermal]',
-                '[tabletop.passthrough.weather.applied]'
+                '[tabletop.passthrough.weather.applied]',
+                '[tabletop.water.mask] package=48'
             )) {
                 if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }
                 Write-Output "PASS packaged release log: $required"

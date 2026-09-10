@@ -276,3 +276,36 @@ if ($drivingSource -notmatch
     throw 'Package 47 tabletop airplane pitch override audit failed'
 }
 Write-Output 'PASS Package 47 cutscene surround, tabletop plane pitch and aircraft altitude Track'
+
+# Package 48 keeps transparent water inside the same physical tabletop fade by
+# supplementing only seabed-derived depth pixels with a retail-confirmed water
+# plane intersection. The process-start property isolates the experiment.
+$symbolsHeader = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\Symbols.h')
+$symbolsSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\Symbols.cpp')
+foreach ($sourcePattern in @(
+        'CWaterLevel_GetWaterLevelNoWaves',
+        'GetWaterLevelNoWavesEfffPfS0_S0_')) {
+    if (($symbolsHeader + $symbolsSource) -notmatch $sourcePattern) {
+        throw "Package 48 retail water lookup audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'debug\.savr\.tabletop_water_mask',
+        'waterSurfaceActive = true',
+        '(?s)TabletopWorldPointToLocalTracking.*?waterZ')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 48 water-state audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'uWaterPoint,uWaterNormal',
+        'below>max\(0\.002,uDepthScale\*0\.5\)',
+        'a=max\(a,coverage\(uEye\+ray\*t\)\)',
+        'mask\.waterSurfaceActive \? 1 : 0')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 48 compositor water-plane audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 48 depth-safe tabletop water-surface mask'

@@ -290,6 +290,13 @@ struct TabletopMaskState {
     float viewerRadiusM{};
     float bridgeRadiusM{};
     float featherM{};
+    // Transparent GTA water commonly leaves the opaque seabed, rather than
+    // its own surface, in the depth buffer. When water exists at the live
+    // player/vehicle anchor, carry its horizontal plane beside this exact eye
+    // generation so the compositor can test the surface intersection.
+    bool waterSurfaceActive{false};
+    float waterSurfacePoint[3]{};
+    float waterSurfaceNormal[3]{0.0f, 1.0f, 0.0f};
     // GTA's depth projection uses game units; convert reconstructed view
     // distance to OpenXR LOCAL metres before testing the physical boundary.
     float depthScaleMPerGameUnit{1.0f};

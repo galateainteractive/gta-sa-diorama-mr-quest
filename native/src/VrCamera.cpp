@@ -85,6 +85,14 @@ constexpr bool kDefaultTabletopAlphaOverflowEnabled = true;
 constexpr char kTabletopAlphaOverflowProperty[] =
     "debug.savr.tabletop_alpha_overflow";
 
+// Package 48: the radial alpha compositor ordinarily sees the opaque seabed
+// through GTA's transparent water. Reconstruct the water surface only when the
+// retail water map confirms it under the live player/vehicle. This process-
+// start switch makes the isolated experiment reversible on the same APK.
+constexpr bool kDefaultTabletopWaterSurfaceMaskEnabled = true;
+constexpr char kTabletopWaterSurfaceMaskProperty[] =
+    "debug.savr.tabletop_water_mask";
+
 // Unified phone-like distance profile. User-facing distances now live in the
 // persisted Graphics menu below; this hidden switch remains the emergency
 // compatibility fallback to retail/cheap values.
@@ -2986,6 +2994,27 @@ V3 TabletopWorldPointToLocalTracking(V3 world) {
 
 bool Finite(V3 v);
 
+bool TabletopWaterSurfaceMaskEnabled() {
+    static const bool enabled = [] {
+        char text[PROP_VALUE_MAX]{};
+        bool value = kDefaultTabletopWaterSurfaceMaskEnabled;
+        if (__system_property_get(kTabletopWaterSurfaceMaskProperty, text) > 0) {
+            if (std::strcmp(text, "0") == 0) value = false;
+            else if (std::strcmp(text, "1") == 0) value = true;
+            else __android_log_print(
+                ANDROID_LOG_WARN, SAVR_TAG,
+                "[tabletop.water.mask] ignoring invalid %s=%s (valid 0, 1)",
+                kTabletopWaterSurfaceMaskProperty, text);
+        }
+        __android_log_print(
+            ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.water.mask] package=48 enabled=%d property=%s",
+            value ? 1 : 0, kTabletopWaterSurfaceMaskProperty);
+        return value;
+    }();
+    return enabled;
+}
+
 bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     out = {};
     if (!tabletop::Enabled() || !g_origin.valid ||
@@ -3056,6 +3085,40 @@ bool BuildTabletopMaskState(xr::TabletopMaskState& out) {
     // hide sector pop, narrow enough to retain the crisp tabletop silhouette.
     out.featherM = std::clamp(4.0f * scale, 0.08f, 0.24f);
     out.depthScaleMPerGameUnit = scale;
+
+    // Query the level at the gameplay anchor, not at the displaced tabletop
+    // camera. Retail polygon tests accept a finite band around the water plane,
+    // so clamp the query Z to the ocean/low-water band instead of passing a
+    // high-flying aircraft's altitude. The shader still requires real scene
+    // depth below the returned plane, so this cannot manufacture an ocean over
+    // clear sky.
+    if (TabletopWaterSurfaceMaskEnabled() &&
+        g.CWaterLevel_GetWaterLevelNoWaves) {
+        float waterZ = 0.0f;
+        const float waterProbeZ = std::clamp(
+            g_tabletopRadiusCenter.z, -5.0f, 15.0f);
+        if (g.CWaterLevel_GetWaterLevelNoWaves(
+                g_tabletopRadiusCenter.x, g_tabletopRadiusCenter.y,
+                waterProbeZ, &waterZ, nullptr, nullptr) &&
+            std::isfinite(waterZ)) {
+            const V3 waterPoint = TabletopWorldPointToLocalTracking(
+                {g_tabletopRadiusCenter.x, g_tabletopRadiusCenter.y, waterZ});
+            const V3 waterNormal = Normalized(Rotate(
+                g_origin.ori,
+                TabletopGameToTracking(g_tabletopWorldTransformBase,
+                                       {0.0f, 0.0f, 1.0f},
+                                       g_tabletopTransform.mapYaw)));
+            if (Finite(waterPoint) && Finite(waterNormal)) {
+                out.waterSurfaceActive = true;
+                out.waterSurfacePoint[0] = waterPoint.x;
+                out.waterSurfacePoint[1] = waterPoint.y;
+                out.waterSurfacePoint[2] = waterPoint.z;
+                out.waterSurfaceNormal[0] = waterNormal.x;
+                out.waterSurfaceNormal[1] = waterNormal.y;
+                out.waterSurfaceNormal[2] = waterNormal.z;
+            }
+        }
+    }
     return true;
 }
 
