@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 44 stronger dawn and wet-weather passthrough
+
+- Strengthen dawn warmth after the Package 43 headset preview showed that the
+  original palette was readable but too restrained.
+- Move overcast and rain closer to the approved fog character: markedly lower
+  saturation and contrast, slightly darker output and restrained cool tint,
+  avoiding the same bright/white fog finish.
+- Make automatic cloud and rain response begin earlier during GTA's gradual
+  transitions. Preserve a clear-weather dead zone so ordinary daytime
+  passthrough remains neutral.
+- Keep the temporary plain-`R3` palette preview for another headset comparison;
+  the final entry still returns control to automatic GTA weather.
+
 ## Package 43 manual passthrough weather palette preview
 
 - Temporarily assign plain `R3` in tabletop gameplay to a deterministic colour

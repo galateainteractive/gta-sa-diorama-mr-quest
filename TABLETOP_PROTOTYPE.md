@@ -89,6 +89,12 @@ written only when the selected preview or a coarse automatic weather bucket
 changes, making it possible to distinguish a bad palette from a missing GTA
 rain signal without per-frame cost.
 
+Package 44 keeps that manual preview while applying the first headset-guided
+art pass. Dawn is warmer and more pronounced. Overcast and rain now borrow the
+approved fog palette's desaturation and softened contrast, but stay darker and
+less white. Automatic weather uses an earlier smooth response for GTA rain and
+cloud transitions, with a cloud dead zone that protects clear daytime colour.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

@@ -196,3 +196,19 @@ if ($cameraSource -notmatch '(?s)coverageChord.*?viewChord.*?r3Edge.*?CyclePasst
     throw 'Package 43 R3 preview does not preserve chord priority'
 }
 Write-Output 'PASS Package 43 deterministic weather preview and bounded telemetry'
+
+# Package 44 strengthens the three palettes identified on-headset while keeping
+# clear weather neutral and making low GTA rain transitions visible sooner.
+foreach ($sourcePattern in @(
+        '-0\.010f, 0\.025f, 1\.04f.*0\.40f',
+        '-0\.035f, -0\.105f, 0\.78f.*0\.16f',
+        '-0\.065f, -0\.130f, 0\.68f.*0\.24f',
+        'cloudWeight = Smoothstep',
+        '0\.15f, 0\.85f.*state\.clouds',
+        'rainWeight = Smoothstep',
+        '0\.0f, 0\.45f.*state\.rain')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 44 weather tuning audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 44 stronger dawn, overcast and rain response'

@@ -2328,18 +2328,17 @@ PassthroughGrade AmplifyWeatherGrade(PassthroughGrade grade) {
 
 PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
     const PassthroughGrade neutral{};
-    if (!state.valid) return neutral;
 
     const PassthroughGrade dawn{
-        -0.015f, 0.015f, 1.02f, {1.10f, 1.015f, 0.92f}, 0.28f};
+        -0.010f, 0.025f, 1.04f, {1.18f, 1.035f, 0.84f}, 0.40f};
     const PassthroughGrade sunset{
         -0.025f, 0.025f, 1.03f, {1.16f, 0.94f, 0.78f}, 0.36f};
     const PassthroughGrade night{
         -0.155f, -0.035f, 0.82f, {0.84f, 0.93f, 1.08f}, 0.24f};
     const PassthroughGrade overcast{
-        -0.018f, -0.035f, 0.94f, {0.94f, 0.98f, 1.03f}, 0.10f};
+        -0.035f, -0.105f, 0.78f, {0.93f, 0.97f, 1.02f}, 0.16f};
     const PassthroughGrade rain{
-        -0.045f, -0.075f, 0.76f, {0.88f, 0.95f, 1.04f}, 0.24f};
+        -0.065f, -0.130f, 0.68f, {0.88f, 0.94f, 1.03f}, 0.24f};
     const PassthroughGrade fog{
         0.005f, -0.17f, 0.62f, {0.96f, 0.98f, 1.0f}, 0.10f};
     const PassthroughGrade sandstorm{
@@ -2368,6 +2367,8 @@ PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
             break;
     }
 
+    if (!state.valid) return neutral;
+
     const float hour = std::clamp(state.hour, 0.0f, 23.999f);
     const float dawnWeight = TimeWindow(hour, 4.75f, 6.25f, 8.0f);
     const float sunsetWeight = TimeWindow(hour, 16.75f, 18.5f, 20.75f);
@@ -2378,10 +2379,16 @@ PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
     PassthroughGrade result = BlendGrade(neutral, dawn, dawnWeight);
     result = BlendGrade(result, sunset, sunsetWeight);
     result = BlendGrade(result, night, nightWeight);
-    result = BlendGrade(result, overcast,
-                        std::clamp(state.clouds, 0.0f, 1.0f) * 0.28f);
-    result = BlendGrade(result, rain,
-                        std::clamp(state.rain, 0.0f, 1.0f) * 0.88f);
+    // GTA can expose relatively small transition values while clouds/rain are
+    // already plainly visible in the miniature. Ignore the clear-weather tail
+    // for clouds, then use an earlier smooth ramp for both states. This keeps
+    // sunny passthrough neutral while making real overcast/rain readable.
+    const float cloudWeight = Smoothstep(
+        0.15f, 0.85f, std::clamp(state.clouds, 0.0f, 1.0f)) * 0.55f;
+    const float rainWeight = Smoothstep(
+        0.0f, 0.45f, std::clamp(state.rain, 0.0f, 1.0f)) * 0.96f;
+    result = BlendGrade(result, overcast, cloudWeight);
+    result = BlendGrade(result, rain, rainWeight);
     result = BlendGrade(result, fog,
                         std::clamp(state.fog, 0.0f, 1.0f) * 0.82f);
     result = BlendGrade(result, sandstorm,
