@@ -2233,6 +2233,36 @@ constexpr XrDuration kPassthroughWeatherUpdateInterval = 250000000LL;
 // the preferred artistic intensity without retuning seven separate palettes.
 constexpr float kPassthroughWeatherIntensity = 3.0f;
 
+enum class PassthroughWeatherPreview : int {
+    Automatic = 0,
+    Neutral,
+    Dawn,
+    Sunset,
+    Night,
+    Overcast,
+    Rain,
+    Fog,
+    Sandstorm,
+    Count,
+};
+
+std::atomic<int> g_passthroughWeatherPreview{
+    static_cast<int>(PassthroughWeatherPreview::Automatic)};
+
+const char* PassthroughWeatherPreviewName(PassthroughWeatherPreview preview) {
+    switch (preview) {
+        case PassthroughWeatherPreview::Neutral: return "NORMAL";
+        case PassthroughWeatherPreview::Dawn: return "DAWN";
+        case PassthroughWeatherPreview::Sunset: return "SUNSET";
+        case PassthroughWeatherPreview::Night: return "NIGHT";
+        case PassthroughWeatherPreview::Overcast: return "OVERCAST";
+        case PassthroughWeatherPreview::Rain: return "RAIN";
+        case PassthroughWeatherPreview::Fog: return "FOG";
+        case PassthroughWeatherPreview::Sandstorm: return "SANDSTORM";
+        default: return "AUTO";
+    }
+}
+
 struct PassthroughGrade {
     float brightness{};
     float contrast{};
@@ -2314,6 +2344,29 @@ PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
         0.005f, -0.17f, 0.62f, {0.96f, 0.98f, 1.0f}, 0.10f};
     const PassthroughGrade sandstorm{
         -0.035f, 0.015f, 0.82f, {1.18f, 0.91f, 0.66f}, 0.48f};
+
+    const auto preview = static_cast<PassthroughWeatherPreview>(
+        g_passthroughWeatherPreview.load(std::memory_order_acquire));
+    switch (preview) {
+        case PassthroughWeatherPreview::Neutral:
+            return AmplifyWeatherGrade(neutral);
+        case PassthroughWeatherPreview::Dawn:
+            return AmplifyWeatherGrade(dawn);
+        case PassthroughWeatherPreview::Sunset:
+            return AmplifyWeatherGrade(sunset);
+        case PassthroughWeatherPreview::Night:
+            return AmplifyWeatherGrade(night);
+        case PassthroughWeatherPreview::Overcast:
+            return AmplifyWeatherGrade(overcast);
+        case PassthroughWeatherPreview::Rain:
+            return AmplifyWeatherGrade(rain);
+        case PassthroughWeatherPreview::Fog:
+            return AmplifyWeatherGrade(fog);
+        case PassthroughWeatherPreview::Sandstorm:
+            return AmplifyWeatherGrade(sandstorm);
+        default:
+            break;
+    }
 
     const float hour = std::clamp(state.hour, 0.0f, 23.999f);
     const float dawnWeight = TimeWindow(hour, 4.75f, 6.25f, 8.0f);
@@ -2448,6 +2501,7 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
     static int loggedFogBucket = -2;
     static int loggedCloudBucket = -2;
     static int loggedSandBucket = -2;
+    static int loggedPreview = -1;
 
     if (!g_passthroughActive.load(std::memory_order_acquire) ||
         !g_xrPassthroughLayerSetStyleFB) {
@@ -2461,6 +2515,7 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
         loggedFogBucket = -2;
         loggedCloudBucket = -2;
         loggedSandBucket = -2;
+        loggedPreview = -1;
         return;
     }
 
@@ -2544,18 +2599,25 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
     const int fogBucket = weatherBucket(state.fog);
     const int cloudBucket = weatherBucket(state.clouds);
     const int sandBucket = weatherBucket(state.sandstorm);
+    const int previewValue = g_passthroughWeatherPreview.load(
+        std::memory_order_acquire);
     if (hourBucket != loggedHourBucket || rainBucket != loggedRainBucket ||
         fogBucket != loggedFogBucket || cloudBucket != loggedCloudBucket ||
-        sandBucket != loggedSandBucket) {
+        sandBucket != loggedSandBucket || previewValue != loggedPreview) {
         loggedHourBucket = hourBucket;
         loggedRainBucket = rainBucket;
         loggedFogBucket = fogBucket;
         loggedCloudBucket = cloudBucket;
         loggedSandBucket = sandBucket;
-        LOGI("[tabletop.passthrough.weather.applied] path=%s intensity=%.2f "
+        loggedPreview = previewValue;
+        const auto preview = static_cast<PassthroughWeatherPreview>(
+            previewValue);
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+             "[tabletop.passthrough.weather.applied] path=%s preview=%s intensity=%.2f "
              "hour=%.2f rain=%.2f fog=%.2f clouds=%.2f sand=%.2f "
              "grade=b%.3f/c%.3f/s%.3f/t%.3f rgb=%.3f/%.3f/%.3f",
              usedLut ? "META_LUT" : "FB_BASIC",
+             PassthroughWeatherPreviewName(preview),
              static_cast<double>(kPassthroughWeatherIntensity),
              static_cast<double>(state.hour),
              static_cast<double>(state.rain),
@@ -5985,6 +6047,18 @@ void SetPassthroughWeatherState(const PassthroughWeatherState& state) {
     }
     std::lock_guard<std::mutex> lock(g_passthroughWeatherMutex);
     g_pendingPassthroughWeather = next;
+}
+
+void CyclePassthroughWeatherPreview() {
+    constexpr int count = static_cast<int>(
+        PassthroughWeatherPreview::Count);
+    const int next = (g_passthroughWeatherPreview.load(
+        std::memory_order_relaxed) + 1) % count;
+    g_passthroughWeatherPreview.store(next, std::memory_order_release);
+    const auto preview = static_cast<PassthroughWeatherPreview>(next);
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.passthrough.weather.preview] selected=%s index=%d/%d",
+        PassthroughWeatherPreviewName(preview), next, count - 1);
 }
 
 void SetNavigationWaypoint(bool valid, float worldX, float worldY) {

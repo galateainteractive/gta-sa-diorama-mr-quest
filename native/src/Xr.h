@@ -252,6 +252,11 @@ struct PassthroughWeatherState {
 };
 void SetPassthroughWeatherState(const PassthroughWeatherState& state);
 
+// Package 43 headset validation: plain R3 temporarily walks through the exact
+// passthrough grades without depending on GTA's weather globals. The final
+// entry restores automatic clock/weather control.
+void CyclePassthroughWeatherPreview();
+
 // User waypoint selected on the retail pause-map. The compositor presents it
 // as a lightweight tabletop navigation beacon without widening scene culling.
 void SetNavigationWaypoint(bool valid, float worldX, float worldY);

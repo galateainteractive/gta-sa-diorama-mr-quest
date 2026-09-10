@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 43 manual passthrough weather palette preview
+
+- Temporarily assign plain `R3` in tabletop gameplay to a deterministic colour
+  preview: neutral, dawn, sunset, night, overcast, rain, fog, sandstorm and back
+  to automatic GTA clock/weather control. Existing chorded `R3` actions keep
+  priority and are unchanged.
+- Drive the preview through the production passthrough palettes and the same
+  gradual OpenXR style path used by automatic weather, isolating palette/output
+  validation from GTA weather-global detection.
+- Promote `[tabletop.passthrough.weather.preview]` and the bucketed
+  `[tabletop.passthrough.weather.applied]` transition to release telemetry. No
+  per-frame logging or additional render pass is introduced.
+
 ## Package 42 bounded XR slowdown diagnostic
 
 - Expose one compact release-build `[tabletop.perf42]` aggregate per second,

@@ -80,6 +80,15 @@ measurements that were already collected; it adds no per-frame formatting,
 file output or GPU query. `[tabletop.perf42.thermal]` is event-driven and records
 OpenXR performance warning and recovery transitions when Quest supplies them.
 
+Package 43 is a temporary passthrough-palette validation build. Plain `R3`
+walks through `NORMAL`, `DAWN`, `SUNSET`, `NIGHT`, `OVERCAST`, `RAIN`, `FOG`,
+`SANDSTORM` and finally `AUTO`; chorded `R3` controls retain priority. These
+forced states use the exact amplified production palettes and their normal
+smooth transition, but bypass GTA's clock/weather values. A release log is
+written only when the selected preview or a coarse automatic weather bucket
+changes, making it possible to distinguish a bad palette from a missing GTA
+rain signal without per-frame cost.
+
 Swimming remains left-stick controlled, but uses a dedicated adapter: the stick
 selects a direction relative to the visible tabletop/headset frame, which is
 then converted into the game's native turn-and-thrust swimming controls.

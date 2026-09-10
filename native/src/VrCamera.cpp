@@ -2746,9 +2746,10 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
         suppressL3UntilRelease = true;
         suppressLeftGripUntilRelease = true;
     } else if (!blocked && r3Edge) {
-        const float radius = tabletop::CycleRadiusPreset();
-        LOGI("[tabletop.controls] radius=%.0fm preset=%d",
-             static_cast<double>(radius), tabletop::RadiusPresetIndex());
+        // Package 43 temporary colour validation: plain R3 previews each
+        // passthrough palette. Chorded R3 actions above keep their normal
+        // meanings, and the last palette restores automatic GTA weather.
+        xr::CyclePassthroughWeatherPreview();
         xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
     }
 

@@ -177,3 +177,22 @@ if ($perfSource -match '(?s)void SubmitPresentFrame\([^)]*\).*?\[tabletop\.perf4
     throw 'Package 42 diagnostic escaped the one-second aggregate into the per-frame path'
 }
 Write-Output 'PASS Package 42 bounded release XR/GPU and thermal diagnostics'
+
+# Package 43 temporarily gives plain R3 to a deterministic passthrough colour
+# preview. It must use the production palettes, keep chorded R3 actions ahead
+# of the preview, and expose only transition-driven release telemetry.
+foreach ($sourcePattern in @(
+        'enum class PassthroughWeatherPreview',
+        'CyclePassthroughWeatherPreview\(\)',
+        '\[tabletop\.passthrough\.weather\.preview\]',
+        '\[tabletop\.passthrough\.weather\.applied\].*preview=%s')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 43 passthrough preview audit failed: $sourcePattern"
+    }
+}
+$cameraSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\VrCamera.cpp')
+if ($cameraSource -notmatch '(?s)coverageChord.*?viewChord.*?r3Edge.*?CyclePassthroughWeatherPreview') {
+    throw 'Package 43 R3 preview does not preserve chord priority'
+}
+Write-Output 'PASS Package 43 deterministic weather preview and bounded telemetry'
