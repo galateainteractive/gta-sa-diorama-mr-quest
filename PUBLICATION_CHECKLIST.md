@@ -11,7 +11,7 @@ independent repository's `main` branch.
 - [x] Preserve the MIT license and document the exact upstream provenance.
 - [x] Create the independent private GitHub repository at
       `galateainteractive/gta-sa-diorama-mr-quest`.
-- [ ] Configure it as `origin` and push development history and safety tags.
+- [x] Configure it as `origin` and push development history and safety tags.
 - [x] Point `UPDATE.bat` at the independent Diorama MR repository.
 - [ ] Run the complete release audit, including Bash syntax checks.
 
