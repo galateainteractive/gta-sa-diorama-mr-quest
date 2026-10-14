@@ -25,6 +25,60 @@ configuration and debugging compatibility.
 > [GTA San Andreas VR discussion channel](https://discord.com/channels/747967102895390741/1543691482861408276).
 > Join the Flat2VR server first if the channel link does not open for you.
 
+## Features
+
+- **Mixed-reality diorama:** play the complete retail GTA San Andreas campaign
+  as a room-scale miniature surrounded by Meta Quest passthrough.
+- **Three production camera modes:** `TRACK` follows CJ or the current vehicle
+  without rotating the room, `FOLLOW` also follows their heading, and `FIXED`
+  leaves the diorama in place for direct tabletop manipulation.
+- **Tracked tabletop controls:** drag the fixed diorama with one grip, or use
+  both grips to move, rotate, and freely resize it around a stable pivot.
+- **Stable miniature boundary:** a depth-aware radial fade keeps a 60-metre
+  game-world area around CJ or the current vehicle visible while leaving the
+  physical room outside it unobstructed.
+- **Weather-reactive passthrough:** clear daytime remains neutral, while dawn,
+  sunset, night, overcast, rain, fog, and sandstorms gradually tint or darken
+  passthrough from GTA's live clock and weather state.
+- **Passthrough presentation throughout the game:** the boot menu, pause/map
+  menu, loading transitions, and story-cutscene theater retain the real room
+  around their finite game surfaces.
+- **Headset-relative spatial audio:** positional world sounds are oriented from
+  the player's physical listening position while GTA's original distance curve,
+  radio, and interface audio remain intact.
+- **Stereo-safe vehicle sparks:** problematic scraping and wheel sparks use a
+  bounded lightweight 3D particle replacement around CJ and nearby traffic,
+  while unrelated GTA effects keep their retail rendering.
+- **Quest-native gameplay controls:** adapted on-foot movement, targeting,
+  shooting, melee, sprinting, crouching, swimming, vehicle steering, bicycles,
+  boats, airplanes, helicopters, and parachutes.
+- **Tabletop-aware navigation:** the radar, mission text, red mission areas, and
+  red, yellow, and blue objective markers stay readable and correctly placed
+  when the diorama is resized.
+- **Tabletop-aware world rendering:** nearby ground, roads, mission companions,
+  transparent deep water, vegetation, traffic, and large scenery receive
+  dedicated visibility safeguards around the player.
+- **Aircraft presentation:** airplanes and helicopters use conventional Quest
+  stick controls; in `TRACK` mode the miniature ground remains at table height
+  while the aircraft visibly climbs above it.
+- **Optional immersive mode:** choose `DIORAMA MR` or `IMMERSIVE VR` from the VR
+  menu and restart to apply the selected presentation safely.
+- **Original game state preserved:** missions, scripts, physics, collisions,
+  traffic, pedestrians, vehicles, saves, and world coordinates remain GTA's.
+
+### Diorama MR control highlights
+
+- `R3`: cycle `TRACK`, `FOLLOW`, and `FIXED` cameras.
+- `L3`: crouch on foot.
+- `L3 + R3`: recenter the diorama on CJ or the current vehicle.
+- One grip in `FIXED`: drag the diorama.
+- Both grips: move, rotate, and resize the diorama.
+- `A`: jump; `B`: sprint; `X`: alternate attack; `Y`: enter or exit a vehicle.
+- Hold `L2` to target and press `R2` to fire.
+
+See [Diorama MR technical notes](TABLETOP_PROTOTYPE.md) for implementation
+details and [CHANGELOG.md](CHANGELOG.md) for the complete package history.
+
 ## Requirements
 
 - Your own installed copy of GTA San Andreas from Google Play, version

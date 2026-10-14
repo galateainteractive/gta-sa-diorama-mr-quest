@@ -28,7 +28,7 @@ captured for the eye image.
 - Keep the previous physical-size floor, angular readability compensation,
   64-entry pool and Package 27 logs.
 
-Faíscas, controls, passthrough, radial visibility, audio, game data, saves and
+Sparks, controls, passthrough, radial visibility, audio, game data, saves and
 configuration are unchanged. Six APKs were built and hash-checked without
 selecting or modifying a headset.
 

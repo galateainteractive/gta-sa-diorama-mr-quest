@@ -117,7 +117,7 @@ cycles the three production diorama cameras, while normal gameplay is locked to
 the stable 60 metre CJ/vehicle-only coverage profile. See `PACKAGE_49.md`.
 
 Package 46 makes the requested presentation defaults explicit: gameplay starts
-at `visual_scale=0.010` in the translation-following `Track`/Esteira view. A
+at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former
 shipped `0.040`, so a deliberately customized value is not overwritten. A
 GameThread snapshot also separates loading from menus and cutscenes. While the
@@ -130,7 +130,7 @@ map zoom and official mission-marker bridge are unchanged.
 Package 47 puts passthrough behind the finite story-cutscene theater quad, so
 the video remains unchanged but no longer sits in an entirely black room.
 Tabletop fixed-wing pitch always comes from the conventional left stick even
-when an old immersive-yoke preference is preserved. In `Track`/Esteira view,
+when an old immersive-yoke preference is preserved. In `Track`/conveyor view,
 aircraft latch their current altitude on entry or recenter and subsequently
 follow only horizontal translation: the miniature ground stays at table height
 while planes and helicopters visibly rise above it. Leaving the aircraft clears

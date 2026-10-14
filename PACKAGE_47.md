@@ -13,7 +13,7 @@ Manual installer:
 - Fixed-wing aircraft in tabletop always use conventional left-stick pitch,
   regardless of a preserved immersive-yoke setting. Hold `R2` to accelerate;
   pull the left stick back to raise the nose and push it forward to lower it.
-- `Track`/Esteira latches the vertical reference upon entering an airplane or
+- `Track`/conveyor latches the vertical reference upon entering an airplane or
   helicopter. It continues following X/Y but not altitude, so the ground stays
   on the table and the aircraft climbs physically within the miniature.
 - Recenter or a view change establishes a fresh altitude reference, and leaving

@@ -15,7 +15,7 @@ $adb = $adbCandidates |
     Where-Object { Test-Path -LiteralPath $_ } |
     Select-Object -First 1
 if (-not $adb) {
-    throw "ADB nao encontrado no D:. Caminhos testados: $($adbCandidates -join '; ')"
+    throw "ADB was not found on D:. Checked paths: $($adbCandidates -join '; ')"
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
@@ -23,11 +23,11 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $logPath = Join-Path $OutputDirectory "tabletop-$stamp.log"
 
 Write-Host '============================================================'
-Write-Host '  DIAGNOSTICO GTA SAN ANDREAS TABLETOP'
+Write-Host '  GTA SAN ANDREAS DIORAMA MR DIAGNOSTICS'
 Write-Host '============================================================'
-Write-Host "Arquivo: $logPath"
-Write-Host 'Pode jogar normalmente. Quando o problema acontecer, anote a hora.'
-Write-Host 'Deixe esta janela aberta e use Ctrl+C somente quando terminar.'
+Write-Host "Output file: $logPath"
+Write-Host 'Play normally. If the problem occurs, note the exact time.'
+Write-Host 'Keep this window open and press Ctrl+C only when you are finished.'
 Write-Host ''
 
 # Windows PowerShell 5 writes Tee-Object files as UTF-16LE. Start the file in

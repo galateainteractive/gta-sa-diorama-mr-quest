@@ -8,7 +8,7 @@ Manual installer:
 ## Changes
 
 - Gameplay starts at the farthest/smallest tabletop scale (`0.010`) and in
-  `Track`/Esteira mode: player/vehicle translation is followed, but its heading
+  `Track`/conveyor mode: player/vehicle translation is followed, but its heading
   does not rotate the miniature around the viewer.
 - Personal updates migrate only the former exact shipped scale `0.040`; custom
   scale values and the debug property override remain authoritative.

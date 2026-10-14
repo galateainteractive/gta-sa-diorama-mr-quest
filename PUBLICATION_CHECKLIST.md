@@ -23,6 +23,8 @@ independent repository's `main` branch.
       passthrough and safe reset defaults.
 - [x] Make the in-headset controller help reflect the active mode and the
       shipped Quest bindings.
+- [x] Keep the public README, feature overview, player-facing tools and
+      in-headset text in English.
 - [ ] Audit retail tutorial text that cannot be replaced by the VR menu panel.
 - [ ] Update the About panel and visible version string for the first Diorama
       MR release.

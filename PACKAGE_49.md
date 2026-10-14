@@ -22,7 +22,7 @@ Build: `work-upstream/runs/20261014-150610-d8675e49`.
 
 ## Headset test
 
-1. Start in Diorama MR and confirm the opening camera is `TRACK`/Esteira.
+1. Start in Diorama MR and confirm the opening camera is `TRACK`/conveyor.
 2. Press plain `R3` three times and confirm the order, short English label and
    recentering behavior for all three cameras.
 3. Confirm `L3` still crouches and `L3 + R3` still recentres without changing

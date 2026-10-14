@@ -15,6 +15,8 @@
   Diorama MR branding and mode-correct Quest controls.
 - Point the one-click source updater at the independent Diorama MR repository
   instead of replacing a Diorama checkout with the immersive upstream project.
+- Add a consolidated English feature and control overview to the public README,
+  covering the accumulated Diorama MR work from the package history.
 
 ## Package 49 production diorama views
 
@@ -54,14 +56,14 @@
 - Force fixed-wing pitch to the conventional left stick while tabletop is
   active, regardless of a persisted immersive-yoke setting. `R2` accelerates;
   pulling the left stick back raises the nose.
-- In `Track`/Esteira view, latch altitude when entering an airplane or
+- In `Track`/conveyor view, latch altitude when entering an airplane or
   helicopter and follow only its horizontal translation. The ground remains at
   table height while the aircraft visibly climbs; recentering establishes a
   fresh altitude reference.
 
 ## Package 46 passthrough loading and tabletop startup defaults
 
-- Start gameplay in the translation-following `Track`/Esteira view, which keeps
+- Start gameplay in the translation-following `Track`/conveyor view, which keeps
   the miniature centred without rotating the room when CJ or a vehicle turns.
 - Start at the farthest/smallest tabletop scale (`0.010`). Personal updates
   migrate only the exact former shipped `0.040` value, preserving any other
