@@ -17,6 +17,9 @@
   instead of replacing a Diorama checkout with the immersive upstream project.
 - Add a consolidated English feature and control overview to the public README,
   covering the accumulated Diorama MR work from the package history.
+- Introduce **Galatea Diorama Mods** as the mixed-reality mod-series signature,
+  credit **Galatea Interactive** as its parent, and show the signature in the
+  public README and the in-headset Welcome/About panel.
 
 ## Package 49 production diorama views
 

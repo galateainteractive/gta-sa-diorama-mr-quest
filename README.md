@@ -1,5 +1,10 @@
 # GTA San Andreas Diorama MR for Meta Quest — Source Kit
 
+**A Galatea Diorama Mod.**
+
+Part of **Galatea Diorama Mods**, a mixed-reality mod series by
+**Galatea Interactive**.
+
 Diorama MR is an independent mixed-reality adaptation of the open-source
 [GTA San Andreas VR Quest](https://github.com/dubrovskiy-yevhen-stakelogic/gta-sa-vr-quest)
 port. It presents San Andreas as a room-scale miniature with passthrough,
@@ -367,6 +372,9 @@ the wizard.
 See [BUILDING.md](BUILDING.md) and [NOTICE.md](NOTICE.md) for details.
 
 ## Credits and origin
+
+The **Diorama MR** adaptation is developed under **Galatea Diorama Mods**, a
+mixed-reality mod series by **Galatea Interactive**.
 
 Diorama MR is derived from the MIT-licensed
 [GTA San Andreas VR Quest](https://github.com/dubrovskiy-yevhen-stakelogic/gta-sa-vr-quest)

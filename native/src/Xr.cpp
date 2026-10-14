@@ -7535,6 +7535,7 @@ void BuildAboutMenu() {
                   "VR BASE %s - DEVELOPMENT PREVIEW", kModVersionShown);
     PanelTextFit(versionLine, cx, 54, 2, 170, 190, 210);
     static const char* const kLines[] = {
+        "GALATEA DIORAMA MODS",
         "VR MENU: HOLD BOTH GRIPS + MENU (OR Y)",
         "PLAY MODE: DIORAMA MR OR IMMERSIVE VR",
         "MODE CHANGES APPLY AFTER RESTART",
