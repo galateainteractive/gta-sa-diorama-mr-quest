@@ -2544,8 +2544,8 @@ CamBasis BuildVrCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
 // tabletop "conveyor belt" view). FIXED retains both position and heading.
 enum class TabletopViewMode : int { Follow = 0, Track = 1, Fixed = 2 };
 
-// R3 keeps selecting the visual radius. Right-grip + R3 independently
-// selects how much world exists outside CJ's authoritative circle.
+// Alternative coverage policies remain implemented for future explicit
+// experimental settings, but production gameplay is player-only.
 enum class TabletopCoverageMode : int {
     PlayerOnly = 0,
     Connected = 1,
@@ -2715,7 +2715,6 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     static bool l3WasDown{};
     static bool r3WasDown{};
     static bool suppressL3UntilRelease{};
-    static bool suppressLeftGripUntilRelease{};
     static bool initialized{};
     if (!initialized) {
         g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
@@ -2730,25 +2729,36 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     if (!tabletop::Enabled()) return;
 
     const bool resetChordHeld = input.l3 && input.r3;
-    const bool coverageChord = input.grip[1] >= 0.65f && r3Edge;
-    const bool viewChord = input.grip[0] >= 0.65f && l3Edge && !input.r3;
+    const bool gripsFree = input.grip[0] < 0.65f && input.grip[1] < 0.65f;
+    // Normal play always uses CJ/vehicle as the sole coverage authority.
+    // This also repairs a stale in-memory experimental mode without exposing
+    // another runtime chord to the player.
+    if (g_tabletopCoverageMode.load(std::memory_order_relaxed) !=
+        static_cast<int>(TabletopCoverageMode::PlayerOnly)) {
+        g_tabletopCoverageMode.store(
+            static_cast<int>(TabletopCoverageMode::PlayerOnly),
+            std::memory_order_release);
+        g_tabletopCoverageWarmupFrames.store(0, std::memory_order_release);
+    }
     if (!blocked && resetChordHeld && (l3Edge || r3Edge)) {
         ResetTabletopTransform(true);
         xr::TriggerHaptic(0, 0.65f, 90.0f, 70.0f);
         xr::TriggerHaptic(1, 0.65f, 90.0f, 70.0f);
         suppressL3UntilRelease = true;
-    } else if (!blocked && coverageChord) {
-        const int next = (g_tabletopCoverageMode.load(
-            std::memory_order_relaxed) + 1) % 3;
-        g_tabletopCoverageMode.store(next, std::memory_order_release);
-        g_tabletopCoverageWarmupFrames.store(45, std::memory_order_release);
-        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.diag.event] coverage=%s",
-            TabletopCoverageModeName(static_cast<TabletopCoverageMode>(next)));
-        xr::TriggerHaptic(1, 0.72f, 115.0f, 75.0f);
-    } else if (!blocked && viewChord) {
-        const int next = (static_cast<int>(g_tabletopTransform.mode) + 1) % 3;
-        g_tabletopTransform.mode = static_cast<TabletopViewMode>(next);
+    } else if (!blocked && r3Edge && gripsFree && !input.l3) {
+        // Deliberate player-facing order from the default conveyor view:
+        // TRACK -> FOLLOW -> FIXED -> TRACK.
+        switch (g_tabletopTransform.mode) {
+            case TabletopViewMode::Track:
+                g_tabletopTransform.mode = TabletopViewMode::Follow;
+                break;
+            case TabletopViewMode::Follow:
+                g_tabletopTransform.mode = TabletopViewMode::Fixed;
+                break;
+            default:
+                g_tabletopTransform.mode = TabletopViewMode::Track;
+                break;
+        }
         // A mode change deliberately focuses the live player and re-latches
         // joystick/HMD direction instead of carrying a stale vehicle or drag
         // frame into the next camera mode.
@@ -2756,24 +2766,21 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
         __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
             "[tabletop.diag.event] view=%s",
             TabletopViewModeName(g_tabletopTransform.mode));
-        xr::TriggerHaptic(0, 0.55f, 80.0f, 55.0f);
-        suppressL3UntilRelease = true;
-        suppressLeftGripUntilRelease = true;
-    } else if (!blocked && r3Edge) {
-        const float radius = tabletop::CycleRadiusPreset();
-        LOGI("[tabletop.controls] radius=%.0fm preset=%d",
-             static_cast<double>(radius), tabletop::RadiusPresetIndex());
+        char status[32];
+        std::snprintf(status, sizeof(status), "CAMERA: %s",
+                      g_tabletopTransform.mode == TabletopViewMode::Track
+                          ? "TRACK"
+                          : (g_tabletopTransform.mode == TabletopViewMode::Fixed
+                                 ? "FIXED" : "FOLLOW"));
+        xr::PublishStatusText(status, 2.0f);
         xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
     }
 
     // Plain L3 now belongs to GTA's crouch toggle. Consume it only when it was
-    // part of a tabletop chord; R3 remains wholly owned by tabletop controls.
+    // part of the recenter chord; R3 remains wholly owned by tabletop controls.
     if (!input.l3) suppressL3UntilRelease = false;
     if (suppressL3UntilRelease) input.l3 = false;
     input.r3 = false;
-    if (coverageChord) input.grip[1] = 0.0f;
-    if (input.grip[0] < 0.45f) suppressLeftGripUntilRelease = false;
-    if (suppressLeftGripUntilRelease) input.grip[0] = 0.0f;
 
     if (blocked || !g_origin.valid) {
         g_tabletopTransform.gestureActive = false;

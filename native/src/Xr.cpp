@@ -82,6 +82,8 @@ struct HudTextState {
     std::u16string big;
     std::u16string timers;
     std::u16string radio;
+    std::u16string status;
+    std::uint64_t statusUntilNs{};
     int bigStyle{};
     std::uint64_t revision{};
 };
@@ -4480,6 +4482,12 @@ bool SetupHudTextRenderer(JavaVM* vm,jobject activity) {
 
 HudTextState SnapshotHudText() {
     std::lock_guard<std::mutex> lock(g_hudTextMutex);
+    if (!g_hudTextState.status.empty() && g_hudTextState.statusUntilNs != 0 &&
+        MonotonicNowNs() >= g_hudTextState.statusUntilNs) {
+        g_hudTextState.status.clear();
+        g_hudTextState.statusUntilNs = 0;
+        ++g_hudTextState.revision;
+    }
     return g_hudTextState;
 }
 
@@ -4602,6 +4610,10 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     if (!textState.radio.empty()) {
         if (!timerText.empty()) timerText.append(u"\n");
         timerText.append(textState.radio);
+    }
+    if (!textState.status.empty()) {
+        if (!timerText.empty()) timerText.append(u"\n");
+        timerText.append(textState.status);
     }
     // While the HUD menu is open, live mission text is usually absent, which
     // made the text layers impossible to place. Substitute sample strings
@@ -5573,6 +5585,22 @@ void PublishRadioText(const char* text) {
     std::lock_guard<std::mutex> lock(g_hudTextMutex);
     if (g_hudTextState.radio == next) return;
     g_hudTextState.radio = std::move(next);
+    ++g_hudTextState.revision;
+}
+
+void PublishStatusText(const char* text, float durationSeconds) {
+    std::u16string next;
+    if (text) {
+        for (const char* c = text; *c != '\0' && next.size() < 64; ++c)
+            next.push_back(static_cast<char16_t>(
+                static_cast<unsigned char>(*c)));
+    }
+    const std::uint64_t durationNs = static_cast<std::uint64_t>(
+        std::max(0.0f, durationSeconds) * 1000000000.0f);
+    std::lock_guard<std::mutex> lock(g_hudTextMutex);
+    g_hudTextState.status = std::move(next);
+    g_hudTextState.statusUntilNs = g_hudTextState.status.empty()
+        ? 0 : MonotonicNowNs() + durationNs;
     ++g_hudTextState.revision;
 }
 
@@ -7541,8 +7569,8 @@ void BuildControlsTipsMenu() {
         "A JUMP   B SPRINT   Y ENTER / EXIT",
         "X ALTERNATE ATTACK / FIRE",
         "L2 HOLD AIM   R2 FIRE WHILE AIMING",
-        "L3 CROUCH   LEFT GRIP+L3 CAMERA",
-        "R3 RADIUS   RIGHT GRIP+R3 COVERAGE",
+        "L3 CROUCH   R3 CHANGE CAMERA",
+        "VISIBLE WORLD RADIUS: FIXED 60 M",
         "L3+R3 RECENTER DIORAMA ON PLAYER",
         "FIXED VIEW: ONE GRIP DRAGS THE MAP",
         "TWO GRIPS MOVE / ROTATE / RESIZE",

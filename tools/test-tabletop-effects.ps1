@@ -132,7 +132,7 @@ foreach ($sourcePattern in @(
     }
 }
 foreach ($sourcePattern in @(
-        'viewChord = input\.grip\[0\].*?l3Edge',
+        'const bool resetChordHeld = input\.l3 && input\.r3',
         'suppressL3UntilRelease',
         'if \(suppressL3UntilRelease\) input\.l3 = false',
         'g_tabletopAimPressFrame',
@@ -194,18 +194,18 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 44 stronger dawn, overcast and rain response'
 
-# Package 45 retires the successful manual preview, restores plain R3 radius
-# selection and places the existing opaque theater menu over passthrough. The
-# GameThread publishes menu state atomically so XR never reads GTA UI memory.
+# Package 45 retires the successful manual preview and places the existing
+# opaque theater menu over passthrough. Package 49 supersedes its temporary R3
+# radius assignment. The GameThread publishes menu state atomically so XR never
+# reads GTA UI memory.
 if ($xrSource -match 'PassthroughWeatherPreview|CyclePassthroughWeatherPreview' -or
-    $cameraSource -notmatch '(?s)r3Edge.*?CycleRadiusPreset\(\)' -or
     $cameraSource -notmatch 'g_mobileMenuOpenSnapshot\.store\(mobileMenuOpen' -or
     $xrSource -notmatch 'submitMenuPassthrough' -or
     $xrSource -notmatch '(?s)submitMenuPassthrough\s*=.*?IsMobileMenuOpen\(\).*?GameSurface' -or
     $xrSource -notmatch 'if \(submitTabletopPassthrough\)') {
-    throw 'Package 45 menu passthrough/R3 restoration audit failed'
+    throw 'Package 45 menu passthrough/weather-preview retirement audit failed'
 }
-Write-Output 'PASS Package 45 menu-only passthrough and plain R3 radius restore'
+Write-Output 'PASS Package 45 menu-only passthrough and retired weather preview'
 
 # Package 46 starts at the requested small/far tabletop scale and translation-
 # following Track view. Loading hides its opaque retail quad only when an active
@@ -309,3 +309,38 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 48 depth-safe tabletop water-surface mask'
+
+# Package 49 promotes the headset-proven production profile: 60 m around the
+# live player/vehicle, no normal coverage/radius cycling, and plain R3 camera
+# cycling with a short compositor status line. Physical two-grip scale remains.
+foreach ($sourcePattern in @(
+        'constexpr int kOfficialRadiusPreset = 1',
+        'loaded\.radiusPreset = kOfficialRadiusPreset',
+        'g_radiusPreset\.store\(kOfficialRadiusPreset')) {
+    if ($tabletopSource -notmatch $sourcePattern) {
+        throw "Package 49 official radius audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'r3Edge && gripsFree && !input\.l3',
+        'TabletopViewMode::Track:[\s\S]*?TabletopViewMode::Follow',
+        'PublishStatusText\(status, 2\.0f\)',
+        'TabletopCoverageMode::PlayerOnly')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 49 camera/coverage audit failed: $sourcePattern"
+    }
+}
+if ($cameraSource -match 'coverageChord' -or
+    $cameraSource -match '(?s)r3Edge.*?CycleRadiusPreset\(\)' -or
+    $mainSource -notmatch '!tabletop::Enabled\(\).*?!cutsceneCameras') {
+    throw 'Package 49 still exposes an old coverage/radius chord or tabletop vehicle-camera conflict'
+}
+foreach ($sourcePattern in @(
+        'std::u16string status',
+        'statusUntilNs',
+        'void PublishStatusText\(const char\* text, float durationSeconds\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 49 status-text audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 49 fixed 60m coverage, R3 cameras and transient status text'

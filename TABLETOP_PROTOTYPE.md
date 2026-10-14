@@ -27,13 +27,21 @@ Runtime controls:
 - `L2`: hold GTA's native targeting state; releasing it lowers the weapon;
 - `R2`: fire while `L2` is held;
 - `L3`: toggle crouch on foot;
-- left grip + `L3`: cycle the original follow-player, fixed-table and
-  conveyor-style views;
+- `R3`: cycle the `TRACK`, `FOLLOW` and `FIXED` views; a short English status
+  line confirms the selected camera;
 - fixed table + one grip: drag the model through the room;
 - fixed table + both grips: move, rotate and resize the model (hands farther
   apart make it larger; hands closer make it smaller);
-- `R3`: cycle the visible map radius through 30, 60, 75 and 120 metres;
-- `L3 + R3`: reset scale, placement and radius while keeping the current view.
+- visible-world radius: fixed at the proven 60 metre profile during normal
+  play; the older experimental radii are not exposed by a controller shortcut;
+- coverage authority: CJ/current vehicle only during normal play; the former
+  connected and two-island experiments remain source-level prototypes;
+- `L3 + R3`: reset scale and placement while keeping the current view and the
+  official 60 metre radius.
+
+The physical miniature size is independent of the visible-world radius. Two
+grips may still resize the diorama freely without changing how many game-world
+metres are streamed and rendered around CJ or the current vehicle.
 
 Red mission areas and coloured objective cones follow the same miniature-world
 transform as CJ. Their presentation has a physical minimum size and is drawn as
@@ -103,6 +111,10 @@ passthrough layer behind their existing opaque theater quad, so only the menu
 screen is dark and the room remains visible around it. A GameThread-owned
 atomic snapshot gates this path; cutscenes, shops and stereo fallback screens
 do not inherit the menu passthrough behaviour.
+
+Package 49 supersedes that Package 45 controller assignment: plain `R3` now
+cycles the three production diorama cameras, while normal gameplay is locked to
+the stable 60 metre CJ/vehicle-only coverage profile. See `PACKAGE_49.md`.
 
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/Esteira view. A

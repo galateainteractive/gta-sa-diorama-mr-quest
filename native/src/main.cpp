@@ -1064,7 +1064,8 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         // (recenter); the Rhino is skipped — its view is forced third-person
         // and the toggle would silently flip the shared car setting instead.
         static bool viewChordPrev = false;
-        const bool viewChord = !cutsceneCameras && grips && in.r3 && !in.l3;
+        const bool viewChord = !tabletop::Enabled() && !cutsceneCameras &&
+            grips && in.r3 && !in.l3;
         if (viewChord && !viewChordPrev && menuPage == PG_NONE) {
             const int vehicleType = savr::driving::GetActiveVehicleType();
             if (vehicleType >= 0 &&

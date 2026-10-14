@@ -72,6 +72,9 @@ void PublishMissionTimersText(const char* text);
 // Transient radio-station line, shown in the TIMERS text layer while the
 // station changes (empty string clears it).
 void PublishRadioText(const char* text);
+// Short compositor status line used by Diorama MR controls. It shares the
+// proven direct-text layer with timers/radio but has independent lifetime.
+void PublishStatusText(const char* text, float durationSeconds);
 
 // Per-hand tracked pose for rendering VR hands. grip drives the hand model; aim
 // gives the pointing axis. Poses are in the session LOCAL space (same as the head

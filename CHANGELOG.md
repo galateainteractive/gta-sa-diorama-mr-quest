@@ -16,6 +16,22 @@
 - Point the one-click source updater at the independent Diorama MR repository
   instead of replacing a Diorama checkout with the immersive upstream project.
 
+## Package 49 production diorama views
+
+- Fix normal-play world coverage to the proven 60 metre radius around CJ or the
+  current vehicle. Preserved settings from 30, 75 or 120 metres are migrated in
+  memory on startup, and the connected/two-island experiments are no longer
+  reachable through controller shortcuts.
+- Keep two-grip physical diorama resizing independent from the 60 metre
+  game-world radius.
+- Assign plain `R3` to cycle `TRACK`, `FOLLOW` and `FIXED` camera modes. Each
+  change recentres on the live player, refreshes locomotion direction and shows
+  a two-second English status line.
+- Preserve plain `L3` crouch and `L3 + R3` recenter. Limit the legacy
+  both-grips + `R3` vehicle-camera shortcut to immersive VR.
+- Update the in-headset controls page and technical documentation for the
+  production layout.
+
 ## Package 48 deep-water tabletop mask
 
 - Preserve GTA's transparent water surface inside the tabletop radial fade

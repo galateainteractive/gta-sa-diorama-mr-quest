@@ -46,6 +46,11 @@ std::atomic<int> g_radiusPreset{1};
 constexpr float kRadiusPresets[]{30.0f, 60.0f, 75.0f, 120.0f};
 constexpr int kRadiusPresetCount =
     static_cast<int>(sizeof(kRadiusPresets) / sizeof(kRadiusPresets[0]));
+// Package 49 makes the proven 60 m profile the production Diorama MR
+// coverage. The other values remain available to future explicit developer
+// or experimental-menu work, but preserved personal settings must not start
+// normal play in one of the expensive/undersized profiles.
+constexpr int kOfficialRadiusPreset = 1;
 
 char* Trim(char* text) {
     while (*text && std::isspace(static_cast<unsigned char>(*text))) ++text;
@@ -193,6 +198,11 @@ void LoadSettings() {
     loaded.anchorDownMeters = std::clamp(loaded.anchorDownMeters, 0.10f, 1.50f);
     loaded.radiusPreset = std::clamp(loaded.radiusPreset, 0,
                                      kRadiusPresetCount - 1);
+    if (loaded.radiusPreset != kOfficialRadiusPreset) {
+        LOGI("[tabletop.settings] radius preset %d migrated to official 60m preset",
+             loaded.radiusPreset);
+        loaded.radiusPreset = kOfficialRadiusPreset;
+    }
     g_settings = loaded;
     g_activeEnabled.store(loaded.enabled, std::memory_order_relaxed);
     g_configuredEnabled.store(configuredEnabled, std::memory_order_relaxed);
@@ -262,7 +272,8 @@ float CycleRadiusPreset() {
     return kRadiusPresets[next];
 }
 void ResetRadiusPreset() {
-    g_radiusPreset.store(GetSettings().radiusPreset, std::memory_order_relaxed);
+    (void)GetSettings();
+    g_radiusPreset.store(kOfficialRadiusPreset, std::memory_order_relaxed);
 }
 
 } // namespace savr::tabletop
