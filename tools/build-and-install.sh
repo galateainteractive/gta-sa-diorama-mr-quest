@@ -1036,7 +1036,7 @@ fi
 mkdir -p "$(dirname "$LOG_PATH")"
 exec > >(tee -a "$LOG_PATH") 2>&1
 
-echo "GTA San Andreas VR - personal Quest source builder"
+echo "GTA San Andreas Diorama MR - personal Quest source builder"
 echo "No APK, GTA data, or audio mod is included in this source kit."
 echo "Work directory: $WORK_DIR"
 echo "Run directory: $BUILD_ROOT"

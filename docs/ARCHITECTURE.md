@@ -1,8 +1,10 @@
-# GTA San Andreas VR Quest architecture
+# GTA San Andreas Diorama MR architecture
 
-This source kit builds a personal VR modification of the official Google Play
-ARM64 release of GTA San Andreas 2.11.311. It does not redistribute an APK,
-Rockstar game data, sound banks, extracted native libraries, or signing keys.
+This source kit builds a personal mixed-reality modification of the official
+Google Play ARM64 release of GTA San Andreas 2.11.311. It is derived from the
+MIT-licensed GTA San Andreas VR Quest port and retains its immersive VR path as
+a configuration fallback. It does not redistribute an APK, Rockstar game data,
+sound banks, extracted native libraries, or signing keys.
 
 ## Build and injection boundary
 

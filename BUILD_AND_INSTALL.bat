@@ -9,10 +9,10 @@ if not defined SAVR_KEEP_OPEN (
   exit /b
 )
 
-title GTA San Andreas VR - Personal Quest Builder
+title GTA San Andreas Diorama MR - Personal Quest Builder
 echo.
 echo ============================================================
-echo   GTA SAN ANDREAS VR - PERSONAL BUILD AND INSTALL WIZARD
+echo   GTA SAN ANDREAS DIORAMA MR - PERSONAL BUILD AND INSTALL
 echo ============================================================
 echo.
 echo No APK, GTA data, or audio mod is included in this source kit.

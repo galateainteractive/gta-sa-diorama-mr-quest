@@ -1,9 +1,13 @@
-# GTA San Andreas Tabletop prototype
+# GTA San Andreas Diorama MR technical notes
 
-This branch adds a small, reversible miniature-world camera mode to the native
+Diorama MR adds a small, reversible miniature-world camera mode to the native
 Meta Quest port. It changes rendering and tracked interaction only; missions,
 physics, collision, traffic, pedestrians, vehicles, and saves continue to use
 the retail game's coordinate system.
+
+The implementation continues to use `tabletop` in source names, configuration
+keys and diagnostics. Those are stable technical identifiers, not the public
+product name.
 
 ## Views and controls
 
@@ -166,9 +170,9 @@ gameplay systems do not observe the large Tabletop camera displacement.
 
 ## Configuration
 
-`vr_tabletop.ini` is installed in the GTA external-files directory. The private
-branch ships with Tabletop enabled. Set `enabled=0` and restart the game to use
-the original upstream VR path without rebuilding.
+`vr_tabletop.ini` is installed in the GTA external-files directory. Diorama MR
+ships with the miniature mode enabled. Set `enabled=0` and restart the game to
+use the original immersive VR path without rebuilding.
 
 Supported process-start values:
 
@@ -186,11 +190,12 @@ For quick A/B tests, Android properties `debug.savr.tabletop` and
 
 ## Current prototype limits
 
-- no in-headset Tabletop settings page yet;
+- no in-headset Diorama MR settings page yet;
 - tracked hands, physical weapons, wrist panels, cockpit controls, physical
   pickups, basketball, and late world overlays are disabled in Tabletop;
-- the radius boundary is intentionally a hard prototype cut at render dispatch;
-  a later package can add a soft/faded edge or a physical table base;
+- the visible radius uses a depth-aware soft radial fade; some large objects
+  whose pivots lie outside the coverage can still expose retail LOD/culling
+  edge cases;
 - draw distance, fog, LOD, and streaming still need on-device tuning for each
   radius preset;
 - passthrough, grab direction and rotation sign require on-device Quest tuning.

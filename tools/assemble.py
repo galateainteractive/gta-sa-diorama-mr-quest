@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a personal GTA San Andreas VR package from user-owned inputs.
+"""Build a personal GTA San Andreas Diorama MR package from user-owned inputs.
 
 This tool never downloads or redistributes GTA. It accepts an official
 2.11.311 Play split export (or a compatible single APK), validates the retail

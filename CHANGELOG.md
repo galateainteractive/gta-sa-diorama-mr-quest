@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Diorama MR publication preparation
+
+- Adopt **GTA San Andreas Diorama MR** as the public project name while
+  retaining the existing `tabletop` configuration, source and diagnostic
+  identifiers for compatibility.
+- Record the upstream MIT project and exact imported baseline explicitly in the
+  public documentation and notices.
+- Preserve Package 48 unchanged as the local `archive/pacote-48` safety branch
+  before publication work.
+
 ## Package 48 deep-water tabletop mask
 
 - Preserve GTA's transparent water surface inside the tabletop radial fade

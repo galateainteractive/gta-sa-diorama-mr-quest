@@ -8,10 +8,10 @@ if not defined SAVR_RESET_KEEP_OPEN (
   exit /b
 )
 
-title GTA San Andreas VR - Reset VR Settings
+title GTA San Andreas Diorama MR - Reset VR Settings
 echo.
 echo ============================================================
-echo   GTA SAN ANDREAS VR - RESET HEADSET VR SETTINGS
+echo   GTA SAN ANDREAS DIORAMA MR - RESET HEADSET SETTINGS
 echo ============================================================
 echo.
 echo This removes only the mod's VR configuration files.

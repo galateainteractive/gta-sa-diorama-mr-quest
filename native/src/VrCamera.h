@@ -28,8 +28,8 @@ void EndGameFrameTelemetry();
 // this to choose the stereo projection layer over the flat theater screen.
 bool IsStereoActive();
 
-// True only for ordinary gameplay frames currently using the private
-// miniature-world camera. Cutscenes and fallback frames remain upstream VR.
+// True only for ordinary gameplay frames currently using Diorama MR's
+// miniature-world camera. Cutscenes and fallback frames remain immersive VR.
 bool IsTabletopActive();
 
 // Modern tabletop combat controls. L2 drives the native CPad target lifecycle

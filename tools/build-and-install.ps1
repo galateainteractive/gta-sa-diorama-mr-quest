@@ -386,7 +386,7 @@ function Read-PathWithDialog {
         Add-Type -AssemblyName System.Windows.Forms
         $choice = [System.Windows.Forms.MessageBox]::Show(
             "$Title`n`nYes: choose a file`nNo: choose a folder`nCancel: use the text prompt",
-            'GTA SA VR source kit',
+            'GTA SA Diorama MR source kit',
             [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
             [System.Windows.Forms.MessageBoxIcon]::Information
         )

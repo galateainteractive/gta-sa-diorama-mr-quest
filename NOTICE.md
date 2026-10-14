@@ -1,5 +1,12 @@
 # Third-party notices
 
+- **GTA San Andreas VR Quest** — Diorama MR is derived from the MIT-licensed
+  project at
+  https://github.com/dubrovskiy-yevhen-stakelogic/gta-sa-vr-quest. The exact
+  imported baseline and verification hashes are recorded in
+  `UPSTREAM_PROVENANCE.md`. The upstream copyright and MIT permission notice
+  are preserved in `LICENSE`.
+
 - **OpenXR headers** (`native/vendor/openxr/`) — Khronos OpenXR SDK headers,
   version 1.1.43, Apache License 2.0. The license is preserved at
   `native/vendor/openxr/LICENSE`.
@@ -27,4 +34,3 @@
 This repository contains no GTA San Andreas APK, Rockstar source code or game
 assets, no extracted `libGame.so`, and no sound-mod archive or audio banks.
 Users must provide their own lawful inputs locally.
-

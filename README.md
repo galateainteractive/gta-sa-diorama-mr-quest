@@ -1,14 +1,23 @@
-# GTA San Andreas VR for Quest — Source Kit
+# GTA San Andreas Diorama MR for Meta Quest — Source Kit
 
-Version `0.1.3 alpha`. See the [changelog](CHANGELOG.md).
+Diorama MR is an independent mixed-reality adaptation of the open-source
+[GTA San Andreas VR Quest](https://github.com/dubrovskiy-yevhen-stakelogic/gta-sa-vr-quest)
+port. It presents San Andreas as a room-scale miniature with passthrough,
+tabletop camera modes and Quest controller interaction while keeping the retail
+game's missions, physics, traffic, pedestrians, vehicles and saves.
 
-The private `feature/tabletop` branch adds an experimental miniature-world
-camera. See [TABLETOP_PROTOTYPE.md](TABLETOP_PROTOTYPE.md) for its current
-behaviour, settings, and limitations.
+This is a development preview based on upstream Version `0.1.3 alpha`. The
+first public Diorama MR release version has not been assigned yet. See the
+[changelog](CHANGELOG.md), the [Diorama MR technical notes](TABLETOP_PROTOTYPE.md)
+and the exact [upstream provenance](UPSTREAM_PROVENANCE.md).
 
-This repository contains the source code and build/install tools for the GTA
-San Andreas VR Quest mod. It does **not** contain GTA San Andreas, Rockstar
-assets, the sound mod, a prebuilt APK, native binaries, or signing keys.
+This repository contains source code and personal build/install tools only. It
+does **not** contain GTA San Andreas, Rockstar assets, the sound mod, a prebuilt
+APK, extracted game binaries, signing keys, saves or user configuration.
+
+The public product name is **Diorama MR**. Existing internal identifiers such
+as `tabletop`, `vr_tabletop.ini` and `[tabletop.*]` diagnostics are retained for
+configuration and debugging compatibility.
 
 > [!TIP]
 > **Join the Flat2VR Discord!** Development updates, player feedback, testing,
@@ -303,7 +312,14 @@ the wizard.
 
 See [BUILDING.md](BUILDING.md) and [NOTICE.md](NOTICE.md) for details.
 
-## Credits
+## Credits and origin
+
+Diorama MR is derived from the MIT-licensed
+[GTA San Andreas VR Quest](https://github.com/dubrovskiy-yevhen-stakelogic/gta-sa-vr-quest)
+project. Its original copyright and license notice are preserved, and the exact
+source baseline used here is recorded in [UPSTREAM_PROVENANCE.md](UPSTREAM_PROVENANCE.md).
+Thank you to the original port's authors and contributors for making this work
+possible.
 
 The VR layer is written independently against the retail mobile game binary,
 but understanding the original San Andreas behaviour is much easier thanks to
