@@ -19,6 +19,8 @@ namespace {
 
 constexpr char kSettingsPath[] =
     "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_tabletop.ini";
+constexpr char kSettingsTempPath[] =
+    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_tabletop.ini.tmp";
 constexpr char kEnabledProperty[] = "debug.savr.tabletop";
 constexpr char kScaleProperty[] = "debug.savr.tabletop_scale";
 
@@ -33,6 +35,9 @@ struct Settings {
 
 Settings g_settings{};
 std::once_flag g_loadOnce;
+std::mutex g_saveMutex;
+std::atomic<bool> g_activeEnabled{true};
+std::atomic<bool> g_configuredEnabled{true};
 std::atomic<float> g_visualScale{0.01f};
 std::atomic<int> g_radiusPreset{1};
 // Preset 3 is deliberately a 75 m A/B step. 90 m was already close enough
@@ -68,6 +73,67 @@ float ParseFloat(const char* value, float fallback) {
     char* end = nullptr;
     const float parsed = std::strtof(value, &end);
     return end != value && std::isfinite(parsed) ? parsed : fallback;
+}
+
+bool IsEnabledSetting(const char* source) {
+    if (!source) return false;
+    char line[192]{};
+    std::snprintf(line, sizeof(line), "%s", source);
+    if (char* comment = std::strchr(line, '#')) *comment = '\0';
+    char* key = Trim(line);
+    char* separator = std::strchr(key, '=');
+    if (!separator) return false;
+    *separator = '\0';
+    return strcasecmp(Trim(key), "enabled") == 0;
+}
+
+bool SaveConfiguredEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(g_saveMutex);
+    FILE* output = std::fopen(kSettingsTempPath, "w");
+    if (!output) {
+        LOGW("[tabletop.settings] could not open temporary settings file");
+        return false;
+    }
+
+    bool found = false;
+    if (FILE* input = std::fopen(kSettingsPath, "r")) {
+        char line[192]{};
+        while (std::fgets(line, sizeof(line), input)) {
+            if (IsEnabledSetting(line)) {
+                std::fprintf(output, "enabled=%d\n", enabled ? 1 : 0);
+                found = true;
+            } else {
+                std::fputs(line, output);
+            }
+        }
+        std::fclose(input);
+    } else {
+        const Settings& current = g_settings;
+        std::fprintf(output,
+                     "# GTA SA Diorama MR miniature-mode settings.\n"
+                     "passthrough=%d\n"
+                     "visual_scale=%.3f\n"
+                     "anchor_forward_m=%.2f\n"
+                     "anchor_down_m=%.2f\n"
+                     "radius_preset=%d\n",
+                     current.passthrough ? 1 : 0,
+                     static_cast<double>(current.visualScale),
+                     static_cast<double>(current.anchorForwardMeters),
+                     static_cast<double>(current.anchorDownMeters),
+                     current.radiusPreset);
+    }
+    if (!found) std::fprintf(output, "enabled=%d\n", enabled ? 1 : 0);
+
+    const bool writeOk = std::fflush(output) == 0 &&
+                         std::ferror(output) == 0;
+    const bool closeOk = std::fclose(output) == 0;
+    if (!writeOk || !closeOk ||
+        std::rename(kSettingsTempPath, kSettingsPath) != 0) {
+        std::remove(kSettingsTempPath);
+        LOGW("[tabletop.settings] could not persist play mode");
+        return false;
+    }
+    return true;
 }
 
 void LoadSettings() {
@@ -112,6 +178,7 @@ void LoadSettings() {
         loaded.visualScale = 0.010f;
     }
 
+    const bool configuredEnabled = loaded.enabled;
     char property[PROP_VALUE_MAX]{};
     if (__system_property_get(kEnabledProperty, property) > 0) {
         loaded.enabled = ParseBool(Trim(property), loaded.enabled);
@@ -127,6 +194,8 @@ void LoadSettings() {
     loaded.radiusPreset = std::clamp(loaded.radiusPreset, 0,
                                      kRadiusPresetCount - 1);
     g_settings = loaded;
+    g_activeEnabled.store(loaded.enabled, std::memory_order_relaxed);
+    g_configuredEnabled.store(configuredEnabled, std::memory_order_relaxed);
     g_visualScale.store(loaded.visualScale, std::memory_order_relaxed);
     g_radiusPreset.store(loaded.radiusPreset, std::memory_order_relaxed);
     LOGI("[tabletop] enabled=%d passthrough=%d scale=%.3f anchor_forward=%.2fm anchor_down=%.2fm radius=%.0fm",
@@ -144,7 +213,25 @@ const Settings& GetSettings() {
 
 } // namespace
 
-bool Enabled() { return GetSettings().enabled; }
+bool Enabled() {
+    (void)GetSettings();
+    return g_activeEnabled.load(std::memory_order_relaxed);
+}
+bool ConfiguredEnabled() {
+    (void)GetSettings();
+    return g_configuredEnabled.load(std::memory_order_relaxed);
+}
+bool SetConfiguredEnabled(bool enabled) {
+    (void)GetSettings();
+    if (enabled == g_configuredEnabled.load(std::memory_order_relaxed))
+        return true;
+    if (!SaveConfiguredEnabled(enabled)) return false;
+    g_configuredEnabled.store(enabled, std::memory_order_release);
+    LOGI("[tabletop.settings] next play mode=%s restart_required=%d",
+         enabled ? "diorama" : "immersive", enabled != Enabled() ? 1 : 0);
+    return true;
+}
+bool ModeChangeNeedsRestart() { return ConfiguredEnabled() != Enabled(); }
 float VisualScale() {
     (void)GetSettings();
     return g_visualScale.load(std::memory_order_relaxed);

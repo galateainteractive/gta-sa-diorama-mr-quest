@@ -9,6 +9,10 @@
   public documentation and notices.
 - Preserve Package 48 unchanged as the local `archive/pacote-48` safety branch
   before publication work.
+- Add a root-menu **PLAY MODE** selector that safely persists **DIORAMA MR** or
+  **IMMERSIVE VR** for the next restart without switching a live OpenXR session.
+- Replace the legacy immersive-only About title and control-tips page with
+  Diorama MR branding and mode-correct Quest controls.
 
 ## Package 48 deep-water tabletop mask
 

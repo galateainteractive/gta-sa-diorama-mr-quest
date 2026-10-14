@@ -1123,44 +1123,52 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
 
         switch (menuPage) {
         case PG_MAIN: {
-            // Weapon/holster setup, driving, HUD, hand appearance, cheats,
-            // graphics, controls, about and close.
-            const int N = 13;
+            // Play mode, weapon/holster setup, driving, HUD, appearance,
+            // cheats, graphics, controls, about and close.
+            const int N = 14;
             if (navUp)   mainSel = (mainSel - 1 + N) % N;
             if (navDown) mainSel = (mainSel + 1) % N;
-            if (mainSel == 6) {
+            if (mainSel == 0 && minus) {
+                savr::tabletop::SetConfiguredEnabled(false);
+            } else if (mainSel == 0 && plus) {
+                savr::tabletop::SetConfiguredEnabled(true);
+            } else if (mainSel == 0 && enter) {
+                savr::tabletop::SetConfiguredEnabled(
+                    !savr::tabletop::ConfiguredEnabled());
+            }
+            if (mainSel == 7) {
                 if (minus) savr::appearance::SetHandSkin(savr::appearance::HAND_SKIN_LIGHT);
                 if (plus)  savr::appearance::SetHandSkin(savr::appearance::HAND_SKIN_DARK);
                 if (enter) savr::appearance::CycleHandSkin();
             }
             if (enter) {
-                if      (mainSel == 0) {
+                if      (mainSel == 1) {
                     calibWeaponType = savr::calib::ActiveWeapon();
                     menuPage = PG_CALIB;
                     calibSel = 0;
                 }
-                else if (mainSel == 1) {
+                else if (mainSel == 2) {
                     savr::holster::BeginCalibrationPreview();
                     menuPage = PG_HOLSTER_CALIB;
                     holsterCalibSel = 0;
                 }
-                else if (mainSel == 2) { menuPage = PG_HOLSTERS; holsterSel = 0; }
-                else if (mainSel == 3) {
+                else if (mainSel == 3) { menuPage = PG_HOLSTERS; holsterSel = 0; }
+                else if (mainSel == 4) {
                     const int activeType=savr::driving::GetActiveVehicleType();
                     if (activeType!=savr::driving::VEHICLE_NONE)
                         drivingVehicleType=activeType;
                     menuPage = PG_DRIVING; drivingSel = 0;
                 }
-                else if (mainSel == 4) { menuPage = PG_LOCOMOTION; locomotionSel = 0; }
-                else if (mainSel == 5) { menuPage = PG_HUD;      hudSel = 0; }
-                else if (mainSel == 7) {
+                else if (mainSel == 5) { menuPage = PG_LOCOMOTION; locomotionSel = 0; }
+                else if (mainSel == 6) { menuPage = PG_HUD;      hudSel = 0; }
+                else if (mainSel == 8) {
                     menuPage = PG_CHEATS; cheatCategory = -1; cheatSel = 0;
                 }
-                else if (mainSel == 8) { menuPage = PG_GRAPHICS; gfxSel = 0; }
-                else if (mainSel == 9) { menuPage = PG_CONTROLS; controlsSel = 0; }
-                else if (mainSel == 10) { menuPage = PG_BASKETBALL; basketballSel = 0; }
-                else if (mainSel == 11) { menuPage = PG_ABOUT; aboutFirstRun = false; aboutArmed = false; }
-                else if (mainSel == 12)  menuPage = PG_NONE;
+                else if (mainSel == 9) { menuPage = PG_GRAPHICS; gfxSel = 0; }
+                else if (mainSel == 10) { menuPage = PG_CONTROLS; controlsSel = 0; }
+                else if (mainSel == 11) { menuPage = PG_BASKETBALL; basketballSel = 0; }
+                else if (mainSel == 12) { menuPage = PG_ABOUT; aboutFirstRun = false; aboutArmed = false; }
+                else if (mainSel == 13)  menuPage = PG_NONE;
             }
             if (back) menuPage = PG_NONE;
             break;

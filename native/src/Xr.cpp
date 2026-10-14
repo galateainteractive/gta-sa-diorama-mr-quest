@@ -7499,22 +7499,22 @@ void BuildAboutMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
     const bool firstRun = g_aboutFirstRun.load(std::memory_order_relaxed);
-    PanelTextFit(firstRun ? "WELCOME TO SAN ANDREAS VR"
-                          : "ABOUT SAN ANDREAS VR",
+    PanelTextFit(firstRun ? "WELCOME TO DIORAMA MR"
+                          : "ABOUT DIORAMA MR",
                  cx, 22, 3, 100, 225, 255);
     char versionLine[64];
     std::snprintf(versionLine, sizeof(versionLine),
-                  "VERSION %s ALPHA - NOT FOR SALE", kModVersionShown);
+                  "VR BASE %s - DEVELOPMENT PREVIEW", kModVersionShown);
     PanelTextFit(versionLine, cx, 54, 2, 170, 190, 210);
     static const char* const kLines[] = {
         "VR MENU: HOLD BOTH GRIPS + MENU (OR Y)",
+        "PLAY MODE: DIORAMA MR OR IMMERSIVE VR",
+        "MODE CHANGES APPLY AFTER RESTART",
+        "DIORAMA: PASSTHROUGH MINIATURE WORLD",
         "BUTTON REMAP AND TIPS: MENU > CONTROLS",
-        "IMMERSIVE DRIVING: VEHICLE SETTINGS",
-        "CALIBRATE WEAPONS IF A GRIP LOOKS OFF",
-        "PROMPTS: TAP R2 YES  L2 NO  HOLD R2",
-        "RECRUIT: LOOK AT GROVE PED + HOLD R2",
-        "RECRUITING NEEDS RESPECT (OR CHEAT)",
-        "CUTSCENE: R3 CAMERA / L3 REMEMBER",
+        "DIORAMA CONTROLS USE CLASSIC GAMEPLAY",
+        "IMMERSIVE CONTROLS USE TRACKED HANDS",
+        "SOURCE CODE AND CREDITS: PROJECT README",
         "ACTIVE DEVELOPMENT - EXPECT ROUGH EDGES",
         "DISCUSSION: FLAT2VR DISCORD",
         "discord.com/channels/747967102895390741/1543691482861408276",
@@ -7536,7 +7536,27 @@ void BuildControlsTipsMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
     PanelText("CONTROL TIPS", cx, 16, 4, 100, 225, 255);
-    static const char* const kTips[] = {
+    static const char* const kDioramaTips[] = {
+        "GRIPS+MENU (OR Y)  OPEN VR MENU",
+        "A JUMP   B SPRINT   Y ENTER / EXIT",
+        "X ALTERNATE ATTACK / FIRE",
+        "L2 HOLD AIM   R2 FIRE WHILE AIMING",
+        "L3 CROUCH   LEFT GRIP+L3 CAMERA",
+        "R3 RADIUS   RIGHT GRIP+R3 COVERAGE",
+        "L3+R3 RECENTER DIORAMA ON PLAYER",
+        "FIXED VIEW: ONE GRIP DRAGS THE MAP",
+        "TWO GRIPS MOVE / ROTATE / RESIZE",
+        "VEHICLES: R2 GAS   L2 BRAKE/REVERSE",
+        "LEFT STICK STEERS VEHICLES / BIKES",
+        "PLANES: R2 GAS; LEFT STICK FLIES",
+        "HELI: LEFT STICK ROLL + PITCH",
+        "HYDRA NOZZLES + HELI YAW: RIGHT STICK",
+        "PARACHUTE: A OPENS; STICKS STEER",
+        "CUTSCENE: R3 CAMERA / L3 REMEMBER",
+        "PROMPTS: TAP R2 YES  L2 NO  HOLD R2",
+        "ANSWER PHONE: BOTH GRIPS + R2",
+    };
+    static const char* const kImmersiveTips[] = {
         "GRIPS+MENU (OR Y)  OPEN VR MENU",
         "Y ENTER/EXIT   X JUMP   A SPRINT",
         "B  FIRE HELD WEAPON IN VEHICLES / TANK",
@@ -7560,10 +7580,14 @@ void BuildControlsTipsMenu() {
         "CUTSCENE: R3 CAMERA / L3 REMEMBER",
         "L3+R3 RECENTER   GRIPS+R3 CAMERA VIEW",
     };
-    const int count = static_cast<int>(sizeof(kTips) / sizeof(kTips[0]));
+    const bool diorama = tabletop::Enabled();
+    const char* const* tips = diorama ? kDioramaTips : kImmersiveTips;
+    const int count = diorama
+        ? static_cast<int>(sizeof(kDioramaTips) / sizeof(kDioramaTips[0]))
+        : static_cast<int>(sizeof(kImmersiveTips) / sizeof(kImmersiveTips[0]));
     const int top = 44, rowH = 21;
     for (int i = 0; i < count; ++i)
-        PanelText(kTips[i], cx, top + i * rowH, 2, 210, 225, 235);
+        PanelText(tips[i], cx, top + i * rowH, 2, 210, 225, 235);
     PanelText("A / B BACK", cx, kPanelH - 18, 2, 150, 185, 150);
 }
 
@@ -7614,14 +7638,19 @@ void BuildControlsMenu() {
 void BuildMainMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
-    PanelText("VR MENU", cx, 20, 5, 100, 225, 255);
+    PanelText("DIORAMA MR", cx, 20, 5, 100, 225, 255);
     char versionLine[32];
     std::snprintf(versionLine, sizeof(versionLine), "VERSION %s", kModVersionShown);
     PanelText(versionLine, cx, 52, 2, 120, 190, 210);
     char handSkinRow[48];
     std::snprintf(handSkinRow, sizeof(handSkinRow), "HAND SKIN   < %s >",
                   appearance::HandSkinName());
+    char playModeRow[64];
+    std::snprintf(playModeRow, sizeof(playModeRow), "PLAY MODE  < %s >%s",
+                  tabletop::ConfiguredEnabled() ? "DIORAMA MR" : "IMMERSIVE VR",
+                  tabletop::ModeChangeNeedsRestart() ? "  [RESTART]" : "");
     const char* kItems[] = {
+        playModeRow,
         "WEAPON CALIBRATION",
         "HOLSTER CALIBRATION",
         "HOLSTER LOADOUT",
@@ -7636,14 +7665,14 @@ void BuildMainMenu() {
         "ABOUT",
         "CLOSE"
     };
-    const int N   = 13;
+    const int N   = 14;
     const int sel = g_mainSel.load(std::memory_order_relaxed);
-    const int top = 82, rowH = 34;
+    const int top = 78, rowH = 29;
     for (int i = 0; i < N; ++i) {
         const int y = top + i * rowH;
         if (i == sel) PanelFillRect(40, y - 6, kPanelW - 40, y + 30, 120, 40, 110, 235);
-        const bool submenu=i==0||i==1||i==2||i==3||i==4||i==5||
-                           i==7||i==8||i==9||i==10||i==11;
+        const bool submenu=i==1||i==2||i==3||i==4||i==5||i==6||
+                           i==8||i==9||i==10||i==11||i==12;
         if (submenu)
             PanelText(kItems[i],cx,y,2,i==sel?255:100,
                       i==sel?235:225,i==sel?120:255);

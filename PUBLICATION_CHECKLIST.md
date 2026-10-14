@@ -17,12 +17,13 @@ Package 48 is preserved at tag `pacote-48-teste` and branch
 
 ## Player-facing product
 
-- [ ] Add an in-headset mode selector for **DIORAMA MR** and **IMMERSIVE VR**;
-      changing mode should clearly request a restart.
+- [x] Add an in-headset mode selector for **DIORAMA MR** and **IMMERSIVE VR**;
+      changing mode clearly requests a restart and never switches live hooks.
 - [ ] Add a Diorama MR settings page for camera mode, map radius, scale,
       passthrough and safe reset defaults.
-- [ ] Make controller help and tutorial hints reflect the active mode and the
+- [x] Make the in-headset controller help reflect the active mode and the
       shipped Quest bindings.
+- [ ] Audit retail tutorial text that cannot be replaced by the VR menu panel.
 - [ ] Update the About panel and visible version string for the first Diorama
       MR release.
 
