@@ -1,18 +1,18 @@
 # Diorama MR publication checklist
 
 Package 48 is preserved at tag `pacote-48-teste` and branch
-`archive/pacote-48`. Publication preparation happens on
-`publish/diorama-mr` until it is ready to become the public default branch.
+`archive/pacote-48`. The compile-verified publication candidate is the
+independent repository's `main` branch.
 
 ## Source repository
 
 - [x] Preserve the tested Package 48 state before publication changes.
 - [x] Adopt the Diorama MR public name without renaming stable internal keys.
 - [x] Preserve the MIT license and document the exact upstream provenance.
-- [ ] Create the independent GitHub repository and configure it as `origin`.
-- [ ] Push all development history, safety tags and the publication branch.
-- [ ] Replace or retire `UPDATE.bat`, which still targets the upstream URL,
-      after the final Diorama MR repository URL is known.
+- [x] Create the independent private GitHub repository at
+      `galateainteractive/gta-sa-diorama-mr-quest`.
+- [ ] Configure it as `origin` and push development history and safety tags.
+- [x] Point `UPDATE.bat` at the independent Diorama MR repository.
 - [ ] Run the complete release audit, including Bash syntax checks.
 
 ## Player-facing product

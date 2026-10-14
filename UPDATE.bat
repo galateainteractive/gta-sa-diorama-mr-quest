@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title GTA San Andreas VR - Get and Install
+title GTA San Andreas Diorama MR - Get and Install
 
 rem ============================================================================
 rem  One-click bootstrap: installs a private copy of Git if needed, clones a
@@ -14,15 +14,15 @@ rem ============================================================================
 
 cd /d "%~dp0"
 
-set "REPO_URL=https://github.com/dubrovskiy-yevhen-stakelogic/gta-sa-vr-quest.git"
-set "REPO_DIR=%~dp0gta-sa-vr-quest"
+set "REPO_URL=https://github.com/galateainteractive/gta-sa-diorama-mr-quest.git"
+set "REPO_DIR=%~dp0gta-sa-diorama-mr-quest"
 set "TOOLS_DIR=%~dp0.tools"
 set "GIT_VER=2.47.1"
 set "GIT_URL=https://github.com/git-for-windows/git/releases/download/v%GIT_VER%.windows.1/PortableGit-%GIT_VER%-64-bit.7z.exe"
 set "GIT_EXE=git"
 
 echo(
-echo === GTA San Andreas VR - Get ^& Install ===
+echo === GTA San Andreas Diorama MR - Get ^& Install ===
 echo(
 
 rem --- 1. Make sure we have git ------------------------------------------------
