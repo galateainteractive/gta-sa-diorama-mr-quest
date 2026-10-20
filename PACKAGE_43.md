@@ -3,7 +3,7 @@
 Baseline: `7bd92ff`, tag `pacote-42-diagnostico`.
 Build: `work-upstream/runs/20260909-211946-decfcf9c`.
 Manual installer:
-`D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_43.bat`.
+`<project-root>\INSTALAR_PACOTE_43.bat`.
 
 ## Purpose
 

@@ -2,7 +2,7 @@
 
 Baseline: `dda1457`, tag `pacote-37-teste`.
 Build: `work-upstream/runs/20260908-153457-73f8ce61`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_38.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_38.bat`.
 
 ## Pause-map waypoint beacon
 

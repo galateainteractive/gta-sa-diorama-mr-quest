@@ -2,7 +2,7 @@
 
 Baseline: `d98c102`, tag `pacote-38-teste`.
 Build: `work-upstream/runs/20260908-165921-1a847058`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_39.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_39.bat`.
 
 ## Controls
 

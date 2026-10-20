@@ -2,7 +2,7 @@
 
 Baseline: `a64954b`, tag `pacote-25-teste`.
 Build: `work-upstream/runs/20260907-002238-fce49b6d`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_26.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_26.bat`.
 
 ## Changes
 

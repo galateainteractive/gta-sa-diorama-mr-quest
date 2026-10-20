@@ -20,6 +20,9 @@
 - Introduce **Galatea Diorama Mods** as the mixed-reality mod-series signature,
   credit **Galatea Interactive** as its parent, and show the signature in the
   public README and the in-headset Welcome/About panel.
+- Make local Windows launchers and diagnostics independent of the project's
+  drive letter, and replace machine-specific package-guide paths with a
+  portable `<project-root>` placeholder.
 
 ## Package 49 production diorama views
 

@@ -2,7 +2,7 @@
 
 Baseline: `e13d9e7`, tag `pacote-22-teste`.
 Build: `work-upstream/runs/20260906-183548-ab23ef2e`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_23.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_23.bat`.
 User feedback: no repeated missing road, swimming approved, outside-radius
 flashes less frequent but not gone, scraping sparks still visually broken.
 

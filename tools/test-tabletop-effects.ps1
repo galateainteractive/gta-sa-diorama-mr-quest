@@ -1,11 +1,18 @@
 [CmdletBinding()]
 param(
-    [string]$Validator = 'D:\Android\Sdk\emulator\lib64\vulkan\glslangValidator.exe',
-    [string]$Objdump = 'D:\Android\Sdk\ndk\27.2.12479018\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-objdump.exe',
+    [string]$Validator = '',
+    [string]$Objdump = '',
     [Parameter(Mandatory = $true)][string]$LibGame
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$sdkRoot = Join-Path ([IO.Path]::GetPathRoot($projectRoot)) 'Android\Sdk'
+if ([string]::IsNullOrWhiteSpace($Validator)) {
+    $Validator = Join-Path $sdkRoot 'emulator\lib64\vulkan\glslangValidator.exe'
+}
+if ([string]::IsNullOrWhiteSpace($Objdump)) {
+    $Objdump = Join-Path $sdkRoot 'ndk\27.2.12479018\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-objdump.exe'
+}
 
 # Compile the real embedded shaders, not a retyped test approximation.
 $source = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\Xr.cpp')

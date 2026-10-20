@@ -2,7 +2,7 @@
 
 Baseline: `80b79e3`, tag `pacote-28-teste`.
 Build: `work-upstream/runs/20260907-121546-c2951834`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_29.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_29.bat`.
 
 ## Why another targeted capture
 

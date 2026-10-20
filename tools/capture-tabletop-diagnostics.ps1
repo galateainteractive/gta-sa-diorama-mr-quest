@@ -1,21 +1,28 @@
 [CmdletBinding()]
 param(
     [string]$Serial = '2G0YC1ZF7B08DM',
-    [string]$OutputDirectory = 'D:\UNITY PROJETOS\GTASanAndreasTabletop\diagnosticos'
+    [string]$OutputDirectory = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$driveRoot = [IO.Path]::GetPathRoot($projectRoot)
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = Join-Path $projectRoot 'diagnosticos'
+}
+
 $adbCandidates = @(
-    'D:\UNITY PROJETOS\GTASanAndreasTabletop\work-upstream\.tools\platform-tools-37.0.1\platform-tools\adb.exe',
-    'D:\Android\Sdk\platform-tools\adb.exe'
+    (Join-Path $projectRoot 'work-upstream\.tools\platform-tools-37.0.1\platform-tools\adb.exe'),
+    (Join-Path $driveRoot 'Android\Sdk\platform-tools\adb.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe')
 )
 $adb = $adbCandidates |
     Where-Object { Test-Path -LiteralPath $_ } |
     Select-Object -First 1
 if (-not $adb) {
-    throw "ADB was not found on D:. Checked paths: $($adbCandidates -join '; ')"
+    throw "ADB was not found. Checked paths: $($adbCandidates -join '; ')"
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null

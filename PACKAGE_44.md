@@ -3,7 +3,7 @@
 Baseline: `ffb8c00`, tag `pacote-43-teste`.
 Build: `work-upstream/runs/20260909-214448-cfb1ec82`.
 Manual installer:
-`D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_44.bat`.
+`<project-root>\INSTALAR_PACOTE_44.bat`.
 
 ## Headset-guided tuning
 

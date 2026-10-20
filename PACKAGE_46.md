@@ -3,7 +3,7 @@
 Baseline: `1316b28`, tag `pacote-45-teste`.
 Build: `work-upstream/runs/20260909-223319-c10175b0`.
 Manual installer:
-`D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_46.bat`.
+`<project-root>\INSTALAR_PACOTE_46.bat`.
 
 ## Changes
 

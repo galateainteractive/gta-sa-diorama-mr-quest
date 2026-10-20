@@ -2,7 +2,7 @@
 
 Baseline: `2fbd627`, tags `pacote-30-teste` and `pacote-30-aprovado`.
 Build: `work-upstream/runs/20260907-124846-901b9ebd`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_31.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_31.bat`.
 
 ## Changes
 

@@ -2,7 +2,7 @@
 
 Baseline: `f678109`, tag `pacote-33-teste`.
 Build: `work-upstream/runs/20260907-193504-0e4e8ec8`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_34.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_34.bat`.
 
 ## Correction and scope
 

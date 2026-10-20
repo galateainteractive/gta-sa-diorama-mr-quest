@@ -2,7 +2,7 @@
 
 Baseline: `0d1b3ad`, tag `pacote-34-diagnostico`.
 Build: `work-upstream/runs/20260907-230857-984be6cd`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_35.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_35.bat`.
 
 ## Confirmed cause
 

@@ -2,7 +2,7 @@
 
 Baseline: `41a000c`, tag `pacote-27-diagnostico`.
 Build: `work-upstream/runs/20260907-115031-350704b0`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_28.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_28.bat`.
 
 ## Diagnosis
 

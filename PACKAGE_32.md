@@ -2,7 +2,7 @@
 
 Baseline: `495d230`, tag `pacote-31-teste`.
 Build: `work-upstream/runs/20260907-133338-311592ad`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_32.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_32.bat`.
 
 ## Purpose
 

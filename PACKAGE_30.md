@@ -2,7 +2,7 @@
 
 Baseline: `ac11962`, tag `pacote-29-diagnostico`.
 Build: `work-upstream/runs/20260907-122931-5c269788`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_30.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_30.bat`.
 
 ## Diagnosis
 

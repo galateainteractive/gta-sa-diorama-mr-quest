@@ -3,7 +3,7 @@
 Baseline: `52304c5`, tag `pacote-41-teste`.
 Build: `work-upstream/runs/20260908-213257-72b3bb72`.
 Manual installer:
-`D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_42.bat`.
+`<project-root>\INSTALAR_PACOTE_42.bat`.
 
 ## Purpose
 
@@ -41,7 +41,7 @@ or gameplay behaviour.
 2. Start `INICIAR_DIAGNOSTICO.bat`, then play normally through a smooth period,
    the severe slowdown and at least ten seconds after it begins.
 3. Stop the diagnostic with `Ctrl+C` and send the newest file from
-   `D:\UNITY PROJETOS\GTASanAndreasTabletop\diagnosticos`.
+   `<project-root>\diagnosticos`.
 
 The useful records are tagged `[tabletop.perf42]`; there is no need to remember
 an exact wall-clock time if the capture contains the transition.

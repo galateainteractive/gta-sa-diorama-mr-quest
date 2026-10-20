@@ -2,7 +2,7 @@
 
 Baseline: `d6339c5`, tag `pacote-35-teste`.
 Build: `work-upstream/runs/20260908-132831-a621889f`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_36.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_36.bat`.
 
 ## Evidence from Package 35
 

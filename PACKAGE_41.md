@@ -3,7 +3,7 @@
 Baseline: `3209067`, tag `pacote-40-teste`.
 Build: `work-upstream/runs/20260908-203701-bcd1500e`.
 Manual installer:
-`D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_41.bat`.
+`<project-root>\INSTALAR_PACOTE_41.bat`.
 
 ## Corrections
 

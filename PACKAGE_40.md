@@ -3,7 +3,7 @@
 Baseline: `492dcbe`, tag `pacote-39-teste`.
 Build: `work-upstream/runs/20260908-184305-8e5b85d8`.
 Manual installer:
-`D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_40.bat`.
+`<project-root>\INSTALAR_PACOTE_40.bat`.
 
 ## What the headset capture proved
 

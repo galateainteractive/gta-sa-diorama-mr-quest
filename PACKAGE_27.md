@@ -2,7 +2,7 @@
 
 Baseline: `60326c7`, tag `pacote-26-teste`.
 Build: `work-upstream/runs/20260907-010710-c8041ab1`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_27.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_27.bat`.
 
 ## Purpose
 
@@ -26,7 +26,7 @@ selecting or modifying a headset.
 ## Diagnostic test
 
 1. Install Package 27 manually.
-2. Start `D:\UNITY PROJETOS\GTASanAndreasTabletop\INICIAR_DIAGNOSTICO.bat`.
+2. Start `<project-root>\INICIAR_DIAGNOSTICO.bat`.
 3. Keep a known red, yellow or blue marker visible at a close grab zoom for at
    least five seconds.
 4. Move both grips apart/together until the marker disappears, then remain at

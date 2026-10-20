@@ -2,7 +2,7 @@
 
 Baseline: `50164b8`, tag `pacote-32-diagnostico`.
 Build: `work-upstream/runs/20260907-183531-32cfb10b`.
-Manual installer: `D:\UNITY PROJETOS\GTASanAndreasTabletop\INSTALAR_PACOTE_33.bat`.
+Manual installer: `<project-root>\INSTALAR_PACOTE_33.bat`.
 
 ## Flicker experiment
 
