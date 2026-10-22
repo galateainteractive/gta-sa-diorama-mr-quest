@@ -4,6 +4,8 @@ param(
     [string]$AndroidSdk,
     [string]$WorkDir = 'C:\SAVRBuild',
     [string]$Serial,
+    [switch]$BackupBeforeReset,
+    [string]$BackupRoot,
     [switch]$Yes,
     [switch]$NonInteractive
 )
@@ -167,6 +169,81 @@ function Test-RemoteExists {
     return $result.ExitCode -eq 0
 }
 
+function Backup-QuestSavesAndSettings {
+    param([Parameter(Mandatory = $true)][string]$Destination)
+
+    if (Test-Path -LiteralPath $Destination) {
+        throw "Backup destination already exists: $Destination"
+    }
+    New-Item -ItemType Directory -Path $Destination | Out-Null
+    $filesRoot = Join-Path $Destination 'files'
+    New-Item -ItemType Directory -Path $filesRoot | Out-Null
+
+    $copiedNames = @()
+    if (Test-RemoteExists -Path $script:RemoteFilesRoot) {
+        $list = Invoke-Adb -Arguments @('shell', 'ls', '-1A', $script:RemoteFilesRoot) -AllowFailure
+        if ($list.ExitCode -ne 0) {
+            throw "Could not enumerate Quest saves/settings: $($list.Text)"
+        }
+        foreach ($rawName in $list.Lines) {
+            [string]$name = [string]$rawName
+            if ([string]::IsNullOrEmpty($name)) { continue }
+            if ($name -in @('audio', 'vrhands') -or
+                $name -like '.savr-stage-*' -or
+                $name -like '.savr-backup-*') { continue }
+            if ($name -notmatch '^[A-Za-z0-9_.-]+$' -or $name -in @('.', '..')) {
+                throw "Unsafe filename in Quest files directory: $name"
+            }
+            $remoteChild = "$($script:RemoteFilesRoot)/$name"
+            $pull = Invoke-Adb -Arguments @('pull', $remoteChild, $filesRoot)
+            if ($pull.ExitCode -ne 0) {
+                throw "Could not back up $remoteChild`: $($pull.Text)"
+            }
+            $copiedNames += $name
+        }
+    }
+
+    $records = @()
+    foreach ($file in @(Get-ChildItem -LiteralPath $filesRoot -File -Recurse)) {
+        $relative = $file.FullName.Substring($filesRoot.Length).TrimStart('\').Replace('\', '/')
+        if ($relative -match "['`r`n]" -or (($relative -split '/') -contains '..')) {
+            throw "Unsafe path in the save/settings backup: $relative"
+        }
+        $localHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+        $remoteFile = "$($script:RemoteFilesRoot)/$relative"
+        $remoteResult = Invoke-Adb -Arguments @(
+            'shell', 'toybox', 'sha256sum', $remoteFile
+        ) -AllowFailure
+        if ($remoteResult.ExitCode -ne 0) {
+            throw "Could not hash the remote save/settings file: $remoteFile`n$($remoteResult.Text)"
+        }
+        $remoteHash = (($remoteResult.Text.Trim() -split '\s+')[0]).ToUpperInvariant()
+        if ($remoteHash -ne $localHash) {
+            throw "Save/settings backup hash mismatch: $relative"
+        }
+        $records += [pscustomobject]@{
+            path = $relative
+            size = [int64]$file.Length
+            sha256 = $localHash
+        }
+    }
+
+    $manifest = [ordered]@{
+        formatVersion = 1
+        package = $script:PackageName
+        deviceSerial = $script:SelectedSerial
+        createdUtc = [DateTime]::UtcNow.ToString('o')
+        remoteRoot = $script:RemoteFilesRoot
+        excluded = @('audio', 'vrhands', '.savr-stage-*', '.savr-backup-*')
+        topLevelItems = $copiedNames
+        files = $records
+    }
+    $manifestPath = Join-Path $Destination 'backup-manifest.json'
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Write-Host "Verified save/settings backup: $manifestPath ($($records.Count) files)" -ForegroundColor Green
+    return $manifestPath
+}
+
 try {
     $script:AdbExe = Resolve-Adb
     Write-Host "ADB: $($script:AdbExe)"
@@ -201,6 +278,21 @@ try {
     }
     if ($stop.ExitCode -ne 0) { throw "Could not stop $($script:PackageName): $($stop.Text)" }
 
+    $backupManifest = $null
+    if ($BackupBeforeReset.IsPresent) {
+        $backupBase = if ([string]::IsNullOrWhiteSpace($BackupRoot)) {
+            Join-Path ([System.IO.Path]::GetFullPath($WorkDir)) 'device-backups\manual-vr-reset'
+        }
+        else {
+            [System.IO.Path]::GetFullPath($BackupRoot.Trim().Trim('"').Trim("'"))
+        }
+        New-Item -ItemType Directory -Force -Path $backupBase | Out-Null
+        $backupDestination = Join-Path $backupBase (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Write-Host ''
+        Write-Host 'Creating and hash-verifying a local save/settings backup...'
+        $backupManifest = Backup-QuestSavesAndSettings -Destination $backupDestination
+    }
+
     $removed = 0
     foreach ($name in $script:SettingsFiles) {
         $path = "$($script:RemoteFilesRoot)/$name"
@@ -215,6 +307,9 @@ try {
 
     Write-Host ''
     Write-Host "VR settings reset verified: $removed existing file(s) removed." -ForegroundColor Green
+    if ($null -ne $backupManifest) {
+        Write-Host "Backup retained at: $backupManifest" -ForegroundColor Green
+    }
     Write-Host 'The game was not launched.' -ForegroundColor Green
     exit 0
 }

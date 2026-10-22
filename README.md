@@ -282,6 +282,14 @@ manual start. Version 0.1.3 embeds the author's release-Quest menu,
 weapon, HUD, holster, and vehicle calibration as its defaults. The sole quality
 override is the eye-buffer resolution, which resets to `100%`.
 
+For a safer release-style first-run check on Windows, double-click
+`TEST_FIRST_RUN.bat`. It first copies every ADB-accessible save and settings
+item (excluding the separately deployed `audio` and `vrhands` directories),
+hash-verifies the PC copy against the Quest, and only then performs the same VR
+settings reset. If backup or verification fails, the reset is aborted. The
+timestamped backup and its manifest are retained under the selected work
+directory's `device-backups/manual-vr-reset` folder.
+
 For automation, use `-Yes -NonInteractive` in PowerShell or
 `--yes --non-interactive` in Bash. With multiple devices, specify
 `-Serial`/`--serial`.

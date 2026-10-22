@@ -23,6 +23,8 @@
 - Make local Windows launchers and diagnostics independent of the project's
   drive letter, and replace machine-specific package-guide paths with a
   portable `<project-root>` placeholder.
+- Add a safe Windows first-run validation helper that hash-verifies a local
+  save/settings backup before removing only the VR configuration files.
 
 ## Package 49 production diorama views
 
