@@ -73,6 +73,9 @@ configuration and debugging compatibility.
 
 ### Diorama MR control highlights
 
+- Hold both grips and press the left-controller **Menu** button to open the
+  Diorama MR menu. If the system consumes that button, both grips + `Y` is the
+  fallback.
 - `R3`: cycle `TRACK`, `FOLLOW`, and `FIXED` cameras.
 - `L3`: crouch on foot.
 - `L3 + R3`: recenter the diorama on CJ or the current vehicle.
@@ -202,6 +205,11 @@ certificate and content checks still apply.
    pack**, not **CLASSIC ADVANCED v1.0**.
 4. Connect the Quest and approve USB debugging inside the headset.
 5. Review the installation summary.
+
+After launching the game, move the left stick once to show the first-run
+welcome panel. To reopen the Diorama MR menu at any time, hold both grips and
+press the left-controller **Menu** button, or use both grips + `Y` as the
+fallback. This is the mod menu; GTA's own pause/map menu remains separate.
 
 On the first run, type `ACCEPT` when asked only if you agree to the Google
 Android SDK licenses. The wizard then handles sdkmanager's repetitive `y/N`

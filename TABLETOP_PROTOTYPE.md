@@ -20,6 +20,8 @@ product name.
 
 Runtime controls:
 
+- both grips + the left-controller `Menu` button: open or close the Diorama MR
+  menu; both grips + `Y` is the fallback when the system consumes `Menu`;
 - `A`: jump on foot;
 - `B`: sprint on foot;
 - `X`: alternate classic attack on foot;

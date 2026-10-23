@@ -2,6 +2,10 @@
 
 ## Unreleased — Diorama MR publication preparation
 
+- Make the mod menu discoverable before publication: the automatic first-run
+  welcome now gives the both-grips + `Menu` (`Y` fallback) chord a dedicated
+  high-contrast callout, and the public Quick Start/control documentation
+  repeats it while distinguishing the mod menu from GTA's pause menu.
 - Add a Galatea-branded Windows installer profile for the reusable private
   installer engine. It can export the official Google Play split set from an
   authorized Android phone or accept an existing export, collect the verified

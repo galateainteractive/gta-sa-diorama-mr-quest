@@ -7534,9 +7534,11 @@ void BuildAboutMenu() {
     std::snprintf(versionLine, sizeof(versionLine),
                   "VR BASE %s - DEVELOPMENT PREVIEW", kModVersionShown);
     PanelTextFit(versionLine, cx, 54, 2, 170, 190, 210);
+    PanelFillRect(34, 78, kPanelW - 34, 130, 34, 55, 92, 245);
+    PanelTextFit("OPEN THE DIORAMA MENU", cx, 84, 3, 255, 205, 80);
+    PanelTextFit("HOLD BOTH GRIPS + MENU (OR Y)", cx, 109, 2, 235, 242, 255);
     static const char* const kLines[] = {
         "GALATEA DIORAMA MODS",
-        "VR MENU: HOLD BOTH GRIPS + MENU (OR Y)",
         "PLAY MODE: DIORAMA MR OR IMMERSIVE VR",
         "MODE CHANGES APPLY AFTER RESTART",
         "DIORAMA: PASSTHROUGH MINIATURE WORLD",
@@ -7550,7 +7552,7 @@ void BuildAboutMenu() {
         "PRESS ANY BUTTON TO CLOSE",
     };
     const int count = static_cast<int>(sizeof(kLines) / sizeof(kLines[0]));
-    const int top = 92, rowH = 32;
+    const int top = 146, rowH = 27;
     for (int i = 0; i < count; ++i) {
         const bool close = i == count - 1;
         const bool link = i == count - 2;

@@ -42,6 +42,8 @@ namespace GalateaDioramaInstaller
             "Audio pack (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*";
         internal const string AudioDownloadUrl =
             "https://libertycity.net/files/gta-san-andreas-ios-android/241069-gta-sa-classic-avanced-mod-pack.html";
+        internal const string PostInstallInstructions =
+            "Inside the game, hold both grips and press the left-controller Menu button (or Y) to open the Diorama MR menu.";
 
         internal static readonly string[] SteamAppIds = new string[0];
         internal static readonly string[] RegistrySearchTerms = new string[0];
