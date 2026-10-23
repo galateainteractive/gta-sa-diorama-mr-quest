@@ -107,6 +107,11 @@ added only to the ARM64 split. `libGame.so` must remain byte-identical.
 ```
 
 `-NonInteractive` requires both inputs. `-BuildOnly` performs no ADB mutation.
+GUI front-ends may pair `-NonInteractive` with `-AcceptAndroidLicenses` only
+after obtaining explicit user consent, and with
+`-ApproveSignatureReplacement` only after clearly explaining that a signing
+conflict can require a verified save/settings backup, package removal,
+installation and restoration. Neither switch weakens source validation.
 The low-level `tools/build.ps1` has a developer-only
 `-AllowUnofficialSource` escape hatch that weakens provenance checks. It is
 intentionally absent from the public master and must not be used for release

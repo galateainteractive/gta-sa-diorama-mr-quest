@@ -84,6 +84,28 @@ configuration and debugging compatibility.
 See [Diorama MR technical notes](TABLETOP_PROTOTYPE.md) for implementation
 details and [CHANGELOG.md](CHANGELOG.md) for the complete package history.
 
+## Galatea Windows installer
+
+The Galatea installer gives Windows players a guided path without exposing the
+six-APK workflow. It offers two legal source choices:
+
+- connect the Android phone/tablet containing the official Google Play ARM64
+  game and let the installer export the complete split set; or
+- select a previously exported split folder or supported archive.
+
+It then asks for the separately supplied verified audio pack, validates every
+input, downloads the pinned toolchain when needed, builds and signs the
+personal APK set, installs it on the selected Quest, publishes and verifies the
+runtime payloads, and leaves the game stopped. If Android requires a signing
+replacement, the interface obtains explicit consent and retains the existing
+verified save/settings backup and restore transaction.
+
+The installer executable contains only the Galatea interface, ADB and a
+reviewed snapshot of this open-source source kit. It never contains or uploads
+Rockstar APKs, Rockstar data, the external audio pack, saves, settings or the
+player's signing key. Internal build instructions are in
+[`installer/README.md`](installer/README.md).
+
 ## Requirements
 
 - Your own installed copy of GTA San Andreas from Google Play, version

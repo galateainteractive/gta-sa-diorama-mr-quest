@@ -2,7 +2,9 @@
 param(
     [string]$WorkDir = 'C:\SAVRBuild',
     [string]$Destination,
-    [string]$Serial
+    [string]$Serial,
+    [string]$AdbPath,
+    [switch]$NoOpenFolder
 )
 
 Set-StrictMode -Version 2.0
@@ -299,7 +301,9 @@ function Export-Apks {
     Write-Host "Folder: $resolvedDestination"
     Write-Host 'Correct APK filename: base.apk. Do not rename it, and keep every split_*.apk beside it.' -ForegroundColor Green
     Write-Host 'Next: disconnect the phone/tablet, run BUILD_AND_INSTALL.bat, and select base.apk from this folder.' -ForegroundColor Cyan
-    Start-Process -FilePath 'explorer.exe' -ArgumentList @($resolvedDestination)
+    if (-not $NoOpenFolder.IsPresent) {
+        Start-Process -FilePath 'explorer.exe' -ArgumentList @($resolvedDestination)
+    }
     return $resolvedDestination
 }
 
@@ -317,7 +321,20 @@ try {
     Start-Transcript -LiteralPath $log -Force | Out-Null
     $script:TranscriptStarted = $true
     Write-Host "Log: $log"
-    $script:Adb = Get-VerifiedPlatformTools -ResolvedWorkDir $resolvedWorkDir
+    if ([string]::IsNullOrWhiteSpace($AdbPath)) {
+        $script:Adb = Get-VerifiedPlatformTools -ResolvedWorkDir $resolvedWorkDir
+    }
+    else {
+        $script:Adb = Get-FullPath $AdbPath
+        if (-not (Test-Path -LiteralPath $script:Adb -PathType Leaf)) {
+            throw "Requested ADB executable was not found: $($script:Adb)"
+        }
+        $probe = Invoke-NativeCapture -FilePath $script:Adb -Arguments @('version') -AllowFailure
+        if ($probe.ExitCode -ne 0 -or $probe.Text -notmatch 'Android Debug Bridge') {
+            throw "Requested ADB executable is not usable: $($script:Adb)"
+        }
+        Write-Host "Using installer-provided ADB: $($script:Adb)"
+    }
     Select-SourceDevice
     $paths = @(Read-InstalledPackage)
     Export-Apks -RemotePaths $paths | Out-Null

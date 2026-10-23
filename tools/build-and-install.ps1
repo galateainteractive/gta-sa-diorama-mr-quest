@@ -5,6 +5,7 @@ param(
     [string]$WorkDir = 'C:\SAVRBuild',
     [string]$AndroidSdk,
     [string]$JavaHome,
+    [string]$AdbPath,
     [string]$Serial,
     [string]$LogPath,
     [string]$Keystore,
@@ -14,6 +15,8 @@ param(
     [switch]$RepairAudioIfNeeded,
     [switch]$PayloadOnly,
     [switch]$NonInteractive,
+    [switch]$AcceptAndroidLicenses,
+    [switch]$ApproveSignatureReplacement,
     [switch]$PersonalUpdate
 )
 
@@ -664,15 +667,19 @@ function Resolve-AndroidSdk {
         $env:JAVA_HOME = $ResolvedJavaHome
         $env:ANDROID_SDK_ROOT = $sdkRoot
         $licenseMarker = Join-Path $sdkRoot 'licenses\android-sdk-license'
-        if ($NonInteractive.IsPresent -and -not (Test-Path -LiteralPath $licenseMarker -PathType Leaf)) {
+        if ($NonInteractive.IsPresent -and
+            -not $AcceptAndroidLicenses.IsPresent -and
+            -not (Test-Path -LiteralPath $licenseMarker -PathType Leaf)) {
             throw "Android SDK licenses have not been accepted in $sdkRoot. Run this master once without -NonInteractive."
         }
-        if (-not $NonInteractive.IsPresent -and
-            -not (Test-Path -LiteralPath $licenseMarker -PathType Leaf)) {
-            $accepted = Confirm-ExactText `
-                -Message 'Android components require the Google Android SDK licenses. Type ACCEPT only if you agree to those licenses; the master will answer the repetitive sdkmanager prompts for you.' `
-                -RequiredText 'ACCEPT' `
-                -IgnoreCase
+        if (-not (Test-Path -LiteralPath $licenseMarker -PathType Leaf)) {
+            $accepted = $AcceptAndroidLicenses.IsPresent
+            if (-not $accepted) {
+                $accepted = Confirm-ExactText `
+                    -Message 'Android components require the Google Android SDK licenses. Type ACCEPT only if you agree to those licenses; the master will answer the repetitive sdkmanager prompts for you.' `
+                    -RequiredText 'ACCEPT' `
+                    -IgnoreCase
+            }
             if (-not $accepted) {
                 throw 'Android SDK licenses were not accepted. No Android components were installed.'
             }
@@ -1241,7 +1248,11 @@ An ADB-accessible backup of saves/settings was created at:
 $($backup.ManifestPath)
 Private internal app data that Android does not expose to ADB cannot be backed up by this installer.
 "@
-    if (-not (Confirm-ExactText -Message $warning -RequiredText 'UNINSTALL')) {
+    $approved = $ApproveSignatureReplacement.IsPresent
+    if (-not $approved) {
+        $approved = Confirm-ExactText -Message $warning -RequiredText 'UNINSTALL'
+    }
+    if (-not $approved) {
         throw 'Signature mismatch: uninstall was not explicitly approved. The installed game was left in place.'
     }
     Stop-GameAndVerify
@@ -1458,7 +1469,20 @@ function Invoke-Main {
     }
 
     Write-Step 'Selecting an authorized Quest'
-    $pinnedAdb = Resolve-PlatformTools -DownloadRoot $downloads -ToolsRoot $toolsRoot
+    if ([string]::IsNullOrWhiteSpace($AdbPath)) {
+        $pinnedAdb = Resolve-PlatformTools -DownloadRoot $downloads -ToolsRoot $toolsRoot
+    }
+    else {
+        $pinnedAdb = Get-FullPath $AdbPath
+        if (-not (Test-Path -LiteralPath $pinnedAdb -PathType Leaf)) {
+            throw "Requested ADB executable was not found: $pinnedAdb"
+        }
+        $probe = Invoke-NativeCapture -FilePath $pinnedAdb -Arguments @('version') -AllowFailure
+        if ($probe.ExitCode -ne 0 -or $probe.Text -notmatch 'Android Debug Bridge') {
+            throw "Requested ADB executable is not usable: $pinnedAdb"
+        }
+        Write-Host "Using installer-provided ADB: $pinnedAdb"
+    }
     $script:AdbExe = $pinnedAdb
     Select-QuestDevice -RequestedSerial $Serial
     Stop-GameAndVerify

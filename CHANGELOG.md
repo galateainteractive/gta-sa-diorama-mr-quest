@@ -2,6 +2,16 @@
 
 ## Unreleased — Diorama MR publication preparation
 
+- Add a Galatea-branded Windows installer profile for the reusable private
+  installer engine. It can export the official Google Play split set from an
+  authorized Android phone or accept an existing export, collect the verified
+  audio source, and run the fail-closed personal builder against a selected
+  Quest.
+- Keep the public installer free of Rockstar APKs, game data, audio and signing
+  keys. The generated executable embeds only ADB and a reviewed open-source
+  source-kit snapshot, obtains explicit SDK/signature consent, streams logs,
+  preserves the existing verified save/settings backup transaction, and leaves
+  GTA stopped after installation.
 - Adopt **GTA San Andreas Diorama MR** as the public project name while
   retaining the existing `tabletop` configuration, source and diagnostic
   identifiers for compatibility.
