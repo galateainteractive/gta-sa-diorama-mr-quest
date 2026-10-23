@@ -39,17 +39,16 @@ try {
         throw 'Git could not create the source-kit archive.'
     }
 
-    $arguments = @(
-        '-ProfilePath', $profile,
-        '-SourceKitPath', $temporaryArchive,
-        '-OutputPath', $OutputPath,
-        '-RunSelfTest'
-    )
-    if (-not [string]::IsNullOrWhiteSpace($AndroidSdk)) {
-        $arguments += @('-AndroidSdk', $AndroidSdk)
+    $builderParameters = @{
+        ProfilePath = $profile
+        SourceKitPath = $temporaryArchive
+        OutputPath = $OutputPath
+        RunSelfTest = $true
     }
-    & $templateBuilder @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Installer build failed with code $LASTEXITCODE." }
+    if (-not [string]::IsNullOrWhiteSpace($AndroidSdk)) {
+        $builderParameters.AndroidSdk = $AndroidSdk
+    }
+    & $templateBuilder @builderParameters
 }
 finally {
     if (Test-Path -LiteralPath $temporaryArchive -PathType Leaf) {
