@@ -2,6 +2,9 @@
 
 ## Unreleased — Diorama MR publication preparation
 
+- Rebuild the Galatea Windows installer on shared installer core 1.2.0, adding
+  automatic live Quest USB detection for disconnected, authorization-pending,
+  offline, and ready states without requiring repeated manual refreshes.
 - Make the mod menu discoverable before publication: the automatic first-run
   welcome now gives the both-grips + `Menu` (`Y` fallback) chord a dedicated
   high-contrast callout, and the public Quick Start/control documentation

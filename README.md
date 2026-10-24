@@ -103,6 +103,11 @@ runtime payloads, and leaves the game stopped. If Android requires a signing
 replacement, the interface obtains explicit consent and retains the existing
 verified save/settings backup and restore transaction.
 
+The Quest status is monitored automatically while the installer is open. It
+changes between disconnected, waiting for USB-debugging authorization, offline,
+and ready states as the headset is connected or removed; **Refresh** remains as
+a manual fallback.
+
 The installer executable contains only the Galatea interface, ADB and a
 reviewed snapshot of this open-source source kit. It never contains or uploads
 Rockstar APKs, Rockstar data, the external audio pack, saves, settings or the
