@@ -2,6 +2,9 @@
 
 ## Unreleased — Diorama MR publication preparation
 
+- Extract pinned ZIP toolchains through the verified 7-Zip binary on Windows,
+  avoiding the legacy .NET path-length failure seen in fresh installer work
+  directories while retaining SHA-256 verification and managed-root guards.
 - Rebuild the Galatea Windows installer on shared installer core 1.2.0, adding
   automatic live Quest USB detection for disconnected, authorization-pending,
   offline, and ready states without requiring repeated manual refreshes.

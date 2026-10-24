@@ -69,6 +69,11 @@ $script:PinnedFiles = @{
         Uri = 'https://github.com/ip7z/7zip/releases/download/26.02/7zr.exe'
         Sha256 = '56B8CC9F4971CEF253644FAFE54063ED7FDCA551D4DEE0F8C6BAA81B855ACD72'
     }
+    SevenZipExtra = @{
+        FileName = '7z2602-extra.7z'
+        Uri = 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-extra.7z'
+        Sha256 = '081DF9E9311DFD9C9E0E98C1C80180B99BB51E4CB24156B5F3057FE3C259D70A'
+    }
 }
 
 function Write-Step {
@@ -284,9 +289,27 @@ function Expand-ZipToFreshDirectory {
     if (Test-Path -LiteralPath $Destination) {
         Move-AsideIfPresent -Path $Destination -AllowedRoot $ManagedRoot
     }
+    if (-not (Test-IsUnderPath -Candidate $Destination -Root $ManagedRoot)) {
+        throw "Refusing to extract outside the managed tools root: $Destination"
+    }
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($Archive, $Destination)
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($env:SAVR_ARCHIVE_TOOL) -and
+            (Test-Path -LiteralPath $env:SAVR_ARCHIVE_TOOL -PathType Leaf)) {
+            Invoke-NativeCapture -FilePath $env:SAVR_ARCHIVE_TOOL `
+                -Arguments @('x', '-y', "-o$Destination", $Archive) | Out-Null
+        }
+        else {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($Archive, $Destination)
+        }
+    }
+    catch {
+        if (Test-Path -LiteralPath $Destination) {
+            Remove-Item -LiteralPath $Destination -Recurse -Force
+        }
+        throw
+    }
 }
 
 function Invoke-NativeCapture {
@@ -533,8 +556,41 @@ function Test-IsSevenZipArchive {
 }
 
 function Resolve-SevenZip {
-    param([Parameter(Mandatory = $true)][string]$DownloadRoot)
-    $sevenZip = Get-VerifiedDownload -Definition $script:PinnedFiles.SevenZip -DownloadRoot $DownloadRoot
+    param(
+        [Parameter(Mandatory = $true)][string]$DownloadRoot,
+        [Parameter(Mandatory = $true)][string]$ToolsRoot
+    )
+    $bootstrap = Get-VerifiedDownload -Definition $script:PinnedFiles.SevenZip -DownloadRoot $DownloadRoot
+    $bootstrapVersion = Invoke-NativeCapture -FilePath $bootstrap -Arguments @('i') -AllowFailure
+    if ($bootstrapVersion.ExitCode -ne 0 -or $bootstrapVersion.Text -notmatch '7-Zip.*26\.02') {
+        throw "Pinned 7-Zip bootstrap validation failed: $($bootstrapVersion.Text)"
+    }
+
+    $destination = Join-Path $ToolsRoot '7zip-extra-26.02-x64'
+    $sevenZip = Join-Path $destination '7za.exe'
+    if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+        $archive = Get-VerifiedDownload -Definition $script:PinnedFiles.SevenZipExtra -DownloadRoot $DownloadRoot
+        $temporary = Join-Path $ToolsRoot ('.extract-7zip-extra-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $temporary | Out-Null
+        try {
+            Invoke-NativeCapture -FilePath $bootstrap `
+                -Arguments @('x', '-y', "-o$temporary", $archive) | Out-Null
+            $source = Join-Path $temporary 'x64'
+            if (-not (Test-Path -LiteralPath (Join-Path $source '7za.exe') -PathType Leaf)) {
+                throw 'Pinned 7-Zip extra archive is missing x64\7za.exe.'
+            }
+            if (Test-Path -LiteralPath $destination) {
+                Move-AsideIfPresent -Path $destination -AllowedRoot $ToolsRoot
+            }
+            Move-Item -LiteralPath $source -Destination $destination
+        }
+        finally {
+            if (Test-Path -LiteralPath $temporary) {
+                Remove-Item -LiteralPath $temporary -Recurse -Force
+            }
+        }
+    }
+
     $version = Invoke-NativeCapture -FilePath $sevenZip -Arguments @('i') -AllowFailure
     if ($version.ExitCode -ne 0 -or $version.Text -notmatch '7-Zip.*26\.02') {
         throw "Pinned 7-Zip validation failed: $($version.Text)"
@@ -1402,15 +1458,12 @@ function Invoke-Main {
             -Filter 'Sound mod (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*'
 
         Write-Step 'Preparing pinned build tools'
+        $archiveTool = Resolve-SevenZip -DownloadRoot $downloads -ToolsRoot $toolsRoot
+        $env:SAVR_ARCHIVE_TOOL = $archiveTool
+        Write-Host "Pinned archive tool: $archiveTool"
         $resolvedJavaHome = Resolve-JavaHome -Requested $JavaHome -DownloadRoot $downloads -ToolsRoot $toolsRoot
         $python = Resolve-Python -DownloadRoot $downloads -ToolsRoot $toolsRoot
         $apktool = Resolve-Apktool -DownloadRoot $downloads
-        if ((Test-IsSevenZipArchive -Path $resolvedGamePackage) -or
-            (Test-IsSevenZipArchive -Path $resolvedAudioSource)) {
-            $archiveTool = Resolve-SevenZip -DownloadRoot $downloads
-            $env:SAVR_ARCHIVE_TOOL = $archiveTool
-            Write-Host "Pinned 7-Zip archive tool: $archiveTool"
-        }
         $openXrLoader = Resolve-OpenXrLoader -DownloadRoot $downloads -ToolsRoot $toolsRoot
         $resolvedSdk = Resolve-AndroidSdk -Requested $AndroidSdk -DefaultRoot $defaultSdk -DownloadRoot $downloads `
             -ToolsRoot $toolsRoot -ResolvedJavaHome $resolvedJavaHome
