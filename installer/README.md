@@ -29,7 +29,9 @@ again before installation.
 
 The installer also bounds redirected-output draining after the builder exits.
 This prevents ADB's background server from leaving the window busy after the
-log has already confirmed a successful installation.
+log has already confirmed a successful installation. Embedded source-kit
+revisions use hash-qualified folders, so an older open installer cannot lock a
+new version out of its own source files.
 
 ## Internal build
 
