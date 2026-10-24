@@ -42,6 +42,10 @@ namespace GalateaDioramaInstaller
             "Audio pack (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*";
         internal const string AudioDownloadUrl =
             "https://libertycity.net/files/gta-san-andreas-ios-android/241069-gta-sa-classic-avanced-mod-pack.html";
+        internal const string AudioSourceInstructions =
+            "Download 'Original plan mod pack' (1.41 GB), then select gta-sa-ps2-style-mod-pack_1786856007_737162.7z. Do not select CLASSIC ADVANCED v1.0 or v1.1.";
+        internal const bool RequireExclusiveAdbServer = true;
+        internal const bool AllowExistingBuildRetry = true;
         internal const string PostInstallInstructions =
             "Inside the game, hold both grips and press the left-controller Menu button (or Y) to open the Diorama MR menu.";
 

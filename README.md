@@ -108,6 +108,12 @@ changes between disconnected, waiting for USB-debugging authorization, offline,
 and ready states as the headset is connected or removed; **Refresh** remains as
 a manual fallback.
 
+Close SideQuest completely, including its system-tray process, before starting
+the personal build. The installer checks this before downloads or compilation.
+If compilation completed but the later USB stage failed, **Install latest
+completed build (no rebuild)** reuses the retained result only after checking
+every APK and payload hash again.
+
 The installer executable contains only the Galatea interface, ADB and a
 reviewed snapshot of this open-source source kit. It never contains or uploads
 Rockstar APKs, Rockstar data, the external audio pack, saves, settings or the
@@ -124,8 +130,8 @@ player's signing key. Internal build instructions are in
   `gta-sa-ps2-style-mod-pack_1786856007_737162.7z`. Download it from the
   [LibertyCity mod page](https://libertycity.net/files/gta-san-andreas-ios-android/241069-gta-sa-classic-avanced-mod-pack.html),
   then select **Original plan mod pack** dated **16 August 2026** (1.41 GB).
-  Do **not** select the newer **CLASSIC ADVANCED v1.0** download on the same
-  page; its audio banks are different and are not supported. The wizard copies
+  Do **not** select **CLASSIC ADVANCED v1.0** or **v1.1** on the same page;
+  their audio banks are different and are not supported. The wizard copies
   only 59 verified files from `CONFIG`, `SFX`, and `STREAMS`; CLEO scripts,
   saves, models, launch configuration, and all other mod-pack content are
   ignored.

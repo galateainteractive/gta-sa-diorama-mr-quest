@@ -2,6 +2,16 @@
 
 ## Unreleased — Diorama MR publication preparation
 
+- Make the Windows installer name the exact supported LibertyCity download in
+  the audio step: **Original plan mod pack** (1.41 GB), file
+  `gta-sa-ps2-style-mod-pack_1786856007_737162.7z`, explicitly excluding
+  CLASSIC ADVANCED v1.0 and v1.1.
+- Detect a running SideQuest process before downloads or compilation begin,
+  with a direct instruction to close its tray process instead of failing after
+  the lengthy personal build.
+- Retain completed personal builds after a device-stage failure and expose an
+  **Install latest completed build (no rebuild)** action. The retry rechecks
+  every APK and payload hash before touching the Quest.
 - Extract pinned ZIP toolchains through the verified 7-Zip binary on Windows,
   avoiding the legacy .NET path-length failure seen in fresh installer work
   directories while retaining SHA-256 verification and managed-root guards.

@@ -12,11 +12,20 @@ The player can either:
    split set; or
 2. select a previously exported split folder or supported APK archive.
 
-The installer then asks for the separately supplied verified audio pack,
-validates every source, downloads the pinned build toolchain when needed,
-builds and signs a personal six-APK set, backs up ADB-accessible saves/settings
-if a signing change requires reinstalling, installs the complete set, publishes
-the verified payloads, and leaves the game stopped.
+The installer then asks for the separately supplied verified audio pack. On the
+linked LibertyCity page choose **Original plan mod pack** (1.41 GB), then select
+`gta-sa-ps2-style-mod-pack_1786856007_737162.7z` in the installer. Do not choose
+CLASSIC ADVANCED v1.0 or v1.1. The installer validates every source, downloads
+the pinned build toolchain when needed, builds and signs a personal six-APK
+set, backs up ADB-accessible saves/settings if a signing change requires
+reinstalling, installs the complete set, publishes the verified payloads, and
+leaves the game stopped.
+
+Close SideQuest completely, including its system-tray process, before pressing
+Build and Install. The installer detects SideQuest before starting an expensive
+build. If a completed build later reaches a USB/ADB error, use **Install latest
+completed build (no rebuild)**; all retained APK and payload hashes are checked
+again before installation.
 
 ## Internal build
 

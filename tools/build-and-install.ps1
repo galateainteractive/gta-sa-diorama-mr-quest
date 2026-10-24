@@ -896,8 +896,25 @@ function Invoke-AdbCapture {
     return Invoke-NativeCapture -FilePath $script:AdbExe -Arguments $allArguments -AllowFailure:$AllowFailure -EchoOutput:$EchoOutput
 }
 
+function Assert-ExclusiveAdbHost {
+    param([Parameter(Mandatory = $true)][string]$PinnedAdbPath)
+
+    $conflicts = [System.Collections.Generic.List[string]]::new()
+    $sideQuestProcesses = @(Get-Process -Name SideQuest -ErrorAction SilentlyContinue)
+    if ($sideQuestProcesses.Count -gt 0) {
+        $conflicts.Add("SideQuest is still running ($($sideQuestProcesses.Count) processes).")
+    }
+    $unique = @($conflicts | Select-Object -Unique)
+    if ($unique.Count -gt 0) {
+        $details = ($unique | ForEach-Object { "  - $_" }) -join "`n"
+        throw "SideQuest or another Android tool is controlling ADB:`n$details`n`nClose SideQuest completely, including its system-tray icon, and close other Android/ADB tools before retrying. A completed build remains saved and can be reused with -ExistingBuildRoot."
+    }
+}
+
 function Restart-PinnedAdbServer {
     if ([string]::IsNullOrWhiteSpace([string]$script:AdbExe)) { throw 'ADB has not been initialized.' }
+
+    Assert-ExclusiveAdbHost -PinnedAdbPath $script:AdbExe
 
     Write-Host 'Restarting the pinned ADB server to avoid conflicts with SideQuest or another Android tool...'
     Invoke-AdbCapture -Arguments @('kill-server') -WithoutSerial -AllowFailure | Out-Null
@@ -1445,6 +1462,16 @@ function Invoke-Main {
     Write-Host "Work directory: $resolvedWorkDir"
     Write-Host "Log: $resolvedLogPath"
 
+    # The Windows installer always supplies its embedded pinned ADB. Detect a
+    # competing SideQuest/Android tool before any lengthy download or build.
+    if (-not [string]::IsNullOrWhiteSpace($AdbPath)) {
+        $preflightAdb = Get-FullPath $AdbPath
+        if (-not (Test-Path -LiteralPath $preflightAdb -PathType Leaf)) {
+            throw "Requested ADB executable was not found: $preflightAdb"
+        }
+        Assert-ExclusiveAdbHost -PinnedAdbPath $preflightAdb
+    }
+
     if ([string]::IsNullOrWhiteSpace($ExistingBuildRoot)) {
         $resolvedGamePackage = Resolve-RequiredInputPath -Value $GamePackage -Name 'GamePackage' `
             -Prompt 'Select your legally obtained GTA SA APK, split-APK folder, or APK archive' `
@@ -1452,7 +1479,7 @@ function Invoke-Main {
         Write-Host ''
         Write-Host 'Required sound archive: gta-sa-ps2-style-mod-pack_1786856007_737162.7z' -ForegroundColor Yellow
         Write-Host 'Download page: https://libertycity.net/files/gta-san-andreas-ios-android/241069-gta-sa-classic-avanced-mod-pack.html'
-        Write-Host 'On that page select Original plan mod pack (16 August 2026, 1.41 GB), NOT CLASSIC ADVANCED v1.0.' -ForegroundColor Yellow
+        Write-Host 'On that page select Original plan mod pack (16 August 2026, 1.41 GB), NOT CLASSIC ADVANCED v1.0 or v1.1.' -ForegroundColor Yellow
         $resolvedAudioSource = Resolve-RequiredInputPath -Value $AudioSource -Name 'AudioSource' `
             -Prompt 'Select gta-sa-ps2-style-mod-pack_1786856007_737162.7z (Original plan mod pack) or its extracted audio folder' `
             -Filter 'Sound mod (*.zip;*.7z;*.rar)|*.zip;*.7z;*.rar|All files (*.*)|*.*'
