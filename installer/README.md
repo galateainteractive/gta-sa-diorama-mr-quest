@@ -27,6 +27,10 @@ build. If a completed build later reaches a USB/ADB error, use **Install latest
 completed build (no rebuild)**; all retained APK and payload hashes are checked
 again before installation.
 
+The installer also bounds redirected-output draining after the builder exits.
+This prevents ADB's background server from leaving the window busy after the
+log has already confirmed a successful installation.
+
 ## Internal build
 
 Keep the private template beside the project folder:

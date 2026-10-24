@@ -2,6 +2,9 @@
 
 ## Unreleased — Diorama MR publication preparation
 
+- Update the Windows installer to shared core 1.3.1. After PowerShell reports a
+  completed, verified installation, a detached ADB server can no longer leave
+  the interface permanently busy by retaining its redirected output handle.
 - Make the Windows installer name the exact supported LibertyCity download in
   the audio step: **Original plan mod pack** (1.41 GB), file
   `gta-sa-ps2-style-mod-pack_1786856007_737162.7z`, explicitly excluding
