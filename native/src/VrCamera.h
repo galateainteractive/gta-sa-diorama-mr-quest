@@ -83,6 +83,11 @@ bool TransformTabletopSwimStick(const void* ped, float* x, float* y);
 // layer whenever a VR menu (cheats or calibration) is open.
 void SetInputBlocked(bool blocked);
 
+// True while Diorama MR's R3 weapon-selection overlay owns gameplay input.
+// The Java gamepad provider uses this to publish a neutral pad in parallel
+// with the native CPad hook, preventing stale movement or fire state.
+bool WeaponSelectorActive();
+
 // Body-fixed holster anchor in OpenXR LOCAL space. It uses the exact recentered
 // body frame that places the RenderWare holstered model, so looking around does
 // not make the cyan grab point orbit away from the visible weapon.

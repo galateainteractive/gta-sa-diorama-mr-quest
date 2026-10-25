@@ -67,6 +67,7 @@ Write-Host "==> libsavr.so ($Configuration, arm64-v8a, SAVR_DEV=OFF)"
     "-DOPENXR_LOADER_SO=$OpenXrLoader" `
     '-DANDROID_ABI=arm64-v8a' `
     '-DANDROID_PLATFORM=android-28' `
+    '-DANDROID_STL=c++_static' `
     '-DSAVR_DEV=OFF' `
     '-DSAVR_EXPERIMENTAL_BACKPRESSURE=ON' `
     "-DCMAKE_BUILD_TYPE=$Configuration"

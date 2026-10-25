@@ -76,9 +76,12 @@ configuration and debugging compatibility.
 - Hold both grips and press the left-controller **Menu** button to open the
   Diorama MR menu. If the system consumes that button, both grips + `Y` is the
   fallback.
-- `R3`: cycle `TRACK`, `FOLLOW`, and `FIXED` cameras.
+- `R3`: open the weapon selector; point with the right stick and press `R3`
+  again to equip and close it.
 - `L3`: crouch on foot.
-- `L3 + R3`: recenter the diorama on CJ or the current vehicle.
+- `L3 + R3`: cycle `TRACK`, `FOLLOW`, and `FIXED` cameras.
+- Hold the Meta system button to recenter the Quest view and the diorama on CJ
+  or the current vehicle.
 - One grip in `FIXED`: drag the diorama.
 - Both grips: move, rotate, and resize the diorama.
 - `A`: jump; `B`: sprint; `X`: alternate attack; `Y`: enter or exit a vehicle.

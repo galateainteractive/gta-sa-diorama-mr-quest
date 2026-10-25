@@ -76,6 +76,17 @@ void PublishRadioText(const char* text);
 // proven direct-text layer with timers/radio but has independent lifetime.
 void PublishStatusText(const char* text, float durationSeconds);
 
+// Lightweight Diorama MR weapon selector, published by the GameThread and
+// rendered on the existing head-locked text panel. Arrays contain GTA's 13
+// inventory slots; the compositor only reads this copied snapshot.
+void SetWeaponSelector(bool active, int selectedSlot, int currentSlot,
+                       const int weaponTypes[13], const int totalAmmo[13]);
+
+// Meta's system button is reserved and cannot be bound as an ordinary action.
+// The runtime does expose the resulting LOCAL-space recenter as a reference-
+// space change. Consume its post-change notification on the GameThread.
+bool ConsumeSystemRecenter();
+
 // Per-hand tracked pose for rendering VR hands. grip drives the hand model; aim
 // gives the pointing axis. Poses are in the session LOCAL space (same as the head
 // pose), so the game thread recenters + converts them exactly like the head.

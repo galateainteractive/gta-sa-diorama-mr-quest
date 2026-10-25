@@ -107,5 +107,6 @@ find_library(gles-lib GLESv3)
 
 target_link_libraries(savr PRIVATE
     openxr_loader
+    c++_static c++abi
     ${log-lib} ${android-lib} ${egl-lib} ${gles-lib}
 )

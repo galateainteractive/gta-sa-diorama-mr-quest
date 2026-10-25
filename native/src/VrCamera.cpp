@@ -2594,6 +2594,8 @@ struct TabletopTransformState {
 };
 
 TabletopTransformState g_tabletopTransform{};
+std::atomic<bool> g_tabletopWeaponSelectorActive{false};
+int g_tabletopWeaponSelectorSlot = 0;
 CamBasis g_tabletopWorldTransformBase{};
 bool g_tabletopWorldTransformBaseValid{};
 std::atomic<int> g_tabletopCoverageMode{
@@ -2673,24 +2675,6 @@ V3 DefaultTabletopPhysicalAnchor() {
             -tabletop::AnchorForwardMeters()};
 }
 
-void ResetTabletopTransform(bool keepMode) {
-    const TabletopViewMode mode = keepMode ? g_tabletopTransform.mode
-                                            : TabletopViewMode::Track;
-    g_tabletopTransform = {};
-    g_tabletopTransform.mode = mode;
-    g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
-    tabletop::ResetVisualScale();
-    tabletop::ResetRadiusPreset();
-    g_origin.valid = false;
-    g_tabletopCoverageFrozen.store(false, std::memory_order_release);
-    g_tabletopCoverageWarmupFrames.store(0, std::memory_order_release);
-    g_tabletopDirectionRelatchSerial.fetch_add(1, std::memory_order_acq_rel);
-    LOGI("[tabletop.controls] reset mode=%s scale=%.3f radius=%.0fm",
-         TabletopViewModeName(mode),
-         static_cast<double>(tabletop::VisualScale()),
-         static_cast<double>(tabletop::RadiusMeters()));
-}
-
 void RequestTabletopRecenter(const char* reason) {
     if (!tabletop::Enabled()) return;
     g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
@@ -2711,6 +2695,83 @@ void RequestTabletopRecenter(const char* reason) {
         g_tabletopDirectionRelatchSerial.load(std::memory_order_relaxed));
 }
 
+void CycleTabletopView() {
+    // Deliberate player-facing order from the default conveyor view:
+    // TRACK -> FOLLOW -> FIXED -> TRACK.
+    switch (g_tabletopTransform.mode) {
+        case TabletopViewMode::Track:
+            g_tabletopTransform.mode = TabletopViewMode::Follow;
+            break;
+        case TabletopViewMode::Follow:
+            g_tabletopTransform.mode = TabletopViewMode::Fixed;
+            break;
+        default:
+            g_tabletopTransform.mode = TabletopViewMode::Track;
+            break;
+    }
+    RequestTabletopRecenter("view-mode-change");
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.diag.event] view=%s",
+        TabletopViewModeName(g_tabletopTransform.mode));
+    char status[32];
+    std::snprintf(status, sizeof(status), "CAMERA: %s",
+                  g_tabletopTransform.mode == TabletopViewMode::Track
+                      ? "TRACK"
+                      : (g_tabletopTransform.mode == TabletopViewMode::Fixed
+                             ? "FIXED" : "FOLLOW"));
+    xr::PublishStatusText(status, 2.0f);
+    xr::TriggerHaptic(0, 0.55f, 100.0f, 55.0f);
+    xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
+}
+
+constexpr int kSelectorWeaponOffset = 0x730;
+constexpr int kSelectorWeaponStride = 0x20;
+constexpr int kSelectorAmmoOffset = 0x0C;
+constexpr int kSelectorActiveSlotOffset = 0x8DC;
+constexpr int kSelectorSlotCount = 13;
+
+void ReadTabletopWeaponInventory(void* ped, int types[kSelectorSlotCount],
+                                 int ammo[kSelectorSlotCount],
+                                 int& currentSlot) {
+    std::fill(types, types + kSelectorSlotCount, 0);
+    std::fill(ammo, ammo + kSelectorSlotCount, 0);
+    currentSlot = 0;
+    if (!ped) return;
+    const auto* bytes = static_cast<const std::uint8_t*>(ped);
+    for (int slot = 0; slot < kSelectorSlotCount; ++slot) {
+        const auto* weapon = bytes + kSelectorWeaponOffset +
+            slot * kSelectorWeaponStride;
+        std::memcpy(&types[slot], weapon, sizeof(types[slot]));
+        std::memcpy(&ammo[slot], weapon + kSelectorAmmoOffset,
+                    sizeof(ammo[slot]));
+        ammo[slot] = std::max(ammo[slot], 0);
+    }
+    std::int8_t active = 0;
+    std::memcpy(&active, bytes + kSelectorActiveSlotOffset, sizeof(active));
+    currentSlot = std::clamp(static_cast<int>(active), 0,
+                             kSelectorSlotCount - 1);
+}
+
+void CloseTabletopWeaponSelector() {
+    g_tabletopWeaponSelectorActive.store(false, std::memory_order_release);
+    xr::SetWeaponSelector(false, 0, 0, nullptr, nullptr);
+}
+
+void PublishTabletopWeaponSelector(void* ped) {
+    int types[kSelectorSlotCount]{};
+    int ammo[kSelectorSlotCount]{};
+    int currentSlot = 0;
+    ReadTabletopWeaponInventory(ped, types, ammo, currentSlot);
+    if (g_tabletopWeaponSelectorSlot < 0 ||
+        g_tabletopWeaponSelectorSlot >= kSelectorSlotCount ||
+        (g_tabletopWeaponSelectorSlot != 0 &&
+         types[g_tabletopWeaponSelectorSlot] == 0)) {
+        g_tabletopWeaponSelectorSlot = currentSlot;
+    }
+    xr::SetWeaponSelector(true, g_tabletopWeaponSelectorSlot, currentSlot,
+                          types, ammo);
+}
+
 void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     static bool l3WasDown{};
     static bool r3WasDown{};
@@ -2726,9 +2787,13 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     l3WasDown = input.l3;
     r3WasDown = input.r3;
 
-    if (!tabletop::Enabled()) return;
+    if (!tabletop::Enabled()) {
+        if (g_tabletopWeaponSelectorActive.load(std::memory_order_acquire))
+            CloseTabletopWeaponSelector();
+        return;
+    }
 
-    const bool resetChordHeld = input.l3 && input.r3;
+    const bool viewChordHeld = input.l3 && input.r3;
     const bool gripsFree = input.grip[0] < 0.65f && input.grip[1] < 0.65f;
     // Normal play always uses CJ/vehicle as the sole coverage authority.
     // This also repairs a stale in-memory experimental mode without exposing
@@ -2740,44 +2805,109 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
             std::memory_order_release);
         g_tabletopCoverageWarmupFrames.store(0, std::memory_order_release);
     }
-    if (!blocked && resetChordHeld && (l3Edge || r3Edge)) {
-        ResetTabletopTransform(true);
-        xr::TriggerHaptic(0, 0.65f, 90.0f, 70.0f);
-        xr::TriggerHaptic(1, 0.65f, 90.0f, 70.0f);
+    void* const selectorPed = g.FindPlayerPed ? g.FindPlayerPed(-1) : nullptr;
+    void* const selectorVehicle = g.FindPlayerVehicle
+        ? g.FindPlayerVehicle(-1, false) : nullptr;
+    bool selectorActive = g_tabletopWeaponSelectorActive.load(
+        std::memory_order_acquire);
+    if (selectorActive && (blocked || !selectorPed || selectorVehicle)) {
+        CloseTabletopWeaponSelector();
+        selectorActive = false;
+    }
+
+    // Both stick clicks now own the three production camera views. Meta keeps
+    // its system button, while the reference-space event from its long-press
+    // recenters the Diorama separately below on the GameThread.
+    if (!blocked && !selectorActive && viewChordHeld &&
+        (l3Edge || r3Edge)) {
+        CycleTabletopView();
         suppressL3UntilRelease = true;
     } else if (!blocked && r3Edge && gripsFree && !input.l3) {
-        // Deliberate player-facing order from the default conveyor view:
-        // TRACK -> FOLLOW -> FIXED -> TRACK.
-        switch (g_tabletopTransform.mode) {
-            case TabletopViewMode::Track:
-                g_tabletopTransform.mode = TabletopViewMode::Follow;
-                break;
-            case TabletopViewMode::Follow:
-                g_tabletopTransform.mode = TabletopViewMode::Fixed;
-                break;
-            default:
-                g_tabletopTransform.mode = TabletopViewMode::Track;
-                break;
+        if (selectorActive) {
+            int types[kSelectorSlotCount]{};
+            int ammo[kSelectorSlotCount]{};
+            int currentSlot = 0;
+            ReadTabletopWeaponInventory(selectorPed, types, ammo, currentSlot);
+            const int selected = std::clamp(g_tabletopWeaponSelectorSlot, 0,
+                                            kSelectorSlotCount - 1);
+            if ((selected == 0 || types[selected] != 0) &&
+                g.CPed_SetCurrentWeaponSlot) {
+                if (selected != currentSlot)
+                    g.CPed_SetCurrentWeaponSlot(selectorPed, selected);
+                __android_log_print(
+                    ANDROID_LOG_INFO, SAVR_TAG,
+                    "[tabletop.weapon-selector] equip slot=%d type=%d previous=%d",
+                    selected, types[selected], currentSlot);
+            }
+            CloseTabletopWeaponSelector();
+            xr::PublishStatusText("WEAPON EQUIPPED", 1.25f);
+            xr::TriggerHaptic(1, 0.60f, 110.0f, 65.0f);
+            selectorActive = false;
+        } else if (selectorPed && !selectorVehicle) {
+            int types[kSelectorSlotCount]{};
+            int ammo[kSelectorSlotCount]{};
+            int currentSlot = 0;
+            ReadTabletopWeaponInventory(selectorPed, types, ammo, currentSlot);
+            g_tabletopWeaponSelectorSlot = currentSlot;
+            g_tabletopWeaponSelectorActive.store(true,
+                                                  std::memory_order_release);
+            xr::SetWeaponSelector(true, currentSlot, currentSlot, types, ammo);
+            xr::TriggerHaptic(1, 0.45f, 90.0f, 45.0f);
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.weapon-selector] open current=%d type=%d",
+                currentSlot, types[currentSlot]);
+            selectorActive = true;
         }
-        // A mode change deliberately focuses the live player and re-latches
-        // joystick/HMD direction instead of carrying a stale vehicle or drag
-        // frame into the next camera mode.
-        RequestTabletopRecenter("view-mode-change");
-        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.diag.event] view=%s",
-            TabletopViewModeName(g_tabletopTransform.mode));
-        char status[32];
-        std::snprintf(status, sizeof(status), "CAMERA: %s",
-                      g_tabletopTransform.mode == TabletopViewMode::Track
-                          ? "TRACK"
-                          : (g_tabletopTransform.mode == TabletopViewMode::Fixed
-                                 ? "FIXED" : "FOLLOW"));
-        xr::PublishStatusText(status, 2.0f);
-        xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
+    }
+
+    if (selectorActive) {
+        int types[kSelectorSlotCount]{};
+        int ammo[kSelectorSlotCount]{};
+        int currentSlot = 0;
+        ReadTabletopWeaponInventory(selectorPed, types, ammo, currentSlot);
+        std::array<int, kSelectorSlotCount> owned{};
+        int ownedCount = 0;
+        for (int slot = 0; slot < kSelectorSlotCount; ++slot) {
+            if (slot == 0 || types[slot] != 0) owned[ownedCount++] = slot;
+        }
+        const float sx = input.rightStick[0];
+        const float sy = input.rightStick[1];
+        if (ownedCount > 0 && sx * sx + sy * sy >= 0.30f) {
+            constexpr float pi = 3.14159265358979323846f;
+            float angle = std::atan2(sx, sy); // up=0, clockwise positive
+            if (angle < 0.0f) angle += 2.0f * pi;
+            const int index = static_cast<int>(std::floor(
+                angle * static_cast<float>(ownedCount) / (2.0f * pi) +
+                0.5f)) % ownedCount;
+            const int nextSlot = owned[index];
+            if (nextSlot != g_tabletopWeaponSelectorSlot) {
+                g_tabletopWeaponSelectorSlot = nextSlot;
+                xr::TriggerHaptic(1, 0.22f, 125.0f, 28.0f);
+                __android_log_print(
+                    ANDROID_LOG_INFO, SAVR_TAG,
+                    "[tabletop.weapon-selector] highlight slot=%d type=%d ammo=%d",
+                    nextSlot, types[nextSlot], ammo[nextSlot]);
+            }
+        }
+        PublishTabletopWeaponSelector(selectorPed);
+
+        // The selector is an input overlay, not a world pause. Consume every
+        // gameplay control while it is visible so the stick cannot turn CJ,
+        // R2 cannot fire and a face button cannot leak into a mission prompt.
+        input.leftStick[0] = input.leftStick[1] = 0.0f;
+        input.rightStick[0] = input.rightStick[1] = 0.0f;
+        input.triggers[0] = input.triggers[1] = 0.0f;
+        input.grip[0] = input.grip[1] = 0.0f;
+        input.a = input.b = input.x = input.y = input.menu = false;
+        input.l3 = input.r3 = false;
+        g_tabletopTransform.gestureActive = false;
+        g_tabletopCoverageFrozen.store(false, std::memory_order_release);
+        return;
     }
 
     // Plain L3 now belongs to GTA's crouch toggle. Consume it only when it was
-    // part of the recenter chord; R3 remains wholly owned by tabletop controls.
+    // part of the camera chord; R3 remains wholly owned by tabletop controls.
     if (!input.l3) suppressL3UntilRelease = false;
     if (suppressL3UntilRelease) input.l3 = false;
     input.r3 = false;
@@ -32067,6 +32197,10 @@ bool WorldPointToTracking(const float worldPoint[3], float trackingPoint[3]) {
 
 void SetInputBlocked(bool blocked) {
     g_inputBlocked.store(blocked, std::memory_order_relaxed);
+}
+
+bool WeaponSelectorActive() {
+    return g_tabletopWeaponSelectorActive.load(std::memory_order_acquire);
 }
 
 bool GetHolsterAnchorTracking(int point, float positionOut[3]) {

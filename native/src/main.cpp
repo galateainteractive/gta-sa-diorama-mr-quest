@@ -938,6 +938,30 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
     xr::InputState in{};
     xr::GetInput(in);
 
+    // A long press of Meta is owned by Horizon, not by our action set. OpenXR
+    // reports the resulting LOCAL-space origin change once it is effective;
+    // mirror that system recenter into the gameplay/diorama origin here on the
+    // GameThread. The Quest's own system recenter still happens normally.
+    if (xr::ConsumeSystemRecenter()) {
+        vrcam::RequestRecenter();
+        if (tabletop::Enabled())
+            xr::PublishStatusText("DIORAMA RECENTERED", 1.5f);
+        LOGI("[tabletop.recenter] system recenter consumed on GameThread");
+    }
+
+    // The native CPad hook owns R3 and the right stick while the selector is
+    // visible. Publish a neutral state through the parallel Java gamepad path,
+    // otherwise its raw axes can overwrite that native neutral state later in
+    // the same frame and turn CJ behind the overlay.
+    if (vrcam::WeaponSelectorActive()) {
+        in.leftStick[0] = in.leftStick[1] = 0.0f;
+        in.rightStick[0] = in.rightStick[1] = 0.0f;
+        in.triggers[0] = in.triggers[1] = 0.0f;
+        in.grip[0] = in.grip[1] = 0.0f;
+        in.a = in.b = in.x = in.y = in.menu = false;
+        in.l3 = in.r3 = false;
+    }
+
     // Keep the stereo/theater decision fresh even in frames the camera hook
     // never sees — the pause menu freeze was exactly this gate going stale.
     vrcam::RefreshStereoGate();

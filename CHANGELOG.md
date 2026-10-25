@@ -61,6 +61,24 @@
 - Add a safe Windows first-run validation helper that hash-verifies a local
   save/settings backup before removing only the VR configuration files.
 
+## Package 50 radial text weapon selector
+
+- Add a lightweight on-foot Diorama MR weapon selector. Press `R3` to open it,
+  point at one of CJ's owned weapon slots with the right stick, and press `R3`
+  again to equip and close. Selecting the current weapon only closes it.
+- Render the first version through the existing low-cost head-locked text panel,
+  showing the selected weapon and ammunition without new image assets or a new
+  render pass. Gameplay sticks, triggers, grips and face buttons are neutral
+  while the selector is visible.
+- Move production camera cycling to `L3 + R3`. Preserve plain `L3` crouch and
+  all fixed-view one/two-grip manipulation.
+- Follow Meta's ordinary system recenter: once OpenXR reports that the new
+  `LOCAL` reference-space origin is effective, recenter the diorama on the live
+  player/vehicle and re-latch headset-relative locomotion.
+- Explicitly link Android's static libc++ runtime and ABI support so native
+  builds remain reliable when the SDK path contains spaces, including the
+  migrated `F:` workspace.
+
 ## Package 49 production diorama views
 
 - Fix normal-play world coverage to the proven 60 metre radius around CJ or the

@@ -139,7 +139,7 @@ foreach ($sourcePattern in @(
     }
 }
 foreach ($sourcePattern in @(
-        'const bool resetChordHeld = input\.l3 && input\.r3',
+        'const bool (?:resetChordHeld|viewChordHeld) = input\.l3 && input\.r3',
         'suppressL3UntilRelease',
         'if \(suppressL3UntilRelease\) input\.l3 = false',
         'g_tabletopAimPressFrame',
@@ -238,7 +238,7 @@ foreach ($sourcePattern in @(
 }
 foreach ($sourcePattern in @(
         'TabletopViewMode mode\{TabletopViewMode::Track\}',
-        ': TabletopViewMode::Track',
+        'g_tabletopTransform\.mode = TabletopViewMode::Track',
         'g_loadingScreenSnapshot\.store\(loadingScreen',
         '!mobileMenuOpen && !cutsceneRunning',
         'bool IsLoadingScreenActive\(\)')) {
@@ -351,3 +351,43 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 49 fixed 60m coverage, R3 cameras and transient status text'
+
+# Package 50 reassigns plain R3 to a radial owned-weapon selector, moves the
+# production camera cycle to L3+R3, and mirrors Meta's system recenter only
+# after OpenXR's LOCAL-space change time becomes effective.
+foreach ($sourcePattern in @(
+        'g_tabletopWeaponSelectorActive',
+        'ReadTabletopWeaponInventory',
+        'std::atan2\(sx, sy\)',
+        'CPed_SetCurrentWeaponSlot\(selectorPed, selected\)',
+        'viewChordHeld = input\.l3 && input\.r3')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 50 weapon-selector control audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'void SetWeaponSelector\(',
+        'void BuildWeaponSelector\(\)',
+        'R3 EQUIP AND CLOSE',
+        'XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING',
+        'g_systemRecenterPendingTime',
+        'bool ConsumeSystemRecenter\(\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 50 selector/recenter compositor audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'xr::ConsumeSystemRecenter\(\)',
+        'vrcam::WeaponSelectorActive\(\)',
+        'DIORAMA RECENTERED')) {
+    if ($mainSource -notmatch $sourcePattern) {
+        throw "Package 50 GameThread input audit failed: $sourcePattern"
+    }
+}
+$cmakeSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\CMakeLists.txt')
+$buildSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'tools\build.ps1')
+if ($cmakeSource -notmatch 'c\+\+_static\s+c\+\+abi' -or
+    $buildSource -notmatch "-DANDROID_STL=c\+\+_static") {
+    throw 'Package 50 space-safe Android libc++ link audit failed'
+}
+Write-Output 'PASS Package 50 weapon selector, camera chord, Meta recenter and space-safe Android link'

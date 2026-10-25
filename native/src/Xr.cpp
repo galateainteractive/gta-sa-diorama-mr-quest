@@ -585,6 +585,13 @@ std::atomic<bool>     g_aboutActive{false};
 std::atomic<bool>     g_aboutFirstRun{false};
 std::atomic<bool>     g_gfxDistanceActive{false}; // draw-distance submenu shown
 std::atomic<int>      g_gfxDistanceSel{0};
+std::atomic<bool>     g_weaponSelectorActive{false};
+std::atomic<int>      g_weaponSelectorSelectedSlot{0};
+std::atomic<int>      g_weaponSelectorCurrentSlot{0};
+std::array<std::atomic<int>, 13> g_weaponSelectorTypes{};
+std::array<std::atomic<int>, 13> g_weaponSelectorAmmo{};
+std::atomic<std::int64_t> g_systemRecenterPendingTime{0};
+std::atomic<bool>     g_systemRecenterReady{false};
 float                 g_holsterPos[8][3]{};      // holster anchors (guarded by g_headPoseMutex)
 float                 g_chuteTogglePos[2][3]{};  // parachute brake toggles (g_headPoseMutex)
 float                 g_chuteAnchorPos[2][3]{};  // fixed upper riser anchors (g_headPoseMutex)
@@ -3552,6 +3559,30 @@ void PollEvents() {
             }
             break;
         }
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+            const auto& changed = *reinterpret_cast<
+                XrEventDataReferenceSpaceChangePending*>(&event);
+            LOGI("[tabletop.recenter] reference-space change type=%d time=%lld valid=%d",
+                 static_cast<int>(changed.referenceSpaceType),
+                 static_cast<long long>(changed.changeTime),
+                 changed.poseValid == XR_TRUE ? 1 : 0);
+            // The app renders in LOCAL space. Meta keeps the system button for
+            // Horizon, but a long-press recenter changes this reference space.
+            // Defer the GameThread notification until the runtime says the new
+            // origin is effective; rebuilding against the old pose would leave
+            // the diorama offset by exactly one recenter operation.
+            if (changed.referenceSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL) {
+                if (changed.changeTime > 0) {
+                    g_systemRecenterPendingTime.store(
+                        static_cast<std::int64_t>(changed.changeTime),
+                        std::memory_order_release);
+                } else {
+                    g_systemRecenterReady.store(true,
+                                                std::memory_order_release);
+                }
+            }
+            break;
+        }
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
             LOGW("instance loss pending");
             s.running = false;
@@ -5604,6 +5635,29 @@ void PublishStatusText(const char* text, float durationSeconds) {
     ++g_hudTextState.revision;
 }
 
+void SetWeaponSelector(bool active, int selectedSlot, int currentSlot,
+                       const int weaponTypes[13], const int totalAmmo[13]) {
+    if (!active) {
+        g_weaponSelectorActive.store(false, std::memory_order_release);
+        return;
+    }
+    for (int slot = 0; slot < 13; ++slot) {
+        g_weaponSelectorTypes[slot].store(
+            weaponTypes ? weaponTypes[slot] : 0, std::memory_order_relaxed);
+        g_weaponSelectorAmmo[slot].store(
+            totalAmmo ? totalAmmo[slot] : 0, std::memory_order_relaxed);
+    }
+    g_weaponSelectorSelectedSlot.store(
+        std::clamp(selectedSlot, 0, 12), std::memory_order_relaxed);
+    g_weaponSelectorCurrentSlot.store(
+        std::clamp(currentSlot, 0, 12), std::memory_order_relaxed);
+    g_weaponSelectorActive.store(true, std::memory_order_release);
+}
+
+bool ConsumeSystemRecenter() {
+    return g_systemRecenterReady.exchange(false, std::memory_order_acq_rel);
+}
+
 void GetHandPoses(HandPose out[2]) {
     std::lock_guard<std::mutex> lock(g_headPoseMutex);
     out[0] = g_handPose[0];
@@ -7572,9 +7626,11 @@ void BuildControlsTipsMenu() {
         "A JUMP   B SPRINT   Y ENTER / EXIT",
         "X ALTERNATE ATTACK / FIRE",
         "L2 HOLD AIM   R2 FIRE WHILE AIMING",
-        "L3 CROUCH   R3 CHANGE CAMERA",
+        "L3 CROUCH   R3 WEAPON SELECT",
+        "RIGHT STICK CHOOSE   R3 EQUIP",
         "VISIBLE WORLD RADIUS: FIXED 60 M",
-        "L3+R3 RECENTER DIORAMA ON PLAYER",
+        "L3+R3 CHANGE CAMERA MODE",
+        "HOLD META: RECENTER QUEST + DIORAMA",
         "FIXED VIEW: ONE GRIP DRAGS THE MAP",
         "TWO GRIPS MOVE / ROTATE / RESIZE",
         "VEHICLES: R2 GAS   L2 BRAKE/REVERSE",
@@ -8607,6 +8663,116 @@ void BuildCalibMenu() {
     PanelText("STICK SEL   L2/R2 ADJUST   A ACTION", cx, kPanelH - 18, 2, 150, 185, 150);
 }
 
+const char* WeaponSelectorName(int type) {
+    switch (type) {
+        case 0:  return "UNARMED";
+        case 1:  return "KNUCKLES";
+        case 2:  return "GOLF CLUB";
+        case 3:  return "NIGHTSTICK";
+        case 4:  return "KNIFE";
+        case 5:  return "BASEBALL BAT";
+        case 6:  return "SHOVEL";
+        case 7:  return "POOL CUE";
+        case 8:  return "KATANA";
+        case 9:  return "CHAINSAW";
+        case 10: return "DILDO";
+        case 11: return "DILDO 2";
+        case 12: return "VIBRATOR";
+        case 13: return "VIBRATOR 2";
+        case 14: return "FLOWERS";
+        case 15: return "CANE";
+        case 16: return "GRENADE";
+        case 17: return "TEAR GAS";
+        case 18: return "MOLOTOV";
+        case 22: return "PISTOL";
+        case 23: return "SILENCED";
+        case 24: return "DESERT EAGLE";
+        case 25: return "SHOTGUN";
+        case 26: return "SAWNOFF";
+        case 27: return "COMBAT SG";
+        case 28: return "MICRO SMG";
+        case 29: return "MP5";
+        case 30: return "AK47";
+        case 31: return "M4";
+        case 32: return "TEC9";
+        case 33: return "RIFLE";
+        case 34: return "SNIPER";
+        case 35: return "RPG";
+        case 36: return "HEAT RPG";
+        case 37: return "FLAMETHROWER";
+        case 38: return "MINIGUN";
+        case 39: return "SATCHEL";
+        case 40: return "DETONATOR";
+        case 41: return "SPRAY CAN";
+        case 42: return "EXTINGUISHER";
+        case 43: return "CAMERA";
+        case 44: return "NIGHT VISION";
+        case 45: return "THERMAL";
+        case 46: return "PARACHUTE";
+        default: return "ITEM";
+    }
+}
+
+void BuildWeaponSelector() {
+    PanelClear();
+    constexpr int kSlots = 13;
+    int types[kSlots]{};
+    int ammo[kSlots]{};
+    int owned[kSlots]{};
+    int count = 0;
+    for (int slot = 0; slot < kSlots; ++slot) {
+        types[slot] = g_weaponSelectorTypes[slot].load(
+            std::memory_order_relaxed);
+        ammo[slot] = g_weaponSelectorAmmo[slot].load(
+            std::memory_order_relaxed);
+        if (slot == 0 || types[slot] != 0) owned[count++] = slot;
+    }
+    const int selected = std::clamp(
+        g_weaponSelectorSelectedSlot.load(std::memory_order_relaxed), 0, 12);
+    const int current = std::clamp(
+        g_weaponSelectorCurrentSlot.load(std::memory_order_relaxed), 0, 12);
+    const int cx = kPanelW / 2;
+    constexpr int cy = 270;
+    constexpr float radius = 164.0f;
+    constexpr float pi = 3.14159265358979323846f;
+
+    PanelText("WEAPON SELECT", cx, 18, 4, 100, 225, 255);
+    PanelText("POINT WITH RIGHT STICK", cx, 55, 2, 150, 190, 210);
+    for (int i = 0; i < count; ++i) {
+        const int slot = owned[i];
+        const float angle = -0.5f * pi +
+            2.0f * pi * static_cast<float>(i) /
+                static_cast<float>(std::max(count, 1));
+        const int x = cx + static_cast<int>(std::cos(angle) * radius);
+        const int y = cy + static_cast<int>(std::sin(angle) * radius);
+        const char* label = WeaponSelectorName(types[slot]);
+        const bool highlighted = slot == selected;
+        const bool equipped = slot == current;
+        if (highlighted) {
+            const int halfWidth = std::min(
+                72, static_cast<int>(std::strlen(label)) * 3 + 7);
+            PanelFillRect(x - halfWidth, y - 4, x + halfWidth, y + 13,
+                          120, 40, 110, 235);
+        }
+        PanelText(label, x, y, 1,
+                  highlighted ? 255 : (equipped ? 120 : 190),
+                  highlighted ? 235 : (equipped ? 255 : 205),
+                  highlighted ? 120 : (equipped ? 160 : 220));
+    }
+
+    const char* selectedName = WeaponSelectorName(types[selected]);
+    PanelTextFit(selectedName, cx, 218, 4, 255, 235, 120);
+    char line[64]{};
+    if (ammo[selected] > 0) {
+        std::snprintf(line, sizeof(line), "AMMO %d", ammo[selected]);
+        PanelText(line, cx, 258, 2, 210, 225, 235);
+    }
+    if (selected == current)
+        PanelText("CURRENT WEAPON", cx, 286, 2, 120, 255, 160);
+    PanelText("R3 EQUIP AND CLOSE", cx, kPanelH - 24,
+              2, 150, 185, 150);
+}
+
 // Upload the current panel into the debug swapchain and describe it as a
 // head-locked quad (view space), matching the Vice City overlay's placement.
 bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
@@ -8634,12 +8800,14 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
     const bool controlsMenuA = g_controlsMenuActive.load(std::memory_order_relaxed);
     const bool controlsTipsA = g_controlsTipsActive.load(std::memory_order_relaxed);
     const bool aboutMenuA = g_aboutActive.load(std::memory_order_relaxed);
+    const bool weaponSelector =
+        g_weaponSelectorActive.load(std::memory_order_acquire);
     const bool profilerPanel = !(mainMenu || calibMenu || holsterCalibMenu ||
         holsterMenu || drivingMenu || drivingCalibMenu || locomotionMenu ||
         vehicleCameraMenu ||
         basketballMenu || basketballCalibMenu || hudMenu ||
         graphicsMenu || graphicsDistanceMenu || cheatMenu ||
-        controlsMenuA || controlsTipsA || aboutMenuA);
+        controlsMenuA || controlsTipsA || aboutMenuA || weaponSelector);
 
     std::uint64_t contentRevision = 0;
     if (profilerPanel) {
@@ -8657,7 +8825,8 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
         g_profilerPanelRevision = ~std::uint64_t{0};
         std::fill(g_debugImageRevisions.begin(), g_debugImageRevisions.end(),
                   ~std::uint64_t{0});
-        if      (mainMenu)          BuildMainMenu();
+        if      (weaponSelector)    BuildWeaponSelector();
+        else if (mainMenu)          BuildMainMenu();
         else if (g_aboutActive.load(std::memory_order_relaxed))
                                     BuildAboutMenu();
         else if (g_controlsTipsActive.load(std::memory_order_relaxed))
@@ -12823,6 +12992,16 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         return;
     }
     const long long tWaitEnd = nowNs();
+    const std::int64_t pendingRecenterTime =
+        g_systemRecenterPendingTime.load(std::memory_order_acquire);
+    if (pendingRecenterTime > 0 &&
+        frameState.predictedDisplayTime >= pendingRecenterTime) {
+        if (g_systemRecenterPendingTime.exchange(
+                0, std::memory_order_acq_rel) == pendingRecenterTime) {
+            g_systemRecenterReady.store(true, std::memory_order_release);
+            LOGI("[tabletop.recenter] LOCAL-space change is now effective");
+        }
+    }
     // The entry poll happens immediately after the previous frame queued its
     // source-read fence, so that fence is normally still unsignalled. xrWaitFrame
     // then sleeps for almost a display period while the producer approaches the
@@ -13243,7 +13422,9 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
              g_gfxDistanceActive.load(std::memory_order_relaxed) ||
              g_controlsMenuActive.load(std::memory_order_relaxed) ||
              g_controlsTipsActive.load(std::memory_order_relaxed) ||
-             g_aboutActive.load(std::memory_order_relaxed)) && PresentDebugPanel(debugQuad)) {
+             g_aboutActive.load(std::memory_order_relaxed) ||
+             g_weaponSelectorActive.load(std::memory_order_acquire)) &&
+            PresentDebugPanel(debugQuad)) {
             layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&debugQuad);
         }
     }
