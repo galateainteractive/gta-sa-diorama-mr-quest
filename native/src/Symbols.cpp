@@ -340,6 +340,8 @@ bool ResolveGameSymbols(void* handle) {
         {"_ZN12CAudioEngine24GetCurrentRadioStationIDEv",                        reinterpret_cast<void**>(&g.CAudioEngine_GetCurrentRadioStationID),  false},
         {"_ZN4CPad19ExitVehicleJustDownEbP8CVehiclebRK7CVector",                  reinterpret_cast<void**>(&g.CPad_ExitVehicleJustDown),              false},
         {"_ZN4CPad9GetWeaponEP4CPedb",                                           reinterpret_cast<void**>(&g.CPad_GetWeapon),                       false},
+        {"_ZN4CPad14GetMeleeAttackEv",                                           reinterpret_cast<void**>(&g.CPad_GetMeleeAttack),                  false},
+        {"_ZN4CPad19MeleeAttackJustDownEv",                                      reinterpret_cast<void**>(&g.CPad_MeleeAttackJustDown),             false},
         {"Scene",                                                                reinterpret_cast<void**>(&g.Scene),                                 true },
 
         // globals

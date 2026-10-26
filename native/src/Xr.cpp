@@ -590,6 +590,7 @@ std::atomic<int>      g_weaponSelectorSelectedSlot{0};
 std::atomic<int>      g_weaponSelectorCurrentSlot{0};
 std::array<std::atomic<int>, 13> g_weaponSelectorTypes{};
 std::array<std::atomic<int>, 13> g_weaponSelectorAmmo{};
+std::atomic<std::uint64_t> g_weaponSelectorRevision{1};
 std::atomic<std::int64_t> g_systemRecenterPendingTime{0};
 std::atomic<bool>     g_systemRecenterReady{false};
 float                 g_holsterPos[8][3]{};      // holster anchors (guarded by g_headPoseMutex)
@@ -5638,19 +5639,29 @@ void PublishStatusText(const char* text, float durationSeconds) {
 void SetWeaponSelector(bool active, int selectedSlot, int currentSlot,
                        const int weaponTypes[13], const int totalAmmo[13]) {
     if (!active) {
-        g_weaponSelectorActive.store(false, std::memory_order_release);
+        if (g_weaponSelectorActive.exchange(false,
+                                             std::memory_order_acq_rel)) {
+            g_weaponSelectorRevision.fetch_add(1, std::memory_order_release);
+        }
         return;
     }
+    bool changed = !g_weaponSelectorActive.load(std::memory_order_acquire);
     for (int slot = 0; slot < 13; ++slot) {
-        g_weaponSelectorTypes[slot].store(
-            weaponTypes ? weaponTypes[slot] : 0, std::memory_order_relaxed);
-        g_weaponSelectorAmmo[slot].store(
-            totalAmmo ? totalAmmo[slot] : 0, std::memory_order_relaxed);
+        const int nextType = weaponTypes ? weaponTypes[slot] : 0;
+        const int nextAmmo = totalAmmo ? totalAmmo[slot] : 0;
+        changed |= g_weaponSelectorTypes[slot].exchange(
+            nextType, std::memory_order_relaxed) != nextType;
+        changed |= g_weaponSelectorAmmo[slot].exchange(
+            nextAmmo, std::memory_order_relaxed) != nextAmmo;
     }
-    g_weaponSelectorSelectedSlot.store(
-        std::clamp(selectedSlot, 0, 12), std::memory_order_relaxed);
-    g_weaponSelectorCurrentSlot.store(
-        std::clamp(currentSlot, 0, 12), std::memory_order_relaxed);
+    const int nextSelected = std::clamp(selectedSlot, 0, 12);
+    const int nextCurrent = std::clamp(currentSlot, 0, 12);
+    changed |= g_weaponSelectorSelectedSlot.exchange(
+        nextSelected, std::memory_order_relaxed) != nextSelected;
+    changed |= g_weaponSelectorCurrentSlot.exchange(
+        nextCurrent, std::memory_order_relaxed) != nextCurrent;
+    if (changed)
+        g_weaponSelectorRevision.fetch_add(1, std::memory_order_release);
     g_weaponSelectorActive.store(true, std::memory_order_release);
 }
 
@@ -7075,6 +7086,9 @@ bool CreateSession() {
 // presented as a head-locked quad. No font asset or shader needed.
 // ---------------------------------------------------------------------------
 unsigned char g_panelPixels[kPanelW * kPanelH * 4];
+GLuint g_weaponSelectorTexture = 0;
+std::uint64_t g_weaponSelectorTextureRevision =
+    std::numeric_limits<std::uint64_t>::max();
 std::uint64_t g_profilerPanelRevision = ~std::uint64_t{0};
 std::vector<std::uint64_t> g_debugImageRevisions;
 std::vector<unsigned int> g_debugImageNames;
@@ -8714,7 +8728,9 @@ const char* WeaponSelectorName(int type) {
 }
 
 void BuildWeaponSelector() {
-    PanelClear();
+    // This texture is composited above the right-controller HUD. Keep its
+    // background transparent so it never becomes a black card over the map.
+    std::memset(g_panelPixels, 0, sizeof(g_panelPixels));
     constexpr int kSlots = 13;
     int types[kSlots]{};
     int ammo[kSlots]{};
@@ -8752,7 +8768,7 @@ void BuildWeaponSelector() {
             const int halfWidth = std::min(
                 72, static_cast<int>(std::strlen(label)) * 3 + 7);
             PanelFillRect(x - halfWidth, y - 4, x + halfWidth, y + 13,
-                          120, 40, 110, 235);
+                          120, 40, 110, 120);
         }
         PanelText(label, x, y, 1,
                   highlighted ? 255 : (equipped ? 120 : 190),
@@ -8771,6 +8787,35 @@ void BuildWeaponSelector() {
         PanelText("CURRENT WEAPON", cx, 286, 2, 120, 255, 160);
     PanelText("R3 EQUIP AND CLOSE", cx, kPanelH - 24,
               2, 150, 185, 150);
+}
+
+bool EnsureWeaponSelectorTexture() {
+    if (!g_weaponSelectorActive.load(std::memory_order_acquire)) return false;
+    const std::uint64_t revision = g_weaponSelectorRevision.load(
+        std::memory_order_acquire);
+    if (g_weaponSelectorTexture &&
+        g_weaponSelectorTextureRevision == revision) return true;
+
+    BuildWeaponSelector();
+    GLint previousTexture = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+    if (!g_weaponSelectorTexture) {
+        glGenTextures(1, &g_weaponSelectorTexture);
+        glBindTexture(GL_TEXTURE_2D, g_weaponSelectorTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kPanelW, kPanelH, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, g_panelPixels);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, g_weaponSelectorTexture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kPanelW, kPanelH,
+                        GL_RGBA, GL_UNSIGNED_BYTE, g_panelPixels);
+    }
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+    g_weaponSelectorTextureRevision = revision;
+    return true;
 }
 
 // Upload the current panel into the debug swapchain and describe it as a
@@ -8800,14 +8845,12 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
     const bool controlsMenuA = g_controlsMenuActive.load(std::memory_order_relaxed);
     const bool controlsTipsA = g_controlsTipsActive.load(std::memory_order_relaxed);
     const bool aboutMenuA = g_aboutActive.load(std::memory_order_relaxed);
-    const bool weaponSelector =
-        g_weaponSelectorActive.load(std::memory_order_acquire);
     const bool profilerPanel = !(mainMenu || calibMenu || holsterCalibMenu ||
         holsterMenu || drivingMenu || drivingCalibMenu || locomotionMenu ||
         vehicleCameraMenu ||
         basketballMenu || basketballCalibMenu || hudMenu ||
         graphicsMenu || graphicsDistanceMenu || cheatMenu ||
-        controlsMenuA || controlsTipsA || aboutMenuA || weaponSelector);
+        controlsMenuA || controlsTipsA || aboutMenuA);
 
     std::uint64_t contentRevision = 0;
     if (profilerPanel) {
@@ -8825,8 +8868,7 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
         g_profilerPanelRevision = ~std::uint64_t{0};
         std::fill(g_debugImageRevisions.begin(), g_debugImageRevisions.end(),
                   ~std::uint64_t{0});
-        if      (weaponSelector)    BuildWeaponSelector();
-        else if (mainMenu)          BuildMainMenu();
+        if      (mainMenu)          BuildMainMenu();
         else if (g_aboutActive.load(std::memory_order_relaxed))
                                     BuildAboutMenu();
         else if (g_controlsTipsActive.load(std::memory_order_relaxed))
@@ -10135,10 +10177,15 @@ void DrawWristPanelsForEye(const float* mvp, const HandPose hands[2],
 // give their live raster textures their own small controller cards. Help/brief
 // rides above the left control and timers/radio above the right; large mission
 // titles remain centred in the view because they are transient scene messages.
-void DrawTabletopControllerTextPanel(const float* mvp, const HandPose& handPose,
-                                     int hand, const HudTextTexture& text,
-                                     float panelWidth, const XrPosef& rp) {
-    if (!text.visible || !text.texture || !handPose.valid) return;
+void DrawTabletopControllerTexturePanel(const float* mvp,
+                                        const HandPose& handPose,
+                                        int hand, GLuint texture,
+                                        int textureWidth, int textureHeight,
+                                        float panelWidth, float liftMetres,
+                                        bool flipVertically,
+                                        const XrPosef& rp) {
+    if (!texture || textureWidth <= 0 || textureHeight <= 0 ||
+        !handPose.valid) return;
     EnsureWristProgram();
     if (!g_wristProg) return;
     const TwoHandVisualState noWeaponGrip{};
@@ -10146,26 +10193,28 @@ void DrawTabletopControllerTextPanel(const float* mvp, const HandPose& handPose,
     if (!BuildHandPanelAnchor(handPose, hand, noWeaponGrip,
                               base, alongAxis, acrossAxis, liftAxis,
                               right, up, normal)) return;
-    const XrVector3f centre = vadd(base, vscale(up, 0.13f));
+    const XrVector3f centre = vadd(base, vscale(up, liftMetres));
     const float opacity = WristPanelGazeOpacity(rp, centre, kDashGazeRange);
     if (opacity <= 0.0f) return;
     const float panelHeight = panelWidth *
-        static_cast<float>(text.height) / static_cast<float>(text.width);
+        static_cast<float>(textureHeight) / static_cast<float>(textureWidth);
     const XrVector3f rHalf = vscale(right, panelWidth * 0.5f);
     const XrVector3f uHalf = vscale(up, panelHeight * 0.5f);
     const XrVector3f tl = vadd(vsub(centre, rHalf), uHalf);
     const XrVector3f tr = vadd(vadd(centre, rHalf), uHalf);
     const XrVector3f bl = vsub(vsub(centre, rHalf), uHalf);
     const XrVector3f br = vsub(vadd(centre, rHalf), uHalf);
+    const float topV = flipVertically ? 1.0f : 0.0f;
+    const float bottomV = flipVertically ? 0.0f : 1.0f;
     const float vertices[4 * 5] = {
-        tl.x, tl.y, tl.z, 0.0f, 0.0f,
-        bl.x, bl.y, bl.z, 0.0f, 1.0f,
-        tr.x, tr.y, tr.z, 1.0f, 0.0f,
-        br.x, br.y, br.z, 1.0f, 1.0f,
+        tl.x, tl.y, tl.z, 0.0f, topV,
+        bl.x, bl.y, bl.z, 0.0f, bottomV,
+        tr.x, tr.y, tr.z, 1.0f, topV,
+        br.x, br.y, br.z, 1.0f, bottomV,
     };
     glUseProgram(g_wristProg);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, text.texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
     glBindSampler(0, g_wristSampler);
     glUniform1i(g_wristTexLoc, 0);
     glUniformMatrix4fv(g_wristMvpLoc, 1, GL_FALSE, mvp);
@@ -10188,6 +10237,15 @@ void DrawTabletopControllerTextPanel(const float* mvp, const HandPose& handPose,
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glBindSampler(0, 0);
+}
+
+void DrawTabletopControllerTextPanel(const float* mvp, const HandPose& handPose,
+                                     int hand, const HudTextTexture& text,
+                                     float panelWidth, const XrPosef& rp) {
+    if (!text.visible) return;
+    DrawTabletopControllerTexturePanel(
+        mvp, handPose, hand, text.texture, text.width, text.height,
+        panelWidth, 0.13f, false, rp);
 }
 
 // Procedural per-eye sniper mask. The target port does not yet expose a safe
@@ -12050,7 +12108,10 @@ void DrawTabletopControllerHudForEye(const XrPosef& rp, int eye,
                                      int targetWidth, int targetHeight,
                                      const HandPose hands[2],
                                      unsigned int hudSourceTex) {
-    if (!hudSourceTex || (!hands[0].valid && !hands[1].valid)) return;
+    const bool selectorVisible =
+        g_weaponSelectorActive.load(std::memory_order_acquire);
+    if ((!hudSourceTex && !selectorVisible) ||
+        (!hands[0].valid && !hands[1].valid)) return;
     const float sign = eye == 0 ? -1.0f : 1.0f;
     const XrVector3f rr = QuatRotate(
         rp.orientation, {sign * kStereoHalfIpd, 0.0f, 0.0f});
@@ -12070,8 +12131,18 @@ void DrawTabletopControllerHudForEye(const XrPosef& rp, int eye,
     glDisable(GL_SCISSOR_TEST);
     const TwoHandVisualState noWeaponGrip{};
     const driving::WheelVisualState noDashboard{};
-    DrawWristPanelsForEye(mvp, hands, noWeaponGrip, noDashboard,
-                          hudSourceTex, rp, 0u, true, true);
+    if (hudSourceTex) {
+        DrawWristPanelsForEye(mvp, hands, noWeaponGrip, noDashboard,
+                              hudSourceTex, rp, 0u, true, true);
+    }
+    if (selectorVisible && hands[1].valid && EnsureWeaponSelectorTexture()) {
+        // A compact transparent card above the right-hand status instrument.
+        // The software panel bitmap is stored bottom-up for OpenXR, hence the
+        // explicit V flip in this ordinary GL texture pass.
+        DrawTabletopControllerTexturePanel(
+            mvp, hands[1], 1, g_weaponSelectorTexture, kPanelW, kPanelH,
+            0.27f, 0.22f, true, rp);
+    }
     glDisable(GL_DEPTH_TEST);
     glUseProgram(0);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -13422,8 +13493,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
              g_gfxDistanceActive.load(std::memory_order_relaxed) ||
              g_controlsMenuActive.load(std::memory_order_relaxed) ||
              g_controlsTipsActive.load(std::memory_order_relaxed) ||
-             g_aboutActive.load(std::memory_order_relaxed) ||
-             g_weaponSelectorActive.load(std::memory_order_acquire)) &&
+             g_aboutActive.load(std::memory_order_relaxed)) &&
             PresentDebugPanel(debugQuad)) {
             layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&debugQuad);
         }

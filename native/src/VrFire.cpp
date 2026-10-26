@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <ctime>
 #include <cstring>
+#include <limits>
 
 namespace savr::vrfire {
 namespace {
@@ -29,12 +30,15 @@ using FireInstantHitFn = bool (*)(void*, void*, Vec3*, Vec3*, void*, Vec3*,
                                   Vec3*, bool, bool);
 using FireSniperFn = bool (*)(void*, void*, void*, Vec3*);
 using PadGetWeaponFn = int (*)(void*, void*, bool);
+using PadBoolFn = int (*)(void*);
 
 std::atomic<PhysicalFireQuery> g_physicalFireQuery{nullptr};
 std::atomic<bool> g_installed{false};
 FireInstantHitFn g_origFireInstantHit{};
 FireSniperFn g_origFireSniper{};
 PadGetWeaponFn g_origPadGetWeaponBody{};
+PadBoolFn g_origPadGetMeleeAttackBody{};
+PadBoolFn g_origPadMeleeAttackJustDownBody{};
 thread_local bool g_insideHook = false;
 std::atomic<bool> g_padTriggerDown[2]{};
 std::atomic<bool> g_directTriggerDown[2]{};
@@ -57,6 +61,10 @@ constexpr std::uint32_t kPadGetWeaponPrologue[4] = {
     0x79422008, 0x35000068, 0x3944BC08, 0x34000068,
 };
 constexpr std::uintptr_t kPadGetWeaponBodyOffset = 0x18;
+constexpr std::uint32_t kPadSingleGatePrologue[4] = {
+    0x79422008, 0x34000068, 0x2A1F03E0, 0xD65F03C0,
+};
+constexpr std::uintptr_t kPadSingleGateBodyOffset = 0x10;
 constexpr std::uintptr_t kPadDisableControlsOffset = 0x110;
 constexpr std::uintptr_t kPadDisableFireOffset = 0x12F;
 constexpr std::uintptr_t kPedWeaponsOffset = 0x730;
@@ -397,6 +405,48 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
     }
     const int vr = down ? 255 : 0;
     return std::max(vanilla, vr);
+}
+
+int OnPadGetMeleeAttack(void* pad) {
+    if (!g_origPadGetMeleeAttackBody || !pad) return 0;
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(pad);
+    if (*reinterpret_cast<const std::uint16_t*>(
+            bytes + kPadDisableControlsOffset) != 0) return 0;
+    const int vanilla = g_origPadGetMeleeAttackBody(pad);
+    if (!g.CPad_GetPad || pad != g.CPad_GetPad(0) ||
+        !vrcam::IsTabletopActive() ||
+        (g.FindPlayerVehicle && g.FindPlayerVehicle(-1, false))) {
+        return vanilla;
+    }
+    return std::max(vanilla,
+                    vrcam::IsTabletopClassicAttackHeld() ? 1 : 0);
+}
+
+int OnPadMeleeAttackJustDown(void* pad) {
+    if (!g_origPadMeleeAttackJustDownBody || !pad) return 0;
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(pad);
+    if (*reinterpret_cast<const std::uint16_t*>(
+            bytes + kPadDisableControlsOffset) != 0) return 0;
+    const int vanilla = g_origPadMeleeAttackJustDownBody(pad);
+    if (!g.CPad_GetPad || pad != g.CPad_GetPad(0) ||
+        !vrcam::IsTabletopActive() ||
+        (g.FindPlayerVehicle && g.FindPlayerVehicle(-1, false))) {
+        return vanilla;
+    }
+    const bool injected = vrcam::IsTabletopClassicAttackJustDown();
+    if (injected) {
+        static std::uint32_t lastLoggedFrame =
+            std::numeric_limits<std::uint32_t>::max();
+        const std::uint32_t frame = g.CTimer_m_FrameCounter
+            ? *g.CTimer_m_FrameCounter
+            : std::numeric_limits<std::uint32_t>::max();
+        if (frame == std::numeric_limits<std::uint32_t>::max() ||
+            frame != lastLoggedFrame) {
+            lastLoggedFrame = frame;
+            LOGI("[tabletop.melee] attack just-down injected frame=%u", frame);
+        }
+    }
+    return std::max(vanilla, injected ? 1 : 0);
 }
 
 class ScopedLineOptions {
@@ -766,6 +816,39 @@ PadGetWeaponFn InstallPadGetWeaponHook(void* target) {
     return body;
 }
 
+PadBoolFn InstallPadSingleGateHook(void* target, void* replacement,
+                                  const char* name) {
+    if (!target || !replacement) return nullptr;
+    auto* code = reinterpret_cast<std::uint32_t*>(target);
+    if (std::memcmp(code, kPadSingleGatePrologue, 16) != 0) {
+        LOGE("[vr.fire] %s prologue mismatch: %08x %08x %08x %08x; "
+             "hook refused", name, code[0], code[1], code[2], code[3]);
+        return nullptr;
+    }
+    const long pageSizeLong = sysconf(_SC_PAGESIZE);
+    if (pageSizeLong <= 0) return nullptr;
+    const std::size_t pageSize = static_cast<std::size_t>(pageSizeLong);
+    const std::uintptr_t start =
+        reinterpret_cast<std::uintptr_t>(code) & ~(pageSize - 1);
+    const std::uintptr_t end =
+        (reinterpret_cast<std::uintptr_t>(code) + 16 + pageSize - 1) &
+        ~(pageSize - 1);
+    if (mprotect(reinterpret_cast<void*>(start), end - start,
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        LOGE("[vr.fire] mprotect failed for %s", name);
+        return nullptr;
+    }
+    auto body = reinterpret_cast<PadBoolFn>(
+        reinterpret_cast<std::uintptr_t>(target) +
+        kPadSingleGateBodyOffset);
+    code[0] = 0x58000051; // LDR X17, #8
+    code[1] = 0xD61F0220; // BR X17
+    *reinterpret_cast<void**>(code + 2) = replacement;
+    __builtin___clear_cache(reinterpret_cast<char*>(code),
+                            reinterpret_cast<char*>(code) + 16);
+    return body;
+}
+
 bool CoreSymbolsReady() {
     return g.CWeapon_FireInstantHit && g.CWorld_ProcessLineOfSight &&
            g.CWorld_pIgnoreEntity && g.CWorld_bIncludeDeadPeds &&
@@ -775,7 +858,8 @@ bool CoreSymbolsReady() {
            g.CWeapon_DoBulletImpact && g.CWeapon_DoWeaponEffect &&
            g.CEventGunShot_Construct && g.CEventGunShot_Destruct &&
            g.GetEventGlobalGroup && g.CEventGroup_Add &&
-           g.FindPlayerPed && g.FindPlayerVehicle && g.CPad_GetWeapon;
+           g.FindPlayerPed && g.FindPlayerVehicle && g.CPad_GetWeapon &&
+           g.CPad_GetMeleeAttack && g.CPad_MeleeAttackJustDown;
 }
 
 } // namespace
@@ -972,10 +1056,23 @@ bool Install() {
         LOGE("[vr.fire] physical trigger route unavailable; hooks disabled");
         return false;
     }
+    g_origPadGetMeleeAttackBody = InstallPadSingleGateHook(
+        reinterpret_cast<void*>(g.CPad_GetMeleeAttack),
+        reinterpret_cast<void*>(&OnPadGetMeleeAttack),
+        "CPad::GetMeleeAttack");
+    g_origPadMeleeAttackJustDownBody = InstallPadSingleGateHook(
+        reinterpret_cast<void*>(g.CPad_MeleeAttackJustDown),
+        reinterpret_cast<void*>(&OnPadMeleeAttackJustDown),
+        "CPad::MeleeAttackJustDown");
+    if (!g_origPadGetMeleeAttackBody ||
+        !g_origPadMeleeAttackJustDownBody) {
+        LOGE("[vr.fire] classic tabletop melee route unavailable; hooks disabled");
+        return false;
+    }
 
     g_installed.store(true, std::memory_order_release);
     scopeaim::SetSniperFireAvailable(g_origFireSniper != nullptr);
-    LOGI("[vr.fire] controller hitscan + pad trigger installed%s "
+    LOGI("[vr.fire] controller hitscan + pad trigger + tabletop melee installed%s "
          "(inactive until physical query)",
          g_origFireSniper ? " + sniper" : "");
     return true;

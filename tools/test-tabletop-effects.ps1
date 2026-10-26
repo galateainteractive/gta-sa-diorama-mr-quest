@@ -391,3 +391,56 @@ if ($cmakeSource -notmatch 'c\+\+_static\s+c\+\+abi' -or
     throw 'Package 50 space-safe Android libc++ link audit failed'
 }
 Write-Output 'PASS Package 50 weapon selector, camera chord, Meta recenter and space-safe Android link'
+
+# Package 51 moves the selector into the right-controller late HUD, preserves
+# the full miniature transform across camera modes, and feeds X into Android's
+# dedicated held + just-down melee queries.
+$vrFireSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\VrFire.cpp')
+foreach ($sourcePattern in @(
+        'EnsureWeaponSelectorTexture\(\)',
+        'DrawTabletopControllerTexturePanel\(',
+        'g_weaponSelectorTextureRevision',
+        '0\.27f, 0\.22f, true, rp',
+        'std::memset\(g_panelPixels, 0, sizeof\(g_panelPixels\)\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 51 right-controller selector audit failed: $sourcePattern"
+    }
+}
+if ($xrSource -match
+        '(?s)g_aboutActive\.load.*?\|\|\s*g_weaponSelectorActive.*?PresentDebugPanel') {
+    throw 'Package 51 selector is still submitted as a head-locked debug quad'
+}
+foreach ($sourcePattern in @(
+        'viewTransitionPending',
+        'continuous view transition',
+        'TabletopGameToTracking\(oldAnchor, gameAnchorDelta, oldYaw\)',
+        'oldYaw \+ oldHeading - newHeading')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 51 continuous camera audit failed: $sourcePattern"
+    }
+}
+if ([regex]::Match($cameraSource,
+        '(?s)void CycleTabletopView\(\).*?^\}',
+        [Text.RegularExpressions.RegexOptions]::Multiline).Value -match
+        'RequestTabletopRecenter') {
+    throw 'Package 51 camera cycle still invokes a full recenter'
+}
+foreach ($sourcePattern in @(
+        'CPad_GetMeleeAttack',
+        'CPad_MeleeAttackJustDown')) {
+    if (($symbolsHeader + $symbolsSource) -notmatch $sourcePattern) {
+        throw "Package 51 melee symbol audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'OnPadGetMeleeAttack\(',
+        'OnPadMeleeAttackJustDown\(',
+        'IsTabletopClassicAttackHeld\(\)',
+        'IsTabletopClassicAttackJustDown\(\)',
+        'InstallPadSingleGateHook\(')) {
+    if ($vrFireSource -notmatch $sourcePattern) {
+        throw "Package 51 classic melee bridge audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 51 hand selector, continuous cameras and classic melee bridge'

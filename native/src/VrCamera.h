@@ -38,6 +38,10 @@ bool IsTabletopActive();
 // existing trigger meanings.
 bool IsTabletopModernAimActive();
 bool IsTabletopModernAttackActive();
+// Stable for every native consumer in the current GTA frame. Melee tasks use
+// both forms: held continues a combo, while just-down starts the first swing.
+bool IsTabletopClassicAttackHeld();
+bool IsTabletopClassicAttackJustDown();
 
 // Re-evaluate the stereo/theater gate. Called once per frame from the input
 // pump: the camera hook that normally maintains it stops running while the

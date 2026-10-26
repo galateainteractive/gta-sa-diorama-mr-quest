@@ -130,6 +130,16 @@ equips it. `L3 + R3` now cycles the production cameras. The Meta system button
 remains owned by Horizon; its standard OpenXR reference-space-change event is
 used to recenter the diorama after the Quest finishes its own recenter.
 
+Package 51 places that selector in the existing late, depth-free controller HUD
+pass as a compact transparent texture above the right-hand status panel. It is
+no longer a large head-locked quad, and its GL upload is revision-gated. Camera
+cycling also stops requesting a recenter: the old and new leveled camera bases
+are rebased through physical-anchor and map-yaw compensation, preserving the
+whole visible miniature transform at the transition. Finally, classic attack
+is published as both a frame-stable held state and a just-down edge through
+GTA Android's dedicated melee pad queries, allowing `X` to start and continue
+punch, bat and other held-melee animations with or without a nearby target.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

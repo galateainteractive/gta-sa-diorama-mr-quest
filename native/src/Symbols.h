@@ -644,6 +644,10 @@ struct GameSymbols {
     // CPad::NewState.ButtonCircle). It polls touch widgets directly inside
     // CPad::GetWeapon, so the VR trigger is merged at this narrow query.
     int   (*CPad_GetWeapon)(void* pad, void* ped, bool allowPassive);
+    // Unarmed and melee tasks use a separate pair of mobile-touch queries.
+    // Diorama's classic X attack is merged into both the held and edge paths.
+    int   (*CPad_GetMeleeAttack)(void* pad);
+    int   (*CPad_MeleeAttackJustDown)(void* pad);
 
     // --- globals ---
     void*  TheCamera;                    // CCamera; m_mCameraMatrix at +0x970

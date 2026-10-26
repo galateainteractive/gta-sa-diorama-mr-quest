@@ -2591,11 +2591,17 @@ struct TabletopTransformState {
     V3 gesturePivotGame{};
     V3 gestureStartPivotPhysical{};
     bool recenterOnNextCamera{};
+    bool viewTransitionPending{};
+    TabletopViewMode transitionFromMode{TabletopViewMode::Track};
 };
 
 TabletopTransformState g_tabletopTransform{};
 std::atomic<bool> g_tabletopWeaponSelectorActive{false};
 int g_tabletopWeaponSelectorSlot = 0;
+std::atomic<bool> g_tabletopClassicAttackHeld{false};
+std::atomic<std::uint32_t> g_tabletopClassicAttackPressFrame{
+    std::numeric_limits<std::uint32_t>::max()};
+std::atomic<double> g_tabletopClassicAttackPressFallbackUntilMs{0.0};
 CamBasis g_tabletopWorldTransformBase{};
 bool g_tabletopWorldTransformBaseValid{};
 std::atomic<int> g_tabletopCoverageMode{
@@ -2682,6 +2688,7 @@ void RequestTabletopRecenter(const char* reason) {
     g_tabletopTransform.trackAircraftAltitudeValid = false;
     g_tabletopTransform.gestureActive = false;
     g_tabletopTransform.recenterOnNextCamera = true;
+    g_tabletopTransform.viewTransitionPending = false;
     // Rebase room-space facing as well as the miniature transform. Without
     // this, a respawn/mode switch could centre CJ visually while the game's
     // camera-relative movement still used the previous car/interior heading.
@@ -2698,7 +2705,8 @@ void RequestTabletopRecenter(const char* reason) {
 void CycleTabletopView() {
     // Deliberate player-facing order from the default conveyor view:
     // TRACK -> FOLLOW -> FIXED -> TRACK.
-    switch (g_tabletopTransform.mode) {
+    const TabletopViewMode previousMode = g_tabletopTransform.mode;
+    switch (previousMode) {
         case TabletopViewMode::Track:
             g_tabletopTransform.mode = TabletopViewMode::Follow;
             break;
@@ -2709,7 +2717,13 @@ void CycleTabletopView() {
             g_tabletopTransform.mode = TabletopViewMode::Track;
             break;
     }
-    RequestTabletopRecenter("view-mode-change");
+    // Do not run the full recenter path here. The next camera build rebases the
+    // new behaviour onto the exact transform currently on screen, so cycling
+    // changes only how the table moves from this point onward.
+    g_tabletopTransform.transitionFromMode = previousMode;
+    g_tabletopTransform.viewTransitionPending = true;
+    g_tabletopTransform.gestureActive = false;
+    g_tabletopTransform.trackAircraftAltitudeValid = false;
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
         "[tabletop.diag.event] view=%s",
         TabletopViewModeName(g_tabletopTransform.mode));
@@ -3041,6 +3055,62 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
     if (g_tabletopTransform.recenterOnNextCamera) {
         g_tabletopTransform.physicalAnchor = DefaultTabletopPhysicalAnchor();
         g_tabletopTransform.recenterOnNextCamera = false;
+    }
+    if (g_tabletopTransform.viewTransitionPending) {
+        const CamBasis oldAnchor = g_tabletopWorldTransformBaseValid
+            ? g_tabletopWorldTransformBase : liveLevelBase;
+        CamBasis newAnchor = liveLevelBase;
+        if (g_tabletopTransform.mode == TabletopViewMode::Fixed) {
+            g_tabletopTransform.fixedBase = oldAnchor;
+            g_tabletopTransform.fixedBaseValid = true;
+            newAnchor = oldAnchor;
+        } else if (g_tabletopTransform.mode == TabletopViewMode::Track) {
+            // Track inherits the orientation visible at the instant of the
+            // switch, then follows only live translation from that point on.
+            g_tabletopTransform.fixedBase = oldAnchor;
+            g_tabletopTransform.fixedBaseValid = true;
+            newAnchor.right = oldAnchor.right;
+            newAnchor.forward = oldAnchor.forward;
+            newAnchor.up = oldAnchor.up;
+            const bool aircraft = driving::GetActiveVehicleType() ==
+                driving::VEHICLE_PLANE;
+            if (aircraft) {
+                g_tabletopTransform.trackAircraftAltitudeZ = oldAnchor.pos.z;
+                g_tabletopTransform.trackAircraftAltitudeValid = true;
+                newAnchor.pos.z = oldAnchor.pos.z;
+            }
+        }
+
+        const float oldYaw = g_tabletopTransform.mapYaw;
+        const float oldHeading = std::atan2(-oldAnchor.forward.x,
+                                            oldAnchor.forward.y);
+        const float newHeading = std::atan2(-newAnchor.forward.x,
+                                            newAnchor.forward.y);
+        float newYaw = oldYaw + oldHeading - newHeading;
+        while (newYaw > 3.14159265f) newYaw -= 6.28318531f;
+        while (newYaw < -3.14159265f) newYaw += 6.28318531f;
+
+        // Compensate any anchor-position change in physical tracking space.
+        // Together with the yaw correction this keeps the complete inverse
+        // miniature transform continuous, rather than merely keeping CJ near
+        // the same screen pixel.
+        const V3 gameAnchorDelta = newAnchor.pos - oldAnchor.pos;
+        g_tabletopTransform.physicalAnchor =
+            g_tabletopTransform.physicalAnchor +
+            TabletopGameToTracking(oldAnchor, gameAnchorDelta, oldYaw) *
+                tabletop::VisualScale();
+        g_tabletopTransform.mapYaw = newYaw;
+        if (g_tabletopTransform.mode == TabletopViewMode::Follow)
+            g_tabletopTransform.fixedBaseValid = false;
+        g_tabletopTransform.viewTransitionPending = false;
+        LOGI("[tabletop.controls] continuous view transition %s->%s "
+             "anchor_delta=(%.3f %.3f %.3f) yaw_delta=%.3f",
+             TabletopViewModeName(g_tabletopTransform.transitionFromMode),
+             TabletopViewModeName(g_tabletopTransform.mode),
+             static_cast<double>(gameAnchorDelta.x),
+             static_cast<double>(gameAnchorDelta.y),
+             static_cast<double>(gameAnchorDelta.z),
+             static_cast<double>(newYaw - oldYaw));
     }
     if (g_tabletopTransform.mode != TabletopViewMode::Follow &&
         !g_tabletopTransform.fixedBaseValid) {
@@ -5930,6 +6000,27 @@ void OnUpdatePads() {
     }
     const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     UpdateTabletopControls(in, inputBlocked);
+    const bool attackRaw = !inputBlocked && tabletop::Enabled() &&
+        !WeaponSelectorActive() &&
+        (!g.FindPlayerVehicle || g.FindPlayerVehicle(-1, false) == nullptr) &&
+        (locomotion::ActionHeld(locomotion::BIND_ACT_ATTACK,
+                                in.a, in.b, in.x, in.y, in.l3, in.r3, true) ||
+         TabletopModernAttackForCombat(in));
+    const bool attackPrevious = g_tabletopClassicAttackHeld.exchange(
+        attackRaw, std::memory_order_relaxed);
+    if (attackRaw && !attackPrevious) {
+        const std::uint32_t frame = g.CTimer_m_FrameCounter
+            ? *g.CTimer_m_FrameCounter : kNoAimEdgeFrame;
+        g_tabletopClassicAttackPressFrame.store(frame,
+                                                std::memory_order_relaxed);
+        g_tabletopClassicAttackPressFallbackUntilMs.store(
+            NowMs() + 150.0, std::memory_order_relaxed);
+    } else if (!attackRaw) {
+        g_tabletopClassicAttackPressFrame.store(kNoAimEdgeFrame,
+                                                std::memory_order_relaxed);
+        g_tabletopClassicAttackPressFallbackUntilMs.store(
+            0.0, std::memory_order_relaxed);
+    }
     float mappedMoveX=0.0f,mappedMoveY=0.0f;
     float mappedTurnX=0.0f,mappedTurnY=0.0f;
     locomotion::MapGameplaySticks(
@@ -31561,6 +31652,21 @@ bool IsTabletopModernAttackActive() {
     xr::InputState in{};
     xr::GetInput(in);
     return TabletopModernAttackForCombat(in);
+}
+
+bool IsTabletopClassicAttackHeld() {
+    return g_tabletopClassicAttackHeld.load(std::memory_order_relaxed);
+}
+
+bool IsTabletopClassicAttackJustDown() {
+    const std::uint32_t currentFrame = g.CTimer_m_FrameCounter
+        ? *g.CTimer_m_FrameCounter : kNoAimEdgeFrame;
+    if (currentFrame != kNoAimEdgeFrame) {
+        return currentFrame == g_tabletopClassicAttackPressFrame.load(
+            std::memory_order_relaxed);
+    }
+    return NowMs() < g_tabletopClassicAttackPressFallbackUntilMs.load(
+        std::memory_order_relaxed);
 }
 
 void BeginGameFrameTelemetry(double callbackStartMonoMs,

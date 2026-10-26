@@ -61,6 +61,18 @@
 - Add a safe Windows first-run validation helper that hash-verifies a local
   save/settings backup before removing only the VR configuration files.
 
+## Package 51 controller selector, continuous cameras and classic melee
+
+- Move the owned-weapon selector from the large head-locked compositor card to
+  a compact transparent panel above the right-controller status display. Its
+  texture updates only when inventory or selection changes.
+- Preserve the complete physical miniature transform while cycling `TRACK`,
+  `FOLLOW` and `FIXED`. The new mode begins from the exact table pose already
+  visible instead of invoking a full recenter and moving the map.
+- Bridge Diorama's classic attack input into GTA Android's separate
+  `CPad::GetMeleeAttack` held query and `MeleeAttackJustDown` edge query. `X`
+  now starts and continues unarmed and held-melee attacks even without a target.
+
 ## Package 50 radial text weapon selector
 
 - Add a lightweight on-foot Diorama MR weapon selector. Press `R3` to open it,
