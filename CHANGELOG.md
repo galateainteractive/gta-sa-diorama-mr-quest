@@ -61,6 +61,17 @@
 - Add a safe Windows first-run validation helper that hash-verifies a local
   save/settings backup before removing only the VR configuration files.
 
+## Package 53 raised high-contrast weapon selector
+
+- Raise the compact selector six centimetres farther above the right controller
+  so it no longer overlaps the rendered hand.
+- Expand the radial weapon-label spacing while retaining the Package 52 panel's
+  smaller physical footprint, keeping peripheral names clear of the centre
+  selection and ammunition text.
+- Render the selector through fully opaque brighter glyphs with a thin dark
+  outline. The overlay remains transparent, but its labels stay readable over
+  bright or colourful GTA map and HUD content.
+
 ## Package 52 compact selector and current-frame camera transitions
 
 - Reduce the physical right-controller weapon selector substantially while

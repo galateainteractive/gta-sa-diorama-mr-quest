@@ -401,7 +401,7 @@ foreach ($sourcePattern in @(
         'EnsureWeaponSelectorTexture\(\)',
         'DrawTabletopControllerTexturePanel\(',
         'g_weaponSelectorTextureRevision',
-        '0\.18f, 0\.18f, true, rp',
+        '0\.18f, 0\.24f, true, rp',
         'std::memset\(g_panelPixels, 0, sizeof\(g_panelPixels\)\)')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 51 right-controller selector audit failed: $sourcePattern"
@@ -450,10 +450,10 @@ Write-Output 'PASS Package 51 hand selector, continuous cameras and classic mele
 # current-frame anchor, and reserves Diorama right-stick turning for UI/vehicle
 # input rather than rotating the miniature.
 foreach ($sourcePattern in @(
-        'constexpr float radius = 145\.0f',
-        'PanelText\(label, x, y, 2,',
-        'PanelTextFit\(selectedName, cx, 218, 3,',
-        '0\.18f, 0\.18f, true, rp')) {
+        'constexpr float radius = 175\.0f',
+        'PanelTextOutlined\(label, x, y, 2,',
+        'PanelTextOutlined\(selectedName, cx, 218, 3,',
+        '0\.18f, 0\.24f, true, rp')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 52 compact selector audit failed: $sourcePattern"
     }
@@ -468,3 +468,17 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 52 compact selector, current-frame camera rebase and Diorama turn suppression'
+
+# Package 53 raises the compact selector, widens its radial entries and adds a
+# fully opaque outlined text path so bright GTA HUD/map content cannot wash it
+# out without placing an opaque card behind the controller overlay.
+foreach ($sourcePattern in @(
+        'void PanelTextOutlined\(',
+        'linear filtering from washing their edges',
+        'constexpr float radius = 175\.0f',
+        '0\.18f, 0\.24f, true, rp')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 53 selector contrast audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 53 raised selector, wider ring and opaque outlined labels'

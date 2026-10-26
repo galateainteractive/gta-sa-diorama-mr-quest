@@ -7150,6 +7150,18 @@ void PanelText(const char* text, int centreX, int y, int scale,
     }
 }
 
+// High-contrast text for transparent controller overlays. The glyph pixels
+// themselves are already fully opaque; a one-pixel dark outline prevents
+// linear filtering from washing their edges into a bright or colourful map.
+void PanelTextOutlined(const char* text, int centreX, int y, int scale,
+                       unsigned char r, unsigned char gr, unsigned char b) {
+    PanelText(text, centreX - 1, y, scale, 5, 7, 12);
+    PanelText(text, centreX + 1, y, scale, 5, 7, 12);
+    PanelText(text, centreX, y - 1, scale, 5, 7, 12);
+    PanelText(text, centreX, y + 1, scale, 5, 7, 12);
+    PanelText(text, centreX, y, scale, r, gr, b);
+}
+
 // Like PanelText, but drops the glyph scale until the line fits the panel
 // width (long strings such as URLs would otherwise run off both edges).
 void PanelTextFit(const char* text, int centreX, int y, int maxScale,
@@ -8749,11 +8761,12 @@ void BuildWeaponSelector() {
         g_weaponSelectorCurrentSlot.load(std::memory_order_relaxed), 0, 12);
     const int cx = kPanelW / 2;
     constexpr int cy = 270;
-    constexpr float radius = 145.0f;
+    constexpr float radius = 175.0f;
     constexpr float pi = 3.14159265358979323846f;
 
-    PanelText("WEAPON SELECT", cx, 18, 4, 100, 225, 255);
-    PanelText("POINT WITH RIGHT STICK", cx, 55, 2, 150, 190, 210);
+    PanelTextOutlined("WEAPON SELECT", cx, 18, 4, 135, 235, 255);
+    PanelTextOutlined("POINT WITH RIGHT STICK", cx, 55, 2,
+                      205, 225, 245);
     for (int i = 0; i < count; ++i) {
         const int slot = owned[i];
         const float angle = -0.5f * pi +
@@ -8770,23 +8783,23 @@ void BuildWeaponSelector() {
             PanelFillRect(x - halfWidth, y - 5, x + halfWidth, y + 24,
                           120, 40, 110, 120);
         }
-        PanelText(label, x, y, 2,
-                  highlighted ? 255 : (equipped ? 120 : 190),
-                  highlighted ? 235 : (equipped ? 255 : 205),
-                  highlighted ? 120 : (equipped ? 160 : 220));
+        PanelTextOutlined(label, x, y, 2,
+                          highlighted ? 255 : (equipped ? 170 : 235),
+                          highlighted ? 245 : (equipped ? 255 : 240),
+                          highlighted ? 130 : (equipped ? 190 : 255));
     }
 
     const char* selectedName = WeaponSelectorName(types[selected]);
-    PanelTextFit(selectedName, cx, 218, 3, 255, 235, 120);
+    PanelTextOutlined(selectedName, cx, 218, 3, 255, 245, 130);
     char line[64]{};
     if (ammo[selected] > 0) {
         std::snprintf(line, sizeof(line), "AMMO %d", ammo[selected]);
-        PanelText(line, cx, 258, 2, 210, 225, 235);
+        PanelTextOutlined(line, cx, 258, 2, 225, 235, 250);
     }
     if (selected == current)
-        PanelText("CURRENT WEAPON", cx, 286, 2, 120, 255, 160);
-    PanelText("R3 EQUIP AND CLOSE", cx, kPanelH - 24,
-              2, 150, 185, 150);
+        PanelTextOutlined("CURRENT WEAPON", cx, 286, 2, 150, 255, 185);
+    PanelTextOutlined("R3 EQUIP AND CLOSE", cx, kPanelH - 24,
+                      2, 195, 225, 195);
 }
 
 bool EnsureWeaponSelectorTexture() {
@@ -12141,7 +12154,7 @@ void DrawTabletopControllerHudForEye(const XrPosef& rp, int eye,
         // explicit V flip in this ordinary GL texture pass.
         DrawTabletopControllerTexturePanel(
             mvp, hands[1], 1, g_weaponSelectorTexture, kPanelW, kPanelH,
-            0.18f, 0.18f, true, rp);
+            0.18f, 0.24f, true, rp);
     }
     glDisable(GL_DEPTH_TEST);
     glUseProgram(0);

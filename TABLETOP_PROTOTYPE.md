@@ -150,6 +150,11 @@ right stick for snap/smooth scene rotation because two-grip manipulation owns
 map rotation. The selector and existing aircraft-control paths still receive
 the stick, and immersive turning remains unchanged.
 
+Package 53 keeps Package 52's 18-centimetre selector footprint but raises it
+farther above the right hand and expands the internal weapon ring. Fully opaque
+brighter glyphs receive a thin dark outline before the colour pass, preserving
+contrast over GTA's bright map/HUD without adding an opaque background card.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former
