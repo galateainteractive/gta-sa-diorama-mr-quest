@@ -60,6 +60,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace savr::xr {
@@ -102,6 +103,156 @@ struct HudTextTexture {
 HudTextTexture g_briefTextTexture;
 HudTextTexture g_bigTextTexture;
 HudTextTexture g_timerTextTexture;
+
+bool ReplaceAll(std::u16string& text, std::u16string_view needle,
+                std::u16string_view replacement) {
+    if (needle.empty()) return false;
+    bool changed = false;
+    std::size_t position = 0;
+    while ((position = text.find(needle, position)) != std::u16string::npos) {
+        text.replace(position, needle.size(), replacement);
+        position += replacement.size();
+        changed = true;
+    }
+    return changed;
+}
+
+std::uint32_t TutorialTextHash(const std::u16string& text) {
+    std::uint32_t hash = 2166136261u;
+    for (const char16_t character : text) {
+        hash ^= static_cast<std::uint16_t>(character);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+std::string TutorialTextPreview(const std::u16string& text) {
+    std::string preview;
+    preview.reserve(std::min<std::size_t>(text.size(), 180u));
+    for (const char16_t character : text) {
+        if (preview.size() >= 180u) break;
+        if (character == u'\n') {
+            preview.push_back(' ');
+        } else if (character >= 0x20u && character <= 0x7eu) {
+            preview.push_back(static_cast<char>(character));
+        } else {
+            preview.push_back('?');
+        }
+    }
+    return preview;
+}
+
+// GTA Android's help strings retain semantic ~widget_*~ markers until the
+// final font pass. The Java OpenXR text renderer used to remove every marker,
+// leaving mobile instructions such as "Tap  to target" with a blank where the
+// touch icon belonged. Replace only controls whose Diorama bridge is already
+// proven. The prose, language and original game buffers remain untouched;
+// unknown controls deliberately fall through to the retail text.
+std::u16string AdaptDioramaTutorialText(std::u16string text) {
+    if (text.empty() || !tabletop::Enabled()) return text;
+
+    struct WidgetLabel {
+        std::u16string_view widget;
+        std::u16string_view label;
+    };
+    static constexpr WidgetLabel kWidgetLabels[] = {
+        {u"~widget_enter_targeting~", u"L2"},
+        {u"~widget_attack~", u"X / R2 WHILE AIMING"},
+        {u"~widget_explicit_alt_attack~", u"X"},
+        {u"~widget_explicit_punch~", u"X"},
+        {u"~widget_explicit_crouch~", u"L3"},
+        {u"~widget_explicit_jump~", u"A"},
+        {u"~widget_sprint~", u"B"},
+        {u"~widget_enter_car~", u"Y"},
+        {u"~widget_explicit_next_weapon~", u"R3 WEAPON SELECTOR"},
+        {u"~widget_explicit_prev_weapon~", u"R3 WEAPON SELECTOR"},
+        {u"~widget_swap_weapons~", u"R3 WEAPON SELECTOR"},
+        {u"~widget_phone~", u"BOTH GRIPS + R2"},
+        {u"~widget_mission_start~", u"A"},
+        {u"~widget_minigame_start~", u"A"},
+        {u"~widget_mission_cancel~", u"BOTH GRIPS + B"},
+        {u"~widget_minigame_cancel~", u"BOTH GRIPS + B"},
+        {u"~widget_basketball_shoot~", u"R2"},
+        {u"~widget_player_info~", u"R2"},
+        {u"~widget_explicit_bicycle~", u"R2"},
+        {u"~widget_explicit_bunny_hop~", u"A"},
+        {u"~widget_button_swim~", u"B"},
+        {u"~widget_accelerate~", u"R2"},
+        {u"~widget_brake~", u"L2"},
+        {u"~widget_vehicle_steer_left~", u"LEFT STICK LEFT"},
+        {u"~widget_vehicle_steer_right~", u"LEFT STICK RIGHT"},
+        {u"~widget_ped_move_left~", u"LEFT STICK LEFT"},
+        {u"~widget_ped_move_right~", u"LEFT STICK RIGHT"},
+        {u"~widget_ped_move_up~", u"LEFT STICK UP"},
+        {u"~widget_ped_move_down~", u"LEFT STICK DOWN"},
+        {u"~widget_ped_move~", u"LEFT STICK"},
+        {u"~widget_air_gun~", u"B"},
+        {u"~widget_rocket~", u"B"},
+        {u"~widget_explicit_flight_primary_attack~", u"B"},
+        {u"~widget_explicit_flight_secondary_attack~", u"B"},
+        {u"~widget_explicit_throw~", u"R2"},
+        {u"~widget_explicit_extinguisher~", u"L2 + R2"},
+    };
+
+    const std::uint32_t sourceHash = TutorialTextHash(text);
+    int replacements = 0;
+    for (const WidgetLabel& mapping : kWidgetLabels) {
+        if (ReplaceAll(text, mapping.widget, mapping.label)) ++replacements;
+    }
+
+    // A few early mobile tutorials describe screen regions without a semantic
+    // widget marker. These are exact complete-sentence matches from the
+    // verified retail English GXT; no partial "tap" rewriting is allowed.
+    struct ExactHelpText {
+        std::u16string_view mobile;
+        std::u16string_view diorama;
+    };
+    static constexpr ExactHelpText kExactHelpTexts[] = {
+        {u"Double tap the lower left corner of the screen to crouch and sneak around the house quietly.",
+         u"Press L3 to crouch and sneak around the house quietly."},
+        {u"~s~Double tap the center of the screen to open the parachute now.",
+         u"~s~Press A to open the parachute now."},
+        {u"~s~Double tap the center of the screen when falling to open the parachute.",
+         u"~s~Press A when falling to open the parachute."},
+        {u"Double tap the lower right corner of the screen to jump and climb out of the water.",
+         u"Press A to jump and climb out of the water."},
+        {u"Crouch ~A~", u"Crouch L3"},
+    };
+    for (const ExactHelpText& mapping : kExactHelpTexts) {
+        if (text == mapping.mobile) {
+            text.assign(mapping.diorama);
+            ++replacements;
+            break;
+        }
+    }
+
+    // Log each distinct source at most once per process. A capture therefore
+    // tells us which tutorial was adapted and whether unrecognised mobile
+    // widgets remain, without a per-frame logging/performance cost.
+    static std::mutex logMutex;
+    static std::vector<std::uint32_t> loggedHashes;
+    bool firstOccurrence = false;
+    {
+        std::lock_guard<std::mutex> lock(logMutex);
+        if (std::find(loggedHashes.begin(), loggedHashes.end(), sourceHash) ==
+            loggedHashes.end()) {
+            if (loggedHashes.size() >= 128u)
+                loggedHashes.erase(loggedHashes.begin());
+            loggedHashes.push_back(sourceHash);
+            firstOccurrence = true;
+        }
+    }
+    if (firstOccurrence && replacements > 0) {
+        LOGI("[tabletop.tutorial] adapted hash=%08x controls=%d chars=%zu",
+             sourceHash, replacements, text.size());
+    }
+    if (firstOccurrence && text.find(u"~widget_") != std::u16string::npos) {
+        const std::string preview = TutorialTextPreview(text);
+        LOGI("[tabletop.tutorial] unmapped hash=%08x chars=%zu text=%.180s",
+             sourceHash, text.size(), preview.c_str());
+    }
+    return text;
+}
 
 // Head pose published by the render thread, read by the game thread. A plain
 // mutex is enough: it is written once per compositor frame and read once per
@@ -5574,7 +5725,8 @@ void PublishHudText(const std::int16_t* brief, int briefCapacity,
         }
     }
     std::u16string nextBrief=copyGxt(brief,briefCapacity);
-    std::u16string nextHelp=copyGxt(help,helpCapacity);
+    std::u16string nextHelp=AdaptDioramaTutorialText(
+        copyGxt(help,helpCapacity));
 
     std::lock_guard<std::mutex> lock(g_hudTextMutex);
     if (g_hudTextState.brief==nextBrief&&g_hudTextState.help==nextHelp&&

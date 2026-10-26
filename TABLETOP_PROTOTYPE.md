@@ -167,6 +167,17 @@ continues to show the complete weapon name. This prevents `BASEBALL BAT` and
 later long inventory entries from overlapping adjacent or central text without
 shrinking the readable two-pixel ring font.
 
+Package 56 adapts mobile help prompts at the final OpenXR text boundary. GTA's
+language files and mission scripts are never modified: only the copied help
+string is inspected, and only while Diorama MR is active. Verified semantic
+`~widget_*~` markers become the corresponding Quest labels (`L2`, `R2`, `L3`,
+`A`, `B`, `Y`, the `R3` weapon selector, or the established grip chords), so
+the original sentence and selected game language remain intact. A short exact
+allowlist also corrects early English screen-region instructions whose retail
+text contains no widget marker. Unknown controls retain their original text
+path and emit one bounded `[tabletop.tutorial] unmapped` diagnostic per distinct
+message for safe follow-up coverage.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

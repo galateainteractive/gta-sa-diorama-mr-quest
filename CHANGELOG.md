@@ -1,5 +1,23 @@
 # Changelog
 
+## Package 56 Diorama-aware tutorial controls
+
+- Translate GTA Android's semantic touch-widget markers into the proven Quest
+  controls only while Diorama MR is active. Targeting, attacks, crouch, jump,
+  sprint, vehicle entry, weapon selection, phone prompts, supported minigames,
+  swimming, bicycles and basic vehicle/aircraft prompts now retain their
+  original prose and language while displaying controller labels.
+- Keep Immersive VR and GTA's original GXT/script data untouched. The adapter
+  changes only the copied OpenXR help string and leaves every unrecognised
+  instruction on the retail fallback path.
+- Replace a small allowlist of verified English screen-region instructions for
+  crouch, parachute deployment and climbing out of water. Exact full-sentence
+  matching prevents ordinary dialogue or unrelated uses of words such as
+  `tap`, `screen` or `press` from being rewritten.
+- Add bounded `[tabletop.tutorial]` diagnostics for adapted and still-unmapped
+  help messages, emitted once per distinct message so normal play has no
+  per-frame logging cost.
+
 ## Unreleased — Diorama MR publication preparation
 
 - Update the Windows installer to shared core 1.3.2. After PowerShell reports a

@@ -517,3 +517,24 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 55 compact ring labels and full centre names'
+
+# Package 56 adapts only the copied Diorama help string. Semantic widget
+# markers preserve the retail prose/language, exact touch-only messages use a
+# strict allowlist, and Immersive VR returns before any replacement.
+foreach ($sourcePattern in @(
+        'std::u16string AdaptDioramaTutorialText\(std::u16string text\)',
+        'text\.empty\(\) \|\| !tabletop::Enabled\(\)',
+        '~widget_enter_targeting~", u"L2"',
+        '~widget_attack~", u"X / R2 WHILE AIMING"',
+        '~widget_explicit_crouch~", u"L3"',
+        '~widget_enter_car~", u"Y"',
+        '~widget_explicit_next_weapon~", u"R3 WEAPON SELECTOR"',
+        '~widget_phone~", u"BOTH GRIPS \+ R2"',
+        'no partial "tap" rewriting is allowed',
+        '\[tabletop\.tutorial\] unmapped',
+        'nextHelp=AdaptDioramaTutorialText')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 56 Diorama tutorial audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 56 Diorama-only semantic tutorial controls'
