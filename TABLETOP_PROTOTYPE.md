@@ -140,6 +140,16 @@ is published as both a frame-stable held state and a just-down edge through
 GTA Android's dedicated melee pad queries, allowing `X` to start and continue
 punch, bat and other held-melee animations with or without a nearby target.
 
+Package 52 makes the right-controller selector physically smaller while
+increasing the relative size of its surrounding weapon labels and tightening
+their radius. Camera cycling now reconstructs the outgoing mode's effective
+anchor from the live frame rather than reusing the previous rendered frame;
+this removes the last small correction visible when CJ or a vehicle was moving
+at the moment of a `TRACK`/`FOLLOW`/`FIXED` switch. Diorama also ignores the
+right stick for snap/smooth scene rotation because two-grip manipulation owns
+map rotation. The selector and existing aircraft-control paths still receive
+the stick, and immersive turning remains unchanged.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

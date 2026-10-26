@@ -2723,7 +2723,6 @@ void CycleTabletopView() {
     g_tabletopTransform.transitionFromMode = previousMode;
     g_tabletopTransform.viewTransitionPending = true;
     g_tabletopTransform.gestureActive = false;
-    g_tabletopTransform.trackAircraftAltitudeValid = false;
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
         "[tabletop.diag.event] view=%s",
         TabletopViewModeName(g_tabletopTransform.mode));
@@ -3057,8 +3056,27 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
         g_tabletopTransform.recenterOnNextCamera = false;
     }
     if (g_tabletopTransform.viewTransitionPending) {
-        const CamBasis oldAnchor = g_tabletopWorldTransformBaseValid
-            ? g_tabletopWorldTransformBase : liveLevelBase;
+        // Reconstruct the anchor the outgoing mode would use in THIS frame.
+        // The previously rendered base can be one frame behind a moving CJ or
+        // vehicle, which caused a small visible map snap on every mode change.
+        CamBasis oldAnchor = liveLevelBase;
+        if (g_tabletopTransform.transitionFromMode == TabletopViewMode::Fixed &&
+            g_tabletopTransform.fixedBaseValid) {
+            oldAnchor = g_tabletopTransform.fixedBase;
+        } else if (g_tabletopTransform.transitionFromMode ==
+                       TabletopViewMode::Track &&
+                   g_tabletopTransform.fixedBaseValid) {
+            oldAnchor.right = g_tabletopTransform.fixedBase.right;
+            oldAnchor.forward = g_tabletopTransform.fixedBase.forward;
+            oldAnchor.up = g_tabletopTransform.fixedBase.up;
+            const bool oldAircraft = driving::GetActiveVehicleType() ==
+                driving::VEHICLE_PLANE;
+            if (oldAircraft &&
+                g_tabletopTransform.trackAircraftAltitudeValid) {
+                oldAnchor.pos.z =
+                    g_tabletopTransform.trackAircraftAltitudeZ;
+            }
+        }
         CamBasis newAnchor = liveLevelBase;
         if (g_tabletopTransform.mode == TabletopViewMode::Fixed) {
             g_tabletopTransform.fixedBase = oldAnchor;
@@ -3100,8 +3118,12 @@ CamBasis BuildTabletopCamera(const CamBasis& base, V3 relPos, const Q& relOri) {
             TabletopGameToTracking(oldAnchor, gameAnchorDelta, oldYaw) *
                 tabletop::VisualScale();
         g_tabletopTransform.mapYaw = newYaw;
-        if (g_tabletopTransform.mode == TabletopViewMode::Follow)
+        if (g_tabletopTransform.mode == TabletopViewMode::Follow) {
             g_tabletopTransform.fixedBaseValid = false;
+            g_tabletopTransform.trackAircraftAltitudeValid = false;
+        } else if (g_tabletopTransform.mode == TabletopViewMode::Fixed) {
+            g_tabletopTransform.trackAircraftAltitudeValid = false;
+        }
         g_tabletopTransform.viewTransitionPending = false;
         LOGI("[tabletop.controls] continuous view transition %s->%s "
              "anchor_delta=(%.3f %.3f %.3f) yaw_delta=%.3f",
@@ -4949,10 +4971,14 @@ void OnCopyCameraMatrixToRWCam(void* self, bool alsoPlayerCam) {
                                 in.rightStick[0],in.rightStick[1],
                                 &mappedMoveX,&mappedMoveY,
                                 &mappedTurnX,&mappedTurnY);
-                            // Thumbrest D-pad mode owns the right stick: no
-                            // snap/smooth turning while it is active.
+                            // In Diorama the map is rotated deliberately with
+                            // the hand-grab gesture. Do not also spin it from
+                            // the right stick: R3/right-stick belongs to the
+                            // weapon selector and vehicle flight controls keep
+                            // receiving the raw mapped axes in OnUpdatePads.
                             const float rx =
-                                (in.thumbrest[0] || in.thumbrest[1])
+                                (tabletop::Enabled() || in.thumbrest[0] ||
+                                 in.thumbrest[1])
                                     ? 0.0f : mappedTurnX;
                             const double now=NowMs();
                             static double previousTurnMs=now;

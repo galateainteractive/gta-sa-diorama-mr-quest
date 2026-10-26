@@ -401,7 +401,7 @@ foreach ($sourcePattern in @(
         'EnsureWeaponSelectorTexture\(\)',
         'DrawTabletopControllerTexturePanel\(',
         'g_weaponSelectorTextureRevision',
-        '0\.27f, 0\.22f, true, rp',
+        '0\.18f, 0\.18f, true, rp',
         'std::memset\(g_panelPixels, 0, sizeof\(g_panelPixels\)\)')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 51 right-controller selector audit failed: $sourcePattern"
@@ -444,3 +444,27 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 51 hand selector, continuous cameras and classic melee bridge'
+
+# Package 52 makes the controller selector physically smaller while preserving
+# readable radial labels, rebases camera transitions from the outgoing mode's
+# current-frame anchor, and reserves Diorama right-stick turning for UI/vehicle
+# input rather than rotating the miniature.
+foreach ($sourcePattern in @(
+        'constexpr float radius = 145\.0f',
+        'PanelText\(label, x, y, 2,',
+        'PanelTextFit\(selectedName, cx, 218, 3,',
+        '0\.18f, 0\.18f, true, rp')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 52 compact selector audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'Reconstruct the anchor the outgoing mode would use in THIS frame',
+        'transitionFromMode == TabletopViewMode::Fixed',
+        'transitionFromMode ==\s*TabletopViewMode::Track',
+        'tabletop::Enabled\(\) \|\| in\.thumbrest\[0\]')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 52 camera/input audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 52 compact selector, current-frame camera rebase and Diorama turn suppression'

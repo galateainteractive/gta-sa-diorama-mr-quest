@@ -8749,7 +8749,7 @@ void BuildWeaponSelector() {
         g_weaponSelectorCurrentSlot.load(std::memory_order_relaxed), 0, 12);
     const int cx = kPanelW / 2;
     constexpr int cy = 270;
-    constexpr float radius = 164.0f;
+    constexpr float radius = 145.0f;
     constexpr float pi = 3.14159265358979323846f;
 
     PanelText("WEAPON SELECT", cx, 18, 4, 100, 225, 255);
@@ -8766,18 +8766,18 @@ void BuildWeaponSelector() {
         const bool equipped = slot == current;
         if (highlighted) {
             const int halfWidth = std::min(
-                72, static_cast<int>(std::strlen(label)) * 3 + 7);
-            PanelFillRect(x - halfWidth, y - 4, x + halfWidth, y + 13,
+                110, static_cast<int>(std::strlen(label)) * 6 + 9);
+            PanelFillRect(x - halfWidth, y - 5, x + halfWidth, y + 24,
                           120, 40, 110, 120);
         }
-        PanelText(label, x, y, 1,
+        PanelText(label, x, y, 2,
                   highlighted ? 255 : (equipped ? 120 : 190),
                   highlighted ? 235 : (equipped ? 255 : 205),
                   highlighted ? 120 : (equipped ? 160 : 220));
     }
 
     const char* selectedName = WeaponSelectorName(types[selected]);
-    PanelTextFit(selectedName, cx, 218, 4, 255, 235, 120);
+    PanelTextFit(selectedName, cx, 218, 3, 255, 235, 120);
     char line[64]{};
     if (ammo[selected] > 0) {
         std::snprintf(line, sizeof(line), "AMMO %d", ammo[selected]);
@@ -12141,7 +12141,7 @@ void DrawTabletopControllerHudForEye(const XrPosef& rp, int eye,
         // explicit V flip in this ordinary GL texture pass.
         DrawTabletopControllerTexturePanel(
             mvp, hands[1], 1, g_weaponSelectorTexture, kPanelW, kPanelH,
-            0.27f, 0.22f, true, rp);
+            0.18f, 0.18f, true, rp);
     }
     glDisable(GL_DEPTH_TEST);
     glUseProgram(0);

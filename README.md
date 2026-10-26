@@ -81,6 +81,9 @@ configuration and debugging compatibility.
 - `L3`: crouch on foot.
 - `L3 + R3`: cycle `TRACK`, `FOLLOW`, and `FIXED` cameras without moving the
   current physical diorama pose.
+- The right stick does not rotate the Diorama scene; rotate the miniature with
+  both grips. The stick remains available inside the weapon selector and for
+  supported aircraft controls.
 - Hold the Meta system button to recenter the Quest view and the diorama on CJ
   or the current vehicle.
 - One grip in `FIXED`: drag the diorama.

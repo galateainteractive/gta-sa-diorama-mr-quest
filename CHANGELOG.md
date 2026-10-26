@@ -61,6 +61,18 @@
 - Add a safe Windows first-run validation helper that hash-verifies a local
   save/settings backup before removing only the VR configuration files.
 
+## Package 52 compact selector and current-frame camera transitions
+
+- Reduce the physical right-controller weapon selector substantially while
+  enlarging its surrounding weapon names relative to the selected centre name
+  and bringing the radial entries closer together.
+- Reconstruct the outgoing `TRACK`, `FOLLOW` or `FIXED` anchor from the live
+  current frame before changing modes. This removes the remaining small map
+  correction caused by inheriting a one-frame-old player or vehicle position.
+- Reserve right-stick scene rotation for immersive VR. In Diorama MR the map
+  rotates through the two-grip gesture, while the stick remains available to
+  the weapon selector and keeps its existing aircraft-control paths.
+
 ## Package 51 controller selector, continuous cameras and classic melee
 
 - Move the owned-weapon selector from the large head-locked compositor card to
