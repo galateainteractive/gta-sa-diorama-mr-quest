@@ -8745,6 +8745,20 @@ const char* WeaponSelectorName(int type) {
     }
 }
 
+// Keep the radial choices compact while the centre always carries the complete
+// retail weapon name. Long labels otherwise collide with neighbouring entries
+// or the selected-name block when many inventory slots are populated.
+const char* WeaponSelectorRingName(int type) {
+    switch (type) {
+        case 5:  return "BAT";
+        case 24: return "DEAGLE";
+        case 37: return "FLAMER";
+        case 42: return "EXTING.";
+        case 44: return "NV GOGGLES";
+        default: return WeaponSelectorName(type);
+    }
+}
+
 void BuildWeaponSelector() {
     // This texture is composited above the right-controller HUD. Keep its
     // background transparent so it never becomes a black card over the map.
@@ -8780,7 +8794,7 @@ void BuildWeaponSelector() {
                 static_cast<float>(std::max(count, 1));
         const int x = cx + static_cast<int>(std::cos(angle) * radius);
         const int y = cy + static_cast<int>(std::sin(angle) * radius);
-        const char* label = WeaponSelectorName(types[slot]);
+        const char* label = WeaponSelectorRingName(types[slot]);
         const bool highlighted = slot == selected;
         const bool equipped = slot == current;
         if (highlighted) {

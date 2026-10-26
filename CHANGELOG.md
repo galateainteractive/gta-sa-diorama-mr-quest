@@ -61,6 +61,14 @@
 - Add a safe Windows first-run validation helper that hash-verifies a local
   save/settings backup before removing only the VR configuration files.
 
+## Package 55 compact radial weapon labels
+
+- Give long weapon names dedicated short labels on the selector ring, including
+  `BAT`, `DEAGLE`, `FLAMER`, `EXTING.` and `NV GOGGLES`, preventing collisions
+  with neighbouring entries and the centre information.
+- Keep the complete weapon name in the highlighted centre block, so no item
+  identity or detail is lost when navigating the compact controller overlay.
+
 ## Package 54 in-headset Diorama control guide
 
 - Replace the inherited mixed control-tips page with a current Diorama guide

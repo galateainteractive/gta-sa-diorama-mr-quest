@@ -161,6 +161,12 @@ guide identifies the modern face-button layout, targeting and weapon selector,
 defines all three camera modes, documents Meta recenter and grip manipulation,
 and separates fixed Diorama shortcuts from ordinary remappable bindings.
 
+Package 55 separates the selector's radial and centre labels. A small set of
+long weapon names receives an unambiguous ring abbreviation, while the centre
+continues to show the complete weapon name. This prevents `BASEBALL BAT` and
+later long inventory entries from overlapping adjacent or central text without
+shrinking the readable two-pixel ring font.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

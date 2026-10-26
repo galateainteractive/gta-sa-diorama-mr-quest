@@ -500,3 +500,20 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 54 in-headset production control guide'
+
+# Package 55 abbreviates only long radial labels while retaining the complete
+# selected weapon name in the centre block.
+foreach ($sourcePattern in @(
+        'const char\* WeaponSelectorRingName\(int type\)',
+        'case 5:\s+return "BAT"',
+        'case 24: return "DEAGLE"',
+        'case 37: return "FLAMER"',
+        'case 42: return "EXTING\."',
+        'case 44: return "NV GOGGLES"',
+        'const char\* label = WeaponSelectorRingName\(types\[slot\]\)',
+        'const char\* selectedName = WeaponSelectorName\(types\[selected\]\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 55 compact radial-label audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 55 compact ring labels and full centre names'
