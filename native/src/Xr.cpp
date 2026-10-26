@@ -7622,8 +7622,8 @@ void BuildAboutMenu() {
         "PLAY MODE: DIORAMA MR OR IMMERSIVE VR",
         "MODE CHANGES APPLY AFTER RESTART",
         "DIORAMA: PASSTHROUGH MINIATURE WORLD",
-        "BUTTON REMAP AND TIPS: MENU > CONTROLS",
-        "DIORAMA CONTROLS USE CLASSIC GAMEPLAY",
+        "CURRENT COMMANDS: MENU > CONTROLS > GUIDE",
+        "R3 WEAPONS - L3+R3 CAMERA - META RECENTER",
         "IMMERSIVE CONTROLS USE TRACKED HANDS",
         "SOURCE CODE AND CREDITS: PROJECT README",
         "ACTIVE DEVELOPMENT - EXPECT ROUGH EDGES",
@@ -7646,28 +7646,31 @@ void BuildAboutMenu() {
 void BuildControlsTipsMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
-    PanelText("CONTROL TIPS", cx, 16, 4, 100, 225, 255);
+    const bool diorama = tabletop::Enabled();
+    PanelText(diorama ? "DIORAMA CONTROL GUIDE" : "IMMERSIVE CONTROL GUIDE",
+              cx, 12, 3, 100, 225, 255);
     static const char* const kDioramaTips[] = {
         "GRIPS+MENU (OR Y)  OPEN VR MENU",
-        "A JUMP   B SPRINT   Y ENTER / EXIT",
-        "X ALTERNATE ATTACK / FIRE",
+        "A JUMP   B SPRINT   X CLASSIC ATTACK",
+        "Y ENTER / EXIT VEHICLE   L3 CROUCH",
         "L2 HOLD AIM   R2 FIRE WHILE AIMING",
-        "L3 CROUCH   R3 WEAPON SELECT",
-        "RIGHT STICK CHOOSE   R3 EQUIP",
-        "VISIBLE WORLD RADIUS: FIXED 60 M",
-        "L3+R3 CHANGE CAMERA MODE",
+        "R3 OPEN WEAPON SELECTOR",
+        "RIGHT STICK HIGHLIGHT   R3 EQUIP / CLOSE",
+        "L3+R3 CAMERA: TRACK > FOLLOW > FIXED",
+        "TRACK: FOLLOW POSITION, KEEP ROOM HEADING",
+        "FOLLOW: FOLLOW POSITION + CJ/CAR HEADING",
+        "FIXED: LEAVE THE DIORAMA IN THE ROOM",
         "HOLD META: RECENTER QUEST + DIORAMA",
-        "FIXED VIEW: ONE GRIP DRAGS THE MAP",
+        "RIGHT STICK DOES NOT ROTATE THE DIORAMA",
+        "FIXED: ONE GRIP DRAGS THE MAP",
         "TWO GRIPS MOVE / ROTATE / RESIZE",
+        "VISIBLE WORLD RADIUS: FIXED 60 M",
         "VEHICLES: R2 GAS   L2 BRAKE/REVERSE",
         "LEFT STICK STEERS VEHICLES / BIKES",
         "PLANES: R2 GAS; LEFT STICK FLIES",
-        "HELI: LEFT STICK ROLL + PITCH",
         "HYDRA NOZZLES + HELI YAW: RIGHT STICK",
         "PARACHUTE: A OPENS; STICKS STEER",
-        "CUTSCENE: R3 CAMERA / L3 REMEMBER",
-        "PROMPTS: TAP R2 YES  L2 NO  HOLD R2",
-        "ANSWER PHONE: BOTH GRIPS + R2",
+        "PROMPTS: R2 YES / HOLD   L2 NO",
     };
     static const char* const kImmersiveTips[] = {
         "GRIPS+MENU (OR Y)  OPEN VR MENU",
@@ -7693,14 +7696,13 @@ void BuildControlsTipsMenu() {
         "CUTSCENE: R3 CAMERA / L3 REMEMBER",
         "L3+R3 RECENTER   GRIPS+R3 CAMERA VIEW",
     };
-    const bool diorama = tabletop::Enabled();
     const char* const* tips = diorama ? kDioramaTips : kImmersiveTips;
     const int count = diorama
         ? static_cast<int>(sizeof(kDioramaTips) / sizeof(kDioramaTips[0]))
         : static_cast<int>(sizeof(kImmersiveTips) / sizeof(kImmersiveTips[0]));
-    const int top = 44, rowH = 21;
+    const int top = 42, rowH = 21;
     for (int i = 0; i < count; ++i)
-        PanelText(tips[i], cx, top + i * rowH, 2, 210, 225, 235);
+        PanelTextFit(tips[i], cx, top + i * rowH, 2, 210, 225, 235);
     PanelText("A / B BACK", cx, kPanelH - 18, 2, 150, 185, 150);
 }
 
@@ -7708,7 +7710,9 @@ void BuildControlsMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
     PanelText("CONTROLS", cx, 20, 5, 100, 225, 255);
-    PanelTextFit("GAMEPLAY ONLY - MENU CURSOR STAYS RAW",
+    PanelTextFit(tabletop::Enabled()
+                     ? "DIORAMA SHORTCUTS ARE FIXED - OPEN GUIDE BELOW"
+                     : "GAMEPLAY ONLY - MENU CURSOR STAYS RAW",
                  cx, 56, 2, 150, 185, 150);
     constexpr int firstStick = 1;
     constexpr int firstButton = firstStick + locomotion::STICK_OPT_COUNT;
@@ -7731,7 +7735,9 @@ void BuildControlsMenu() {
                       locomotion::ButtonActionName(
                           locomotion::GetButtonBinding(srcRow)));
     }
-    std::snprintf(rows[tipsRow], sizeof(rows[0]), "CONTROL TIPS");
+    std::snprintf(rows[tipsRow], sizeof(rows[0]), "%s",
+                  tabletop::Enabled() ? "DIORAMA CONTROL GUIDE"
+                                      : "IMMERSIVE CONTROL GUIDE");
     std::snprintf(rows[resetRow], sizeof(rows[0]), "RESET DEFAULTS");
     std::snprintf(rows[backRow], sizeof(rows[0]), "BACK");
     const int sel = g_controlsSel.load(std::memory_order_relaxed);

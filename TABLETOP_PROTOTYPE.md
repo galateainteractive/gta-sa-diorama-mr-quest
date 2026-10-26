@@ -155,6 +155,12 @@ farther above the right hand and expands the internal weapon ring. Fully opaque
 brighter glyphs receive a thin dark outline before the colour pass, preserving
 contrast over GTA's bright map/HUD without adding an opaque background card.
 
+Package 54 consolidates the production commands in the headset itself. The
+Welcome/About panel points players to `Menu > Controls > Guide`; the Diorama
+guide identifies the modern face-button layout, targeting and weapon selector,
+defines all three camera modes, documents Meta recenter and grip manipulation,
+and separates fixed Diorama shortcuts from ordinary remappable bindings.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

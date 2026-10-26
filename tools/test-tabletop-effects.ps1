@@ -482,3 +482,21 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 53 raised selector, wider ring and opaque outlined labels'
+
+# Package 54 keeps the current production bindings discoverable in-headset and
+# prevents the fixed Diorama shortcuts from looking like ordinary remap rows.
+foreach ($sourcePattern in @(
+        'CURRENT COMMANDS: MENU > CONTROLS > GUIDE',
+        'R3 WEAPONS - L3\+R3 CAMERA - META RECENTER',
+        'DIORAMA CONTROL GUIDE',
+        'R3 OPEN WEAPON SELECTOR',
+        'TRACK: FOLLOW POSITION, KEEP ROOM HEADING',
+        'FOLLOW: FOLLOW POSITION \+ CJ/CAR HEADING',
+        'FIXED: LEAVE THE DIORAMA IN THE ROOM',
+        'RIGHT STICK DOES NOT ROTATE THE DIORAMA',
+        'DIORAMA SHORTCUTS ARE FIXED - OPEN GUIDE BELOW')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 54 in-headset control guide audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 54 in-headset production control guide'

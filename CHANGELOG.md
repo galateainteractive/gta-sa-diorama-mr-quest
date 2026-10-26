@@ -61,6 +61,17 @@
 - Add a safe Windows first-run validation helper that hash-verifies a local
   save/settings backup before removing only the VR configuration files.
 
+## Package 54 in-headset Diorama control guide
+
+- Replace the inherited mixed control-tips page with a current Diorama guide
+  covering `R3` weapon selection, `L3 + R3` camera cycling, Meta recenter,
+  classic attacks, targeting, grabs, the fixed 60-metre radius and vehicles.
+- Explain `TRACK`, `FOLLOW` and `FIXED` directly in the headset and state that
+  the right stick does not rotate the Diorama scene.
+- Point Welcome/About to `Menu > Controls > Guide`, rename the guide entry for
+  the active play mode and identify Diorama's structural shortcuts as fixed so
+  they are not confused with ordinary remappable face-button actions.
+
 ## Package 53 raised high-contrast weapon selector
 
 - Raise the compact selector six centimetres farther above the right controller
