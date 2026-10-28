@@ -676,3 +676,39 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 66 persistent cached GTA-menu discovery banner'
+
+# Package 67 fixes the captured solid-black procedural shrubs without touching
+# immersive mode. The retail DrawTriPlants ABI and prologue must match before
+# the temporary RGB/alpha guard can be installed, and the former continuous
+# flicker witnesses are compiled only in SAVR_DEV builds.
+$drawTriPlants = (& $Objdump -d --start-address=0x35e548 --stop-address=0x35e558 $LibGame) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw 'CGrassRenderer::DrawTriPlants disassembly failed' }
+foreach ($word in @('d10343ff', '6d033bef', '6d0433ed', '6d052beb')) {
+    if ($drawTriPlants -notmatch $word) {
+        throw "Package 67 DrawTriPlants prologue mismatch: $word"
+    }
+}
+foreach ($sourcePattern in @(
+        'bool OnTabletopDrawTriPlants\(',
+        'kPPTriPlantBufferCapacity = 32',
+        'kPPTriPlantBlackThreshold = 24',
+        'g_tabletopPlantAmbientColor\[channel\]',
+        'g_tabletopPlantRenderStateGet\(10',
+        'g\.RwRenderStateSet\(12, reinterpret_cast<void\*>\(1\)\)',
+        'backup\.color\[0\] = backup\.rgb\[0\]',
+        '0x35e548u',
+        '0x88fad2u',
+        '0x75db54u')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 67 procedural-plant guard audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        '#if defined\(SAVR_DEV\)\s*// Package 32 diagnostic witness',
+        '#if defined\(SAVR_DEV\)\s*void ObserveTabletopMaskInputs',
+        '#if defined\(SAVR_DEV\)\s*if \(tabletop::PassthroughEnabled\(\)\)')) {
+    if (($cameraSource + $xrSource) -notmatch $sourcePattern) {
+        throw "Package 67 Release-telemetry retirement audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 67 procedural-plant guard and Release flicker telemetry retirement'

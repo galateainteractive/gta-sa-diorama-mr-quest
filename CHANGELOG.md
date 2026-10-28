@@ -1,5 +1,21 @@
 # Changelog
 
+## Package 67 procedural-plant colour guard and quiet Release telemetry
+
+- Fix the solid-black low shrubs reproduced in the opening Grove Street scene.
+  The official procedural-plant renderer is hooked only after its 2.11.311
+  address and prologue match. In active Diorama stereo, near-zero plant RGB is
+  temporarily raised to GTA's live ambient colour, then the original plant
+  bytes are restored immediately after the draw.
+- Save and restore RenderWare source blend, destination blend and vertex-alpha
+  state around the same procedural draw. This prevents a plant transition from
+  inheriting an opaque state while leaving Immersive VR and ordinary world
+  entities untouched.
+- Compile the former scene-identity, alpha-depth, mask-window, stereo-ring,
+  passthrough-audit and mask-health witnesses only in `SAVR_DEV`. Production
+  keeps fail-closed error reporting and one-time setup messages, but no longer
+  performs those per-frame aggregations or periodic two/five-second reports.
+
 ## Package 66 persistent GTA-menu Diorama discovery
 
 - Replace the unreliable timed gameplay reminder with a persistent transparent

@@ -12235,6 +12235,7 @@ bool ValidTabletopMaskInputs(const TabletopMaskState& mask,
 // Observe every attempted eye, not only the frame that happens to coincide
 // with a heartbeat. A one-frame global radius/transform jump must survive the
 // half-second aggregation. No readback, screenshot or GPU synchronization.
+#if defined(SAVR_DEV)
 void ObserveTabletopMaskInputs(const TabletopMaskState& mask,
         const XrPosef& pose, int eye, float nearZ, float farZ) {
     if (eye != 0 && eye != 1) return;
@@ -12314,6 +12315,7 @@ void ObserveTabletopMaskInputs(const TabletopMaskState& mask,
     w = {};
     w.start = now;
 }
+#endif
 
 // RenderWare's post-effects do not preserve a trustworthy alpha channel. Build
 // the compositor mask from the scene depth instead: untouched clear-depth
@@ -12330,7 +12332,9 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     const auto decision = tabletop_flicker::DecideMask(
         mask.active, liveActive, passthroughActive);
     if (decision == tabletop_flicker::MaskDecision::Skip) return false;
+#if defined(SAVR_DEV)
     ObserveTabletopMaskInputs(mask, renderPose, eye, nearZ, farZ);
+#endif
     if (decision == tabletop_flicker::MaskDecision::FailClosed) {
         ClearTabletopWorldAlpha(targetW, targetH);
         RecordTabletopMaskFallback(TabletopMaskFallbackReason::Inactive, eye);
@@ -12541,6 +12545,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
             static_cast<double>(mask.featherM),
             static_cast<double>(mask.depthScaleMPerGameUnit), targetW, targetH);
     }
+#if defined(SAVR_DEV)
     if (eye == 1) {
         static std::uint64_t lastHealthNs = 0;
         static unsigned int successfulPairs = 0;
@@ -12558,6 +12563,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
             successfulPairs = 0;
         }
     }
+#endif
     return true;
 }
 
@@ -13288,6 +13294,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
             } else {
                 submittedSequenceAgeMs = completedCandidate.ageMs;
             }
+#if defined(SAVR_DEV)
             if (tabletopMask.active) {
                 static std::uint64_t lastFlickerStereoLogNs = 0;
                 static unsigned frames = 0, failedMasks = 0, races = 0,
@@ -13344,6 +13351,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
                     maxAgeMs = 0.0;
                 }
             }
+#endif
             if (gpuRead.PinNow()) {
                 static bool loggedEarlySourceReadClose = false;
                 if (!loggedEarlySourceReadClose) {
@@ -13988,6 +13996,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     const bool submitPassthrough =
         submitTabletopPassthrough || submitMenuPassthrough ||
         submitCutscenePassthrough || submitLoadingPassthrough;
+#if defined(SAVR_DEV)
     if (tabletop::PassthroughEnabled()) {
         static long long nextPassthroughAuditNs = 0;
         const long long now = nowNs();
@@ -14006,6 +14015,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
             nextPassthroughAuditNs = now + 2000000000LL;
         }
     }
+#endif
     if (submitPassthrough) {
         if (submitTabletopPassthrough) {
             eyeProjection.layerFlags |=
