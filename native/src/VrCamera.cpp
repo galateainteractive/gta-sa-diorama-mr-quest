@@ -2598,24 +2598,6 @@ struct TabletopTransformState {
 TabletopTransformState g_tabletopTransform{};
 std::atomic<bool> g_tabletopWeaponSelectorActive{false};
 int g_tabletopWeaponSelectorSlot = 0;
-enum class ProceduralPlantIsolatorState : int {
-    Idle = 0,
-    Capturing = 1,
-    Isolating = 2,
-};
-struct ProceduralPlantCandidate {
-    int modelId{-1};
-    std::uint32_t submissions{};
-};
-constexpr int kProceduralPlantCandidateCapacity = 32;
-std::array<ProceduralPlantCandidate, kProceduralPlantCandidateCapacity>
-    g_proceduralPlantCandidates{};
-int g_proceduralPlantCandidateCount = 0;
-int g_proceduralPlantCandidateIndex = -1;
-std::atomic<int> g_proceduralPlantIsolatorState{
-    static_cast<int>(ProceduralPlantIsolatorState::Idle)};
-std::atomic<int> g_proceduralPlantSuppressedId{-1};
-std::atomic_flag g_proceduralPlantCandidateLock = ATOMIC_FLAG_INIT;
 std::atomic<bool> g_tabletopClassicAttackHeld{false};
 std::atomic<std::uint32_t> g_tabletopClassicAttackPressFrame{
     std::numeric_limits<std::uint32_t>::max()};
@@ -15606,11 +15588,8 @@ int OnSetupMapEntityVisibility(void* entity, void* modelInfo,
     return result;
 }
 
-bool ProcessProceduralPlantAtomic(void* atomic);
-
 void* OnAtomicDefaultRender(void* atomic) {
     if (!g_origAtomicDefaultRender) return atomic;
-    if (ProcessProceduralPlantAtomic(atomic)) return atomic;
     void* const entity = g_visibilityCurrentRenderEntity;
     TrafficAtomicRenderScope* const trafficScope =
         g_trafficAtomicRenderScope;
@@ -15882,64 +15861,6 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     const float radius = tabletop::RadiusMeters() + allowance +
         std::max(0.0f, extraRadiusM);
     return TabletopWorldInsideCoverage(world, radius);
-}
-
-void LockProceduralPlantCandidates() {
-    while (g_proceduralPlantCandidateLock.test_and_set(
-               std::memory_order_acquire)) {}
-}
-
-void UnlockProceduralPlantCandidates() {
-    g_proceduralPlantCandidateLock.clear(std::memory_order_release);
-}
-
-bool IsProceduralPlantModelId(int modelId) {
-    // procobj.ide is the retail procedural-object family. grasshouse and
-    // grassplant are separate crossed-card models used by the same outdoor
-    // vegetation system. The earlier entity isolator proved that the target
-    // shrubs do not travel through the ordinary nearby-scenery path.
-    return (modelId >= 800 && modelId <= 906) ||
-        modelId == 3261 || modelId == 3409;
-}
-
-bool ProcessProceduralPlantAtomic(void* atomic) {
-    const auto state = static_cast<ProceduralPlantIsolatorState>(
-        g_proceduralPlantIsolatorState.load(std::memory_order_acquire));
-    if (state == ProceduralPlantIsolatorState::Idle || !atomic ||
-        !g_tabletopActive.load(std::memory_order_relaxed) ||
-        !g.CVisibilityPlugins_GetModelInfoIndex) return false;
-    const int modelId = g.CVisibilityPlugins_GetModelInfoIndex(atomic);
-    if (!IsProceduralPlantModelId(modelId)) return false;
-    if (state == ProceduralPlantIsolatorState::Isolating) {
-        return modelId == g_proceduralPlantSuppressedId.load(
-            std::memory_order_relaxed);
-    }
-
-    // Capture on one eye only. A bounded fixed array and one command-time sort
-    // keep the diagnostic allocation-free and silent during normal play.
-    if (g_renderingStereoEyeIndex != 0) return false;
-    LockProceduralPlantCandidates();
-    if (static_cast<ProceduralPlantIsolatorState>(
-            g_proceduralPlantIsolatorState.load(
-                std::memory_order_relaxed)) ==
-            ProceduralPlantIsolatorState::Capturing) {
-        int found = -1;
-        for (int index = 0; index < g_proceduralPlantCandidateCount; ++index) {
-            if (g_proceduralPlantCandidates[index].modelId == modelId) {
-                found = index;
-                break;
-            }
-        }
-        if (found < 0 && g_proceduralPlantCandidateCount <
-                kProceduralPlantCandidateCapacity) {
-            found = g_proceduralPlantCandidateCount++;
-            g_proceduralPlantCandidates[found] = {};
-            g_proceduralPlantCandidates[found].modelId = modelId;
-        }
-        if (found >= 0) ++g_proceduralPlantCandidates[found].submissions;
-    }
-    UnlockProceduralPlantCandidates();
-    return false;
 }
 
 void OnRenderOneRoad(void* entity) {
@@ -27980,8 +27901,22 @@ void InstallGameUpdateHitchProfiler() {
 
 using TabletopPlantUpdateFn = void (*)(const void*);
 using SetGrassAlphaDistanceFn = void (*)(float, float);
+using ProcessProceduralTriangleFn = int (*)(void*, void*);
 TabletopPlantUpdateFn g_origTabletopPlantUpdate = nullptr;
 SetGrassAlphaDistanceFn g_setGrassAlphaDistance = nullptr;
+ProcessProceduralTriangleFn g_origProcessProceduralTriangle = nullptr;
+
+int OnProcessProceduralTriangle(void* manager, void* triangle) {
+    // Package 72 is a one-build diagnostic: suppress the ProcObjectMan source
+    // rather than trying to identify its products after they have lost their
+    // entity/model identity. Installation restarts the process, so every local
+    // triangle is observed by this hook before its procedural objects exist.
+    // Immersive VR never installs this hook because coverage setup returns
+    // early unless Diorama is the selected startup mode.
+    if (tabletop::Enabled()) return 0;
+    return g_origProcessProceduralTriangle
+        ? g_origProcessProceduralTriangle(manager, triangle) : 0;
+}
 
 void OnTabletopPlantUpdate(const void* cameraPosition) {
     ScopedGameUpdateTiming timing(GameUpdateSubsystem::Plants);
@@ -28023,11 +27958,17 @@ void InstallTabletopPlantCoverage() {
         gameHandle, "_ZN9CPlantMgr6UpdateERK7CVector");
     void* const distances = dlsym(
         gameHandle, "_ZN14CGrassRenderer20SetCloseFarAlphaDistEff");
+    void* const processProceduralTriangle = dlsym(
+        gameHandle,
+        "_ZN15ProcObjectMan_c20ProcessTriangleAddedEP12CPlantLocTri");
     static constexpr std::uint32_t kUpdatePrologue[4] = {
         0x6dbc23e9u, 0xa9017bfdu, 0xf90013f5u, 0xa9034ff4u,
     };
     static constexpr std::uint32_t kDistancePrologue[4] = {
         0xb00026c8u, 0xb00026c9u, 0xf942f908u, 0xf942fd29u,
+    };
+    static constexpr std::uint32_t kProcessProceduralTrianglePrologue[4] = {
+        0xa9bc7bfdu, 0xf9000bf7u, 0xa90257f6u, 0xa9034ff4u,
     };
     const bool updateFingerprint = update &&
         reinterpret_cast<std::uintptr_t>(update) - g.LoadBase == 0x35f898u &&
@@ -28036,6 +27977,13 @@ void InstallTabletopPlantCoverage() {
         reinterpret_cast<std::uintptr_t>(distances) - g.LoadBase == 0x35e51cu &&
         std::memcmp(distances, kDistancePrologue,
                     sizeof(kDistancePrologue)) == 0;
+    const bool processProceduralTriangleFingerprint =
+        processProceduralTriangle &&
+        reinterpret_cast<std::uintptr_t>(processProceduralTriangle) -
+                g.LoadBase == 0x53e168u &&
+        std::memcmp(processProceduralTriangle,
+                    kProcessProceduralTrianglePrologue,
+                    sizeof(kProcessProceduralTrianglePrologue)) == 0;
     if (distanceFingerprint) {
         g_setGrassAlphaDistance =
             reinterpret_cast<SetGrassAlphaDistanceFn>(distances);
@@ -28045,11 +27993,19 @@ void InstallTabletopPlantCoverage() {
             InstallTrampoline(update,
                 reinterpret_cast<void*>(&OnTabletopPlantUpdate)));
     }
-    LOGI("[tabletop.plants] update_hook=%d update_fp=%d distance_fp=%d "
-         "radius=%.0fm",
+    if (processProceduralTriangleFingerprint) {
+        g_origProcessProceduralTriangle =
+            reinterpret_cast<ProcessProceduralTriangleFn>(InstallTrampoline(
+                processProceduralTriangle,
+                reinterpret_cast<void*>(&OnProcessProceduralTriangle)));
+    }
+    LOGI("[tabletop.plants] update_hook=%d proc_source_test=%d update_fp=%d "
+         "distance_fp=%d proc_fp=%d radius=%.0fm",
          g_origTabletopPlantUpdate ? 1 : 0,
+         g_origProcessProceduralTriangle ? 1 : 0,
          updateFingerprint ? 1 : 0,
          distanceFingerprint ? 1 : 0,
+         processProceduralTriangleFingerprint ? 1 : 0,
          static_cast<double>(tabletop::RadiusMeters()));
     dlclose(gameHandle);
 }
@@ -32518,98 +32474,6 @@ void SetInputBlocked(bool blocked) {
 
 bool WeaponSelectorActive() {
     return g_tabletopWeaponSelectorActive.load(std::memory_order_acquire);
-}
-
-void AdvanceProceduralPlantIsolator() {
-    if (!tabletop::Enabled()) return;
-    const auto state = static_cast<ProceduralPlantIsolatorState>(
-        g_proceduralPlantIsolatorState.load(std::memory_order_acquire));
-    if (state == ProceduralPlantIsolatorState::Idle) {
-        LockProceduralPlantCandidates();
-        for (auto& candidate : g_proceduralPlantCandidates) candidate = {};
-        g_proceduralPlantCandidateCount = 0;
-        g_proceduralPlantCandidateIndex = -1;
-        g_proceduralPlantSuppressedId.store(-1, std::memory_order_relaxed);
-        g_proceduralPlantIsolatorState.store(
-            static_cast<int>(ProceduralPlantIsolatorState::Capturing),
-            std::memory_order_release);
-        UnlockProceduralPlantCandidates();
-        xr::PublishStatusText(
-            "PLANT TEST: CAPTURING - WAIT, THEN GRIPS + X", 5.0f);
-        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.procedural_plant] capture_started");
-    } else {
-        ProceduralPlantCandidate selected{};
-        int selectedIndex = -1;
-        int candidateCount = 0;
-        LockProceduralPlantCandidates();
-        candidateCount = g_proceduralPlantCandidateCount;
-        if (candidateCount > 0) {
-            if (state == ProceduralPlantIsolatorState::Capturing) {
-                std::sort(g_proceduralPlantCandidates.begin(),
-                          g_proceduralPlantCandidates.begin() + candidateCount,
-                          [](const ProceduralPlantCandidate& left,
-                             const ProceduralPlantCandidate& right) {
-                              if (left.submissions != right.submissions)
-                                  return left.submissions > right.submissions;
-                              return left.modelId < right.modelId;
-                          });
-                g_proceduralPlantCandidateIndex = 0;
-            } else {
-                g_proceduralPlantCandidateIndex =
-                    (g_proceduralPlantCandidateIndex + 1) % candidateCount;
-            }
-            selectedIndex = g_proceduralPlantCandidateIndex;
-            selected = g_proceduralPlantCandidates[selectedIndex];
-            g_proceduralPlantSuppressedId.store(
-                selected.modelId, std::memory_order_relaxed);
-            g_proceduralPlantIsolatorState.store(
-                static_cast<int>(ProceduralPlantIsolatorState::Isolating),
-                std::memory_order_release);
-        } else {
-            g_proceduralPlantSuppressedId.store(-1,
-                std::memory_order_relaxed);
-            g_proceduralPlantIsolatorState.store(
-                static_cast<int>(ProceduralPlantIsolatorState::Idle),
-                std::memory_order_release);
-        }
-        UnlockProceduralPlantCandidates();
-
-        if (selectedIndex < 0) {
-            xr::PublishStatusText(
-                "PLANT TEST: NO PROCEDURAL MODELS VISIBLE", 5.0f);
-            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-                "[tabletop.procedural_plant] capture_empty");
-        } else {
-            char label[96]{};
-            std::snprintf(label, sizeof(label),
-                "PLANT TEST %d/%d: ID %d HIDDEN",
-                selectedIndex + 1, candidateCount, selected.modelId);
-            xr::PublishStatusText(label, 5.0f);
-            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-                "[tabletop.procedural_plant] index=%d/%d model=%d submissions=%u",
-                selectedIndex + 1, candidateCount, selected.modelId,
-                selected.submissions);
-        }
-    }
-    xr::TriggerHaptic(0, 0.55f, 100.0f, 55.0f);
-    xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
-}
-
-void ResetProceduralPlantIsolator() {
-    LockProceduralPlantCandidates();
-    g_proceduralPlantSuppressedId.store(-1, std::memory_order_relaxed);
-    g_proceduralPlantIsolatorState.store(
-        static_cast<int>(ProceduralPlantIsolatorState::Idle),
-        std::memory_order_release);
-    g_proceduralPlantCandidateCount = 0;
-    g_proceduralPlantCandidateIndex = -1;
-    UnlockProceduralPlantCandidates();
-    xr::PublishStatusText("PLANT TEST: ORIGINAL SCENE RESTORED", 4.0f);
-    xr::TriggerHaptic(0, 0.4f, 80.0f, 45.0f);
-    xr::TriggerHaptic(1, 0.4f, 80.0f, 45.0f);
-    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-        "[tabletop.procedural_plant] reset");
 }
 
 bool GetHolsterAnchorTracking(int point, float positionOut[3]) {

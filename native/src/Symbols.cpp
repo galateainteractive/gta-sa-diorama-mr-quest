@@ -190,7 +190,6 @@ bool ResolveGameSymbols(void* handle) {
         {"_Z14RpClumpDestroyP7RpClump",                                          reinterpret_cast<void**>(&g.RpClumpDestroy),                        false},
         {"_Z16RwFrameTransformP7RwFramePK11RwMatrixTag15RwOpCombineType",        reinterpret_cast<void**>(&g.RwFrameTransform),                      false},
         {"_Z27AtomicDefaultRenderCallBackP8RpAtomic",                            reinterpret_cast<void**>(&g.AtomicDefaultRenderCallBack),           false},
-        {"_ZN18CVisibilityPlugins17GetModelInfoIndexEP8RpAtomic",                 reinterpret_cast<void**>(&g.CVisibilityPlugins_GetModelInfoIndex),  false},
         {"_Z20RwFrameUpdateObjectsP7RwFrame",                                    reinterpret_cast<void**>(&g.RwFrameUpdateObjects),                  false},
         {"_Z13RpClumpRenderP7RpClump",                                           reinterpret_cast<void**>(&g.RpClumpRender),                         false},
         {"_ZN4CPed13SetupLightingEv",                                            reinterpret_cast<void**>(&g.CPed_SetupLighting),                    false},

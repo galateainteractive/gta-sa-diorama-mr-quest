@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 72 direct ProcObject source suppression
+
+- Retire the Package 71 final-atomic selector after headset testing exposed
+  only one or two candidates and neither affected the crossed-card shrubs.
+- Add one build-level, fingerprint-guarded test at
+  `ProcObjectMan_c::ProcessTriangleAdded`. In Diorama MR it prevents retail
+  procedural objects from being generated at their source, avoiding every
+  later ambiguity involving entity wrappers, missing atomic model IDs or draw
+  callbacks. Installation/relaunch naturally starts with an empty procedural
+  object set; no controller sequence is required.
+- Keep Immersive VR untouched. The test performs no frame logging, modifies no
+  assets or saves and will be removed after the headset comparison.
+
 ## Package 71 procedural-plant final-atomic isolator
 
 - Retire the Package 70 nearby-scenery isolator after headset testing traversed

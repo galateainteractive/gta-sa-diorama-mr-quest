@@ -1056,22 +1056,6 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             return 3;                                    // ~216/s
         };
 
-        // Package 71 temporary procedural-plant atomic isolator. Both chords
-        // are blocked from GTA by the existing `!grips` gameplay-provider gate
-        // below. X captures/advances one procedural model; B restores it.
-        static bool modelIsolatorAdvancePrev = false;
-        static bool modelIsolatorResetPrev = false;
-        const bool modelIsolatorAdvance = tabletop::Enabled() &&
-            menuPage == PG_NONE && inGameplay && grips && in.x;
-        const bool modelIsolatorReset = tabletop::Enabled() &&
-            menuPage == PG_NONE && inGameplay && grips && in.b;
-        if (modelIsolatorAdvance && !modelIsolatorAdvancePrev)
-            vrcam::AdvanceProceduralPlantIsolator();
-        if (modelIsolatorReset && !modelIsolatorResetPrev)
-            vrcam::ResetProceduralPlantIsolator();
-        modelIsolatorAdvancePrev = modelIsolatorAdvance;
-        modelIsolatorResetPrev = modelIsolatorReset;
-
         // Primary open chord is grips+Menu (Vice City style); grips+Y is the
         // fallback for setups where the Menu click is swallowed. grips+B was a
         // legacy third fallback and is deliberately GONE: B now fires the

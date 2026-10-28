@@ -698,10 +698,9 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 68 plant experiment retired and Release telemetry remains quiet'
 
-# Package 71 removes the exhausted nearby-scenery isolator and reads the model
-# index from the final RenderWare atomic instead. This covers procedural objects
-# that bypass the ordinary entity wrappers while admitting only retail's bounded
-# procobj family plus grasshouse/grassplant.
+# Package 72 removes both exhausted runtime isolators and suppresses the source
+# ProcObjectMan creation callback for one diagnostic build. This does not depend
+# on an entity wrapper, an RpAtomic model index or a controller timing window.
 foreach ($retiredPattern in @(
         'PlantDiagnosticMode',
         'OnDiagnosticDrawTriPlants',
@@ -712,41 +711,39 @@ foreach ($retiredPattern in @(
         'PlantModelIsolatorState',
         'ProcessPlantModelIsolatorEntity',
         'kPlantModelCaptureRadiusM',
-        '\[tabletop\.model_isolator\]')) {
+        '\[tabletop\.model_isolator\]',
+        'ProceduralPlantIsolatorState',
+        'ProcessProceduralPlantAtomic',
+        'CVisibilityPlugins_GetModelInfoIndex',
+        '\[tabletop\.procedural_plant\]',
+        'modelIsolatorAdvance',
+        'modelIsolatorReset')) {
     if (($cameraSource + $mainSource) -match $retiredPattern) {
-        throw "Package 71 retired diagnostic remains: $retiredPattern"
+        throw "Package 72 retired diagnostic remains: $retiredPattern"
     }
 }
 foreach ($sourcePattern in @(
-        'enum class ProceduralPlantIsolatorState',
-        'kProceduralPlantCandidateCapacity = 32',
-        'bool IsProceduralPlantModelId\(int modelId\)',
-        'modelId >= 800 && modelId <= 906',
-        'modelId == 3261 \|\| modelId == 3409',
-        'bool ProcessProceduralPlantAtomic\(void\* atomic\)',
-        'CVisibilityPlugins_GetModelInfoIndex\(atomic\)',
-        'void AdvanceProceduralPlantIsolator\(\)',
-        'void ResetProceduralPlantIsolator\(\)',
-        'PLANT TEST: CAPTURING - WAIT, THEN GRIPS \+ X',
-        'PLANT TEST %d/%d: ID %d HIDDEN',
-        'PLANT TEST: ORIGINAL SCENE RESTORED',
-        '\[tabletop\.procedural_plant\] index=%d/%d model=%d',
-        'modelIsolatorAdvance.*tabletop::Enabled\(\)',
-        'modelIsolatorReset.*tabletop::Enabled\(\)')) {
+        'using ProcessProceduralTriangleFn = int \(\*\)\(void\*, void\*\)',
+        'int OnProcessProceduralTriangle\(void\* manager, void\* triangle\)',
+        'if \(tabletop::Enabled\(\)\) return 0;',
+        '_ZN15ProcObjectMan_c20ProcessTriangleAddedEP12CPlantLocTri',
+        'g\.LoadBase == 0x53e168u',
+        'kProcessProceduralTrianglePrologue',
+        'proc_source_test=%d')) {
     if (($cameraSource + $mainSource) -notmatch $sourcePattern) {
-        throw "Package 71 procedural-atomic isolator audit failed: $sourcePattern"
+        throw "Package 72 ProcObject source suppression audit failed: $sourcePattern"
     }
 }
 if (([regex]::Matches($cameraSource,
-        'if \(ProcessProceduralPlantAtomic\(atomic\)\) return atomic;')).Count -ne 1) {
-    throw 'Package 71 isolator must act once at the final atomic callback'
+        'InstallTrampoline\(\s*processProceduralTriangle,')).Count -ne 1) {
+    throw 'Package 72 must install exactly one ProcObject source hook'
 }
 foreach ($forbiddenPattern in @(
         'kPPTriPlantBlackThreshold',
         'g_tabletopPlantAmbientColor',
         'g_tabletopPlantRenderStateGet')) {
     if ($cameraSource -match $forbiddenPattern) {
-        throw "Package 71 reintroduced plant mutation: $forbiddenPattern"
+        throw "Package 72 reintroduced plant mutation: $forbiddenPattern"
     }
 }
-Write-Output 'PASS Package 71 bounded procedural-atomic model isolator'
+Write-Output 'PASS Package 72 direct ProcObject source suppression'
