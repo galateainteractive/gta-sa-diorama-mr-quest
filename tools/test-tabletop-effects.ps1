@@ -487,7 +487,8 @@ Write-Output 'PASS Package 53 raised selector, wider ring and opaque outlined la
 # prevents the fixed Diorama shortcuts from looking like ordinary remap rows.
 foreach ($sourcePattern in @(
         'MENU > CONTROLS > DIORAMA CONTROL GUIDE',
-        'R3 WEAPONS   L3\+R3 VIEW   META RECENTER',
+        'L3 \+ R3  CHANGE VIEW',
+        'META BUTTON  RECENTER',
         'DIORAMA CONTROL GUIDE',
         'R3  OPEN SELECTOR',
         'TRACK   FOLLOWS POSITION; ROOM HEADING',
@@ -549,7 +550,12 @@ foreach ($sourcePattern in @(
         'ON FOOT & DIORAMA - 1 / 2',
         'VIEWS & VEHICLES - 2 / 2',
         'L2 / R2  PAGE',
-        'START HERE',
+        'WELCOME TO GTA SAN ANDREAS DIORAMA MR',
+        'DIORAMA MR IS THE DEFAULT MODE',
+        'SELECT IMMERSIVE VR IN MAIN MENU > PLAY MODE',
+        'DIORAMA MR BY GALATEA DIORAMA MODS',
+        'IMMERSIVE VR BASE: GTA SAN ANDREAS VR QUEST',
+        'BY THE ORIGINAL PORT CONTRIBUTORS',
         'LEARN THE CONTROLS',
         'MENU > CONTROLS > DIORAMA CONTROL GUIDE')) {
     if ($xrSource -notmatch $sourcePattern) {

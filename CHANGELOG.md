@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 58 first-run identity and upstream credit
+
+- Use the complete **GTA San Andreas Diorama MR** name in the first-run
+  welcome.
+- Explain directly that Diorama MR is the default, that Immersive VR remains
+  available through `Main Menu > Play Mode`, and that a restart applies the
+  selection.
+- Credit **Galatea Diorama Mods** for Diorama MR and identify the immersive
+  foundation as **GTA San Andreas VR Quest** by its original port
+  contributors, while keeping the full provenance and links in About/README.
+- Keep the welcome focused by pointing to the two-page control guide instead
+  of repeating individual gameplay shortcuts.
+
 ## Package 57 tutorial coverage and readable control guide
 
 - Adapt both GTA HUD tutorial channels while Diorama MR is active, so early

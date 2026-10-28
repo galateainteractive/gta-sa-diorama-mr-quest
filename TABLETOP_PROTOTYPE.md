@@ -186,6 +186,11 @@ the original sentence and language. The in-headset reference is split into two
 colour-grouped pages selected with `L2`/`R2`, and the automatic welcome is now
 a short start-here page rather than a dense copy of the full About panel.
 
+Package 58 gives that first-run page the complete GTA San Andreas Diorama MR
+identity. It names Diorama MR as the default, points to Immersive VR under the
+restart-gated Play Mode row, and presents short Galatea/upstream credits before
+directing the player to the two-page control guide.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

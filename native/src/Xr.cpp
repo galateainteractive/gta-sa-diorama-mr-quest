@@ -7791,7 +7791,7 @@ void BuildAboutMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
     const bool firstRun = g_aboutFirstRun.load(std::memory_order_relaxed);
-    PanelTextFit(firstRun ? "WELCOME TO DIORAMA MR"
+    PanelTextFit(firstRun ? "WELCOME TO GTA SAN ANDREAS DIORAMA MR"
                           : "ABOUT DIORAMA MR",
                  cx, 22, 3, 100, 225, 255);
     char versionLine[64];
@@ -7803,24 +7803,29 @@ void BuildAboutMenu() {
     PanelTextFit("HOLD BOTH GRIPS + MENU (OR Y)", cx, 116, 2, 235, 242, 255);
 
     if (firstRun) {
-        PanelFillRect(42, 162, kPanelW - 42, 188, 48, 38, 78, 205);
-        PanelTextFit("START HERE", cx, 166, 2, 255, 185, 105);
-        PanelTextFit("DIORAMA MR IS THE DEFAULT PLAY MODE", cx, 204, 2,
+        PanelFillRect(42, 156, kPanelW - 42, 182, 48, 38, 78, 205);
+        PanelTextFit("PLAY MODE", cx, 160, 2, 255, 185, 105);
+        PanelTextFit("DIORAMA MR IS THE DEFAULT MODE", cx, 198, 2,
                      225, 238, 248);
-        PanelTextFit("MAIN MENU > PLAY MODE CHANGES IT", cx, 230, 2,
+        PanelTextFit("SELECT IMMERSIVE VR IN MAIN MENU > PLAY MODE", cx, 224, 2,
                      150, 220, 255);
-        PanelTextFit("RESTART THE GAME TO APPLY A MODE CHANGE", cx, 256, 2,
+        PanelTextFit("RESTART THE GAME TO APPLY", cx, 250, 2,
                      150, 220, 255);
 
-        PanelFillRect(42, 294, kPanelW - 42, 320, 48, 38, 78, 205);
-        PanelTextFit("LEARN THE CONTROLS", cx, 298, 2, 255, 185, 105);
-        PanelTextFit("MENU > CONTROLS > DIORAMA CONTROL GUIDE", cx, 336, 2,
+        PanelFillRect(42, 278, kPanelW - 42, 304, 48, 38, 78, 205);
+        PanelTextFit("CREDITS", cx, 282, 2, 255, 185, 105);
+        PanelTextFit("DIORAMA MR BY GALATEA DIORAMA MODS", cx, 320, 2,
                      225, 238, 248);
-        PanelTextFit("L2 / R2 CHANGES THE GUIDE PAGE", cx, 362, 2,
+        PanelTextFit("IMMERSIVE VR BASE: GTA SAN ANDREAS VR QUEST", cx, 346, 2,
                      150, 220, 255);
-        PanelTextFit("R3 WEAPONS   L3+R3 VIEW   META RECENTER", cx, 396, 2,
-                     210, 225, 235);
-        PanelTextFit("PRESS ANY BUTTON TO CLOSE", cx, 458, 2,
+        PanelTextFit("BY THE ORIGINAL PORT CONTRIBUTORS", cx, 372, 2,
+                     150, 220, 255);
+
+        PanelFillRect(42, 398, kPanelW - 42, 424, 48, 38, 78, 205);
+        PanelTextFit("LEARN THE CONTROLS", cx, 402, 2, 255, 185, 105);
+        PanelTextFit("MENU > CONTROLS > DIORAMA CONTROL GUIDE", cx, 438, 2,
+                     225, 238, 248);
+        PanelTextFit("PRESS ANY BUTTON TO CLOSE", cx, 472, 2,
                      255, 205, 80);
         return;
     }
