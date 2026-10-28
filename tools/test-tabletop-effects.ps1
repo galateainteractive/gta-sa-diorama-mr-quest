@@ -677,30 +677,16 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 66 persistent cached GTA-menu discovery banner'
 
-# Package 67 fixes the captured solid-black procedural shrubs without touching
-# immersive mode. The retail DrawTriPlants ABI and prologue must match before
-# the temporary RGB/alpha guard can be installed, and the former continuous
-# flicker witnesses are compiled only in SAVR_DEV builds.
-$drawTriPlants = (& $Objdump -d --start-address=0x35e548 --stop-address=0x35e558 $LibGame) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'CGrassRenderer::DrawTriPlants disassembly failed' }
-foreach ($word in @('d10343ff', '6d033bef', '6d0433ed', '6d052beb')) {
-    if ($drawTriPlants -notmatch $word) {
-        throw "Package 67 DrawTriPlants prologue mismatch: $word"
-    }
-}
-foreach ($sourcePattern in @(
-        'bool OnTabletopDrawTriPlants\(',
-        'kPPTriPlantBufferCapacity = 32',
-        'kPPTriPlantBlackThreshold = 24',
-        'g_tabletopPlantAmbientColor\[channel\]',
-        'g_tabletopPlantRenderStateGet\(10',
-        'g\.RwRenderStateSet\(12, reinterpret_cast<void\*>\(1\)\)',
-        'backup\.color\[0\] = backup\.rgb\[0\]',
-        '0x35e548u',
-        '0x88fad2u',
-        '0x75db54u')) {
-    if ($cameraSource -notmatch $sourcePattern) {
-        throw "Package 67 procedural-plant guard audit failed: $sourcePattern"
+# Package 68 retires the Package 67 procedural-plant experiment after headset
+# validation showed no visible change. The proven Release telemetry cleanup is
+# retained, while no DrawTriPlants hook or plant-colour mutation may ship.
+foreach ($retiredPattern in @(
+        'OnTabletopDrawTriPlants',
+        'g_origTabletopDrawTriPlants',
+        'kPPTriPlantBlackThreshold',
+        '_ZN14CGrassRenderer13DrawTriPlants')) {
+    if ($cameraSource -match $retiredPattern) {
+        throw "Package 68 retired plant experiment remains: $retiredPattern"
     }
 }
 foreach ($sourcePattern in @(
@@ -711,4 +697,4 @@ foreach ($sourcePattern in @(
         throw "Package 67 Release-telemetry retirement audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 67 procedural-plant guard and Release flicker telemetry retirement'
+Write-Output 'PASS Package 68 plant experiment retired and Release telemetry remains quiet'

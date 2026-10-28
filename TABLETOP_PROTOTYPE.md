@@ -365,11 +365,10 @@ enqueue hook, per-frame help-buffer scans and scoped final-render diagnostics
 from Packages 61-63 are removed from production; only the bounded final-font
 adapter and once-per-unknown-text reporting remain.
 
-Package 67 isolates the black procedural-shrub defect captured in the opening
-Grove Street scene. A fingerprinted retail `CGrassRenderer::DrawTriPlants`
-wrapper applies GTA's current ambient colour only to near-zero RGB triplets,
-guarantees vertex-alpha blending for that draw and restores every source byte
-and RenderWare state afterwards. The wrapper runs only during active Diorama
-stereo and fails closed on any unknown executable. The old flicker investigation
-witnesses are now `SAVR_DEV`-only, removing their frame-by-frame aggregation and
+Package 67 tested whether the black shrubs captured in the opening Grove Street
+scene came from the procedural `CGrassRenderer::DrawTriPlants` path. Its guarded
+colour/blend wrapper produced no visible headset change, proving that assumption
+insufficient. Package 68 removes that experiment and restores the retail plant
+draw unchanged. The useful Package 67 cleanup remains: old flicker-investigation
+witnesses are `SAVR_DEV`-only, removing their frame-by-frame aggregation and
 periodic Android logging from production while retaining real error reports.

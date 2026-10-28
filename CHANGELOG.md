@@ -1,12 +1,25 @@
 # Changelog
 
-## Package 67 procedural-plant colour guard and quiet Release telemetry
+## Package 68 retire ineffective procedural-plant experiment
 
-- Fix the solid-black low shrubs reproduced in the opening Grove Street scene.
+- Remove the Package 67 `CGrassRenderer::DrawTriPlants` colour/blend wrapper
+  after headset validation showed no visible change to the black shrubs. This
+  restores the original GTA plant draw path instead of retaining an unproven
+  hook in production.
+- Preserve the Package 67 Release telemetry cleanup. Scene-identity,
+  alpha-depth, mask-window, stereo-ring, passthrough-audit and mask-health
+  witnesses remain `SAVR_DEV`-only; production keeps only genuine errors and
+  one-time setup reports.
+
+## Package 67 experimental procedural-plant guard and quiet Release telemetry
+
+- Attempt to fix the solid-black low shrubs reproduced in the opening Grove Street scene.
   The official procedural-plant renderer is hooked only after its 2.11.311
   address and prologue match. In active Diorama stereo, near-zero plant RGB is
   temporarily raised to GTA's live ambient colour, then the original plant
-  bytes are restored immediately after the draw.
+  bytes are restored immediately after the draw. Headset testing later showed
+  that these shrubs use a different rendering path, so Package 68 removes this
+  experiment.
 - Save and restore RenderWare source blend, destination blend and vertex-alpha
   state around the same procedural draw. This prevents a plant transition from
   inheriting an opaque state while leaving Immersive VR and ordinary world

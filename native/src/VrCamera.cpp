@@ -27901,98 +27901,8 @@ void InstallGameUpdateHitchProfiler() {
 
 using TabletopPlantUpdateFn = void (*)(const void*);
 using SetGrassAlphaDistanceFn = void (*)(float, float);
-using DrawTriPlantsFn = bool (*)(void*, int, void**, void*);
-using RwRenderStateGetFn = int (*)(int, void*);
 TabletopPlantUpdateFn g_origTabletopPlantUpdate = nullptr;
 SetGrassAlphaDistanceFn g_setGrassAlphaDistance = nullptr;
-DrawTriPlantsFn g_origTabletopDrawTriPlants = nullptr;
-RwRenderStateGetFn g_tabletopPlantRenderStateGet = nullptr;
-std::uint8_t* g_tabletopPlantAmbientColor = nullptr;
-
-// Retail PPTriPlant is 0x68 bytes. DrawTriPlants reads the surface-lit RGB at
-// 0x48..0x4a and the per-plant alpha at 0x4b before applying the texture. In
-// the elevated Diorama camera a regenerated plant can occasionally arrive with
-// a near-zero RGB triplet, producing the solid black shrubs captured on Quest.
-// Correct only that invalid triplet for the duration of the draw and restore
-// the retail buffer immediately afterwards. The 32-entry limit is the exact
-// CPPTriPlantBuffer capacity in retail 2.11.311; anything unexpected fails
-// closed to the original renderer.
-constexpr int kPPTriPlantStride = 0x68;
-constexpr int kPPTriPlantColorOffset = 0x48;
-constexpr int kPPTriPlantAlphaOffset = 0x4b;
-constexpr int kPPTriPlantBufferCapacity = 32;
-constexpr std::uint8_t kPPTriPlantBlackThreshold = 24;
-constexpr std::uint8_t kPPTriPlantAmbientFloor = 64;
-
-struct TabletopPlantColorBackup {
-    std::uint8_t* color{};
-    std::array<std::uint8_t, 3> rgb{};
-};
-
-bool OnTabletopDrawTriPlants(void* plants, int count, void** atomics,
-                             void* matrix) {
-    if (!g_origTabletopDrawTriPlants) return false;
-    const bool tabletopDraw =
-        g_tabletopActive.load(std::memory_order_acquire) &&
-        g_stereoActive.load(std::memory_order_relaxed) && plants &&
-        count > 0 && count <= kPPTriPlantBufferCapacity &&
-        g_tabletopPlantAmbientColor;
-    if (!tabletopDraw) {
-        return g_origTabletopDrawTriPlants(plants, count, atomics, matrix);
-    }
-
-    std::array<TabletopPlantColorBackup, kPPTriPlantBufferCapacity> backups{};
-    int backupCount = 0;
-    auto* const bytes = static_cast<std::uint8_t*>(plants);
-    for (int index = 0; index < count; ++index) {
-        std::uint8_t* const color = bytes + index * kPPTriPlantStride +
-            kPPTriPlantColorOffset;
-        const std::uint8_t strongest = std::max({color[0], color[1], color[2]});
-        const std::uint8_t alpha = bytes[index * kPPTriPlantStride +
-            kPPTriPlantAlphaOffset];
-        if (strongest > kPPTriPlantBlackThreshold || alpha == 0) continue;
-        auto& backup = backups[static_cast<std::size_t>(backupCount++)];
-        backup.color = color;
-        backup.rgb = {color[0], color[1], color[2]};
-        for (int channel = 0; channel < 3; ++channel) {
-            color[channel] = std::max(
-                color[channel],
-                std::max(g_tabletopPlantAmbientColor[channel],
-                         kPPTriPlantAmbientFloor));
-        }
-    }
-
-    // DrawTriPlants relies on caller-owned RenderWare blend state. Preserve it
-    // exactly, but guarantee vertex-alpha blending while the procedural plant
-    // atomics are submitted so a distance transition cannot become opaque
-    // black in the stereo pass.
-    std::array<void*, 3> savedState{};
-    const bool savedBlendState = g_tabletopPlantRenderStateGet &&
-        g.RwRenderStateSet &&
-        g_tabletopPlantRenderStateGet(10, &savedState[0]) &&
-        g_tabletopPlantRenderStateGet(11, &savedState[1]) &&
-        g_tabletopPlantRenderStateGet(12, &savedState[2]);
-    if (savedBlendState) {
-        g.RwRenderStateSet(10, reinterpret_cast<void*>(5));
-        g.RwRenderStateSet(11, reinterpret_cast<void*>(6));
-        g.RwRenderStateSet(12, reinterpret_cast<void*>(1));
-    }
-
-    const bool result =
-        g_origTabletopDrawTriPlants(plants, count, atomics, matrix);
-    if (savedBlendState) {
-        g.RwRenderStateSet(10, savedState[0]);
-        g.RwRenderStateSet(11, savedState[1]);
-        g.RwRenderStateSet(12, savedState[2]);
-    }
-    for (int index = backupCount - 1; index >= 0; --index) {
-        const auto& backup = backups[static_cast<std::size_t>(index)];
-        backup.color[0] = backup.rgb[0];
-        backup.color[1] = backup.rgb[1];
-        backup.color[2] = backup.rgb[2];
-    }
-    return result;
-}
 
 void OnTabletopPlantUpdate(const void* cameraPosition) {
     ScopedGameUpdateTiming timing(GameUpdateSubsystem::Plants);
@@ -28034,24 +27944,11 @@ void InstallTabletopPlantCoverage() {
         gameHandle, "_ZN9CPlantMgr6UpdateERK7CVector");
     void* const distances = dlsym(
         gameHandle, "_ZN14CGrassRenderer20SetCloseFarAlphaDistEff");
-    void* const drawPlants = dlsym(
-        gameHandle,
-        "_ZN14CGrassRenderer13DrawTriPlantsEP10PPTriPlantiPP8RpAtomicP11RwMatrixTag");
-    void* const ambientColor = dlsym(
-        gameHandle, "_ZN9CPlantMgr14m_AmbientColorE");
-    void* const renderStateGet = dlsym(
-        gameHandle, "_Z16RwRenderStateGet13RwRenderStatePv");
     static constexpr std::uint32_t kUpdatePrologue[4] = {
         0x6dbc23e9u, 0xa9017bfdu, 0xf90013f5u, 0xa9034ff4u,
     };
     static constexpr std::uint32_t kDistancePrologue[4] = {
         0xb00026c8u, 0xb00026c9u, 0xf942f908u, 0xf942fd29u,
-    };
-    static constexpr std::uint32_t kDrawPlantsPrologue[4] = {
-        0xd10343ffu, 0x6d033befu, 0x6d0433edu, 0x6d052bebu,
-    };
-    static constexpr std::uint32_t kRenderStateGetPrologue[4] = {
-        0xd00006c8u, 0xf941d908u, 0xf9400108u, 0xf9401d02u,
     };
     const bool updateFingerprint = update &&
         reinterpret_cast<std::uintptr_t>(update) - g.LoadBase == 0x35f898u &&
@@ -28060,19 +27957,6 @@ void InstallTabletopPlantCoverage() {
         reinterpret_cast<std::uintptr_t>(distances) - g.LoadBase == 0x35e51cu &&
         std::memcmp(distances, kDistancePrologue,
                     sizeof(kDistancePrologue)) == 0;
-    const bool drawPlantsFingerprint = drawPlants &&
-        reinterpret_cast<std::uintptr_t>(drawPlants) - g.LoadBase ==
-            0x35e548u &&
-        std::memcmp(drawPlants, kDrawPlantsPrologue,
-                    sizeof(kDrawPlantsPrologue)) == 0;
-    const bool ambientColorFingerprint = ambientColor &&
-        reinterpret_cast<std::uintptr_t>(ambientColor) - g.LoadBase ==
-            0x88fad2u;
-    const bool renderStateGetFingerprint = renderStateGet &&
-        reinterpret_cast<std::uintptr_t>(renderStateGet) - g.LoadBase ==
-            0x75db54u &&
-        std::memcmp(renderStateGet, kRenderStateGetPrologue,
-                    sizeof(kRenderStateGetPrologue)) == 0;
     if (distanceFingerprint) {
         g_setGrassAlphaDistance =
             reinterpret_cast<SetGrassAlphaDistanceFn>(distances);
@@ -28082,28 +27966,10 @@ void InstallTabletopPlantCoverage() {
             InstallTrampoline(update,
                 reinterpret_cast<void*>(&OnTabletopPlantUpdate)));
     }
-    if (drawPlantsFingerprint && ambientColorFingerprint &&
-        renderStateGetFingerprint && g.RwRenderStateSet) {
-        g_tabletopPlantAmbientColor =
-            static_cast<std::uint8_t*>(ambientColor);
-        g_tabletopPlantRenderStateGet =
-            reinterpret_cast<RwRenderStateGetFn>(renderStateGet);
-        g_origTabletopDrawTriPlants = reinterpret_cast<DrawTriPlantsFn>(
-            InstallTrampoline(drawPlants,
-                reinterpret_cast<void*>(&OnTabletopDrawTriPlants)));
-        if (!g_origTabletopDrawTriPlants) {
-            g_tabletopPlantAmbientColor = nullptr;
-            g_tabletopPlantRenderStateGet = nullptr;
-        }
-    }
-    LOGI("[tabletop.plants] update_hook=%d draw_hook=%d update_fp=%d "
-         "distance_fp=%d draw_fp=%d ambient_fp=%d state_get_fp=%d radius=%.0fm",
-         g_origTabletopPlantUpdate ? 1 : 0,
-         g_origTabletopDrawTriPlants ? 1 : 0,
-         updateFingerprint ? 1 : 0,
-         distanceFingerprint ? 1 : 0, drawPlantsFingerprint ? 1 : 0,
-         ambientColorFingerprint ? 1 : 0,
-         renderStateGetFingerprint ? 1 : 0,
+    LOGI("[tabletop.plants] update_hook=%d update_fp=%d distance_fp=%d "
+         "radius=%.0fm",
+         g_origTabletopPlantUpdate ? 1 : 0, updateFingerprint ? 1 : 0,
+         distanceFingerprint ? 1 : 0,
          static_cast<double>(tabletop::RadiusMeters()));
     dlclose(gameHandle);
 }
