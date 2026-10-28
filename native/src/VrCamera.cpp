@@ -27052,7 +27052,72 @@ void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
     }
 }
 
+bool TutorialTextContainsAsciiNoCase(const std::int16_t* text, int capacity,
+                                     const char* needle) {
+    if (!text || capacity <= 0 || !needle || !needle[0]) return false;
+    int needleLength = 0;
+    while (needle[needleLength] != '\0') ++needleLength;
+    const auto fold=[](int character) {
+        return character >= 'A' && character <= 'Z'
+            ? character + ('a' - 'A') : character;
+    };
+    for (int start = 0; start + needleLength <= capacity &&
+                        text[start] != 0; ++start) {
+        bool matches = true;
+        for (int i = 0; i < needleLength; ++i) {
+            if (text[start + i] == 0 ||
+                fold(static_cast<std::uint16_t>(text[start + i])) !=
+                    fold(static_cast<unsigned char>(needle[i]))) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) return true;
+    }
+    return false;
+}
+
+bool LooksLikeDioramaTouchTutorial(const std::int16_t* text, int capacity) {
+    // Intentionally no generic "tap" match. These are either semantic control
+    // tokens or distinctive Android tutorial phrases already audited above.
+    static constexpr const char* kSignals[] = {
+        "~widget_", "lower right corner", "lower left corner",
+        "left side of the screen", "double tap the center",
+        "touch the screen", "climb out of the water", "crouch ~a~",
+    };
+    for (const char* signal : kSignals) {
+        if (TutorialTextContainsAsciiNoCase(text, capacity, signal))
+            return true;
+    }
+    return false;
+}
+
+bool DioramaTutorialAdaptationEnabled() {
+    static const bool enabled = [] {
+        char text[PROP_VALUE_MAX]{};
+        bool value = true;
+        if (__system_property_get("debug.savr.diorama_tutorials", text) > 0) {
+            value = std::strcmp(text, "0") != 0 &&
+                    std::strcmp(text, "false") != 0 &&
+                    std::strcmp(text, "off") != 0;
+        }
+        LOGI("[tabletop.tutorial] final-font adaptation=%d property=%s",
+             value ? 1 : 0, "debug.savr.diorama_tutorials");
+        return value;
+    }();
+    return enabled;
+}
+
 void OnFontPrintString(float x, float y, std::int16_t* text) {
+    std::int16_t* renderedText = text;
+    thread_local std::array<std::int16_t, 400> adaptedText{};
+    if (tabletop::Enabled() && DioramaTutorialAdaptationEnabled() && text &&
+        LooksLikeDioramaTouchTutorial(text, 400) &&
+        xr::AdaptDioramaTutorialForStockRender(
+            text, 400, adaptedText.data(),
+            static_cast<int>(adaptedText.size()))) {
+        renderedText = adaptedText.data();
+    }
     const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>(
         __builtin_return_address(0));
     const std::uintptr_t callerOffset =
@@ -27075,7 +27140,7 @@ void OnFontPrintString(float x, float y, std::int16_t* text) {
                  preview.c_str());
         }
     }
-    if (g_origFontPrintString) g_origFontPrintString(x, y, text);
+    if (g_origFontPrintString) g_origFontPrintString(x, y, renderedText);
 }
 
 bool InstallTutorialQueueDiagnostic() {
@@ -27132,7 +27197,7 @@ bool InstallTutorialRenderDiagnostic() {
                               reinterpret_cast<void*>(&OnFontPrintString)));
     }
     LOGI("[tabletop.tutorial.render] install active=%d fingerprint=%d "
-         "target=%p offset=0x%lx scoped=help-text-callers",
+         "target=%p offset=0x%lx mode=global-content-filter",
          g_origFontPrintString ? 1 : 0, fingerprint ? 1 : 0, target,
          target ? static_cast<unsigned long>(
              reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul);

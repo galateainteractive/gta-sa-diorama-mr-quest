@@ -1129,8 +1129,8 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         } else if (controllableGameplay && tabletop::Enabled() &&
                    savr::locomotion::WelcomeSeen() &&
                    !sessionMenuReminderShown) {
-            xr::PublishStatusText(
-                "DIORAMA MENU: HOLD BOTH GRIPS + MENU (OR Y)", 7.0f);
+            xr::PublishCenteredNoticeText(
+                "DIORAMA MENU - HOLD BOTH GRIPS + MENU (OR Y)", 5.0f);
             sessionMenuReminderShown = true;
         }
 
@@ -1200,7 +1200,13 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
                     menuPage = PG_CHEATS; cheatCategory = -1; cheatSel = 0;
                 }
                 else if (mainSel == 9) { menuPage = PG_GRAPHICS; gfxSel = 0; }
-                else if (mainSel == 10) { menuPage = PG_CONTROLS; controlsSel = 0; }
+                else if (mainSel == 10) {
+                    // The mode-specific guide is the public Controls landing
+                    // page. Remapping remains available one level deeper.
+                    menuPage = PG_CONTROLS_TIPS;
+                    controlsTipsPage = 0;
+                    controlsSel = 0;
+                }
                 else if (mainSel == 11) { menuPage = PG_BASKETBALL; basketballSel = 0; }
                 else if (mainSel == 12) { menuPage = PG_ABOUT; aboutFirstRun = false; aboutArmed = false; }
                 else if (mainSel == 13)  menuPage = PG_NONE;
@@ -1734,14 +1740,18 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
                 controlsTipsPage = 0;
             }
             if (enter && controlsSel == resetRow) savr::locomotion::ResetControls();
-            if (enter && controlsSel == backRow) menuPage = PG_MAIN;
-            if (back) menuPage = PG_MAIN;
+            if (enter && controlsSel == backRow) menuPage = PG_CONTROLS_TIPS;
+            if (back) menuPage = PG_CONTROLS_TIPS;
             break;
         }
         case PG_CONTROLS_TIPS: {
             if (minus) controlsTipsPage = 0;
             if (plus) controlsTipsPage = 1;
-            if (enter || back) menuPage = PG_CONTROLS;
+            if (enter) {
+                menuPage = PG_CONTROLS;
+                controlsSel = 0;
+            }
+            if (back) menuPage = PG_MAIN;
             break;
         }
         case PG_ABOUT: {

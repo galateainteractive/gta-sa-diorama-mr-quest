@@ -75,6 +75,17 @@ void PublishRadioText(const char* text);
 // Short compositor status line used by Diorama MR controls. It shares the
 // proven direct-text layer with timers/radio but has independent lifetime.
 void PublishStatusText(const char* text, float durationSeconds);
+// Short, head-locked notice drawn at the top centre independently of the
+// configurable stock HUD crops. Used for the once-per-session menu reminder.
+void PublishCenteredNoticeText(const char* text, float durationSeconds);
+
+// Adapt one final stock CFont string only when it contains a known Android
+// touch tutorial or a semantic ~widget_*~ control marker. Returns false and
+// leaves output empty for all ordinary mission/subtitle/UI text.
+bool AdaptDioramaTutorialForStockRender(const std::int16_t* source,
+                                        int sourceCapacity,
+                                        std::int16_t* output,
+                                        int outputCapacity);
 
 // Lightweight Diorama MR weapon selector, published by the GameThread and
 // rendered on the existing head-locked text panel. Arrays contain GTA's 13

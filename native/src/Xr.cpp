@@ -85,6 +85,8 @@ struct HudTextState {
     std::u16string radio;
     std::u16string status;
     std::uint64_t statusUntilNs{};
+    std::u16string centeredNotice;
+    std::uint64_t centeredNoticeUntilNs{};
     int bigStyle{};
     std::uint64_t revision{};
 };
@@ -103,6 +105,7 @@ struct HudTextTexture {
 HudTextTexture g_briefTextTexture;
 HudTextTexture g_bigTextTexture;
 HudTextTexture g_timerTextTexture;
+HudTextTexture g_centeredNoticeTexture;
 
 bool ReplaceAll(std::u16string& text, std::u16string_view needle,
                 std::u16string_view replacement) {
@@ -335,6 +338,10 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         LOGI("[tabletop.tutorial] mobile-unmapped channel=%s hash=%08x chars=%zu text=%.180s",
              channel ? channel : "unknown", sourceHash, text.size(),
              preview.c_str());
+    }
+    if (replacements > 0 &&
+        !ContainsAsciiNoCase(text, u"DIORAMA MR TIP")) {
+        text.insert(0, u"~p~DIORAMA MR TIP~w~: ");
     }
     return text;
 }
@@ -4757,6 +4764,13 @@ HudTextState SnapshotHudText() {
         g_hudTextState.statusUntilNs = 0;
         ++g_hudTextState.revision;
     }
+    if (!g_hudTextState.centeredNotice.empty() &&
+        g_hudTextState.centeredNoticeUntilNs != 0 &&
+        MonotonicNowNs() >= g_hudTextState.centeredNoticeUntilNs) {
+        g_hudTextState.centeredNotice.clear();
+        g_hudTextState.centeredNoticeUntilNs = 0;
+        ++g_hudTextState.revision;
+    }
     return g_hudTextState;
 }
 
@@ -4903,6 +4917,8 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     UpdateHudTextTexture(g_briefTextTexture,smallText,0,textureRevision);
     UpdateHudTextTexture(g_bigTextTexture,bigText,1,textureRevision);
     UpdateHudTextTexture(g_timerTextTexture,timerText,0,textureRevision);
+    UpdateHudTextTexture(g_centeredNoticeTexture,textState.centeredNotice,0,
+                         textureRevision);
     // Per-eye convergence: shift every destination rect toward the nose by
     // the parallax of a plane kHudPlaneDistanceMetres away, so crops and
     // text fuse at that depth instead of at infinity behind the world.
@@ -5010,6 +5026,21 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     drawDirectText(hud::MESSAGES,g_bigTextTexture);
     drawDirectText(hud::HELP_TEXT,g_briefTextTexture);
     drawDirectText(hud::TIMERS,g_timerTextTexture);
+
+    // This reminder is deliberately independent of HUD calibration. It is a
+    // short session-level discoverability hint, not a persistent game HUD
+    // element, and therefore always occupies a small top-centre safe area.
+    if (g_centeredNoticeTexture.visible && g_centeredNoticeTexture.texture) {
+        constexpr float kNoticeWidth = 0.66f;
+        constexpr float kNoticeHeight = 0.11f;
+        glBindTexture(GL_TEXTURE_2D,g_centeredNoticeTexture.texture);
+        glUniform4f(s.hudCompositeSourceRectUniform,0.0f,0.0f,1.0f,1.0f);
+        glUniform4f(s.hudCompositeDestinationRectUniform,
+                    (1.0f-kNoticeWidth)*0.5f+hudDepthShiftUv,0.035f,
+                    kNoticeWidth,kNoticeHeight);
+        glUniform1f(s.hudCompositeHighlightUniform,0.0f);
+        glDrawArrays(GL_TRIANGLES,0,3);
+    }
 
     if (calibrating) {
         // The calibration sample is always drawn at the element's real final
@@ -5784,6 +5815,34 @@ void TriggerHaptic(int hand, float amplitude, float frequencyHz,
         reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
 }
 
+bool AdaptDioramaTutorialForStockRender(const std::int16_t* source,
+                                        int sourceCapacity,
+                                        std::int16_t* output,
+                                        int outputCapacity) {
+    if (!source || sourceCapacity <= 0 || !output || outputCapacity <= 1 ||
+        !tabletop::Enabled()) {
+        return false;
+    }
+    std::u16string original;
+    original.reserve(static_cast<std::size_t>(
+        std::min({sourceCapacity, outputCapacity - 1, 400})));
+    for (int i = 0; i < sourceCapacity && source[i] != 0 &&
+                    static_cast<int>(original.size()) < outputCapacity - 1 &&
+                    original.size() < 400u; ++i) {
+        original.push_back(static_cast<char16_t>(
+            static_cast<std::uint16_t>(source[i])));
+    }
+    if (original.empty()) return false;
+    std::u16string adapted = AdaptDioramaTutorialText(original, "stock-font");
+    if (adapted == original) return false;
+    const int count = std::min(static_cast<int>(adapted.size()),
+                               outputCapacity - 1);
+    for (int i = 0; i < count; ++i)
+        output[i] = static_cast<std::int16_t>(adapted[static_cast<std::size_t>(i)]);
+    output[count] = 0;
+    return true;
+}
+
 void PublishHudText(const std::int16_t* brief, int briefCapacity,
                     const std::int16_t* bigMessages, int bigStyleCount,
                     int bigStyleCapacity,
@@ -5873,6 +5932,23 @@ void PublishStatusText(const char* text, float durationSeconds) {
     g_hudTextState.status = std::move(next);
     g_hudTextState.statusUntilNs = g_hudTextState.status.empty()
         ? 0 : MonotonicNowNs() + durationNs;
+    ++g_hudTextState.revision;
+}
+
+void PublishCenteredNoticeText(const char* text, float durationSeconds) {
+    std::u16string next;
+    if (text) {
+        for (const char* c = text; *c != '\0' && next.size() < 96; ++c)
+            next.push_back(static_cast<char16_t>(
+                static_cast<unsigned char>(*c)));
+    }
+    const std::uint64_t durationNs = static_cast<std::uint64_t>(
+        std::max(0.0f, durationSeconds) * 1000000000.0f);
+    std::lock_guard<std::mutex> lock(g_hudTextMutex);
+    g_hudTextState.centeredNotice = std::move(next);
+    g_hudTextState.centeredNoticeUntilNs =
+        g_hudTextState.centeredNotice.empty()
+            ? 0 : MonotonicNowNs() + durationNs;
     ++g_hudTextState.revision;
 }
 
@@ -7881,7 +7957,7 @@ void BuildAboutMenu() {
 
         PanelFillRect(42, 398, kPanelW - 42, 424, 48, 38, 78, 205);
         PanelTextFit("LEARN THE CONTROLS", cx, 402, 2, 255, 185, 105);
-        PanelTextFit("MENU > CONTROLS > DIORAMA CONTROL GUIDE", cx, 438, 2,
+        PanelTextFit("MENU > CONTROLS OPENS DIORAMA GUIDE", cx, 438, 2,
                      225, 238, 248);
         PanelTextFit("PRESS ANY BUTTON TO CLOSE", cx, 472, 2,
                      255, 205, 80);
@@ -7952,7 +8028,8 @@ void BuildControlsTipsMenu() {
         for (int i = 0; i < count; ++i)
             PanelTextFit(kImmersiveTips[i], cx, top + i * rowH, 2,
                          210, 225, 235);
-        PanelText("A / B BACK", cx, kPanelH - 18, 2, 150, 185, 150);
+        PanelTextFit("A  CUSTOMIZE CONTROLS       B  BACK",
+                     cx, kPanelH - 18, 2, 150, 185, 150);
         return;
     }
 
@@ -8011,16 +8088,16 @@ void BuildControlsTipsMenu() {
         command("R2  YES / HOLD", 418, true);
         command("L2  NO", 440);
     }
-    PanelTextFit("L2 / R2  PAGE       A / B  BACK",
+    PanelTextFit("L2 / R2  PAGE    A  CUSTOMIZE CONTROLS    B  BACK",
                  cx, kPanelH - 20, 2, 150, 185, 150);
 }
 
 void BuildControlsMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
-    PanelText("CONTROLS", cx, 20, 5, 100, 225, 255);
+    PanelText("CUSTOMIZE CONTROLS", cx, 20, 4, 100, 225, 255);
     PanelTextFit(tabletop::Enabled()
-                     ? "DIORAMA SHORTCUTS ARE FIXED - OPEN GUIDE BELOW"
+                     ? "DIORAMA SHORTCUTS FIXED - B RETURNS TO GUIDE"
                      : "GAMEPLAY ONLY - MENU CURSOR STAYS RAW",
                  cx, 56, 2, 150, 185, 150);
     constexpr int tipsRow = 0;
@@ -8032,8 +8109,8 @@ void BuildControlsMenu() {
     constexpr int rowCount = backRow + 1;
     char rows[rowCount][64]{};
     std::snprintf(rows[tipsRow], sizeof(rows[0]), "%s",
-                  tabletop::Enabled() ? "DIORAMA CONTROL GUIDE"
-                                      : "IMMERSIVE CONTROL GUIDE");
+                  tabletop::Enabled() ? "BACK TO DIORAMA CONTROL GUIDE"
+                                      : "BACK TO IMMERSIVE CONTROL GUIDE");
     std::snprintf(rows[layoutRow], sizeof(rows[0]), "LAYOUT  < %s >",
                   locomotion::ControlsLayoutName());
     const char* stickLabels[locomotion::STICK_OPT_COUNT]={
@@ -8061,7 +8138,8 @@ void BuildControlsMenu() {
         const int c = (i == sel) ? 255 : 200;
         PanelText(rows[i], cx, y, 2, c, c, (i == sel) ? 120 : c);
     }
-    PanelText("STICK SEL   L2/R2 CHANGE   A TOGGLE", cx, kPanelH - 22, 2, 150, 185, 150);
+    PanelText("STICK SEL   L2/R2 CHANGE   A TOGGLE   B GUIDE",
+              cx, kPanelH - 22, 2, 150, 185, 150);
 }
 
 void BuildMainMenu() {

@@ -486,7 +486,7 @@ Write-Output 'PASS Package 53 raised selector, wider ring and opaque outlined la
 # Package 54 keeps the current production bindings discoverable in-headset and
 # prevents the fixed Diorama shortcuts from looking like ordinary remap rows.
 foreach ($sourcePattern in @(
-        'MENU > CONTROLS > DIORAMA CONTROL GUIDE',
+        'MENU > CONTROLS OPENS DIORAMA GUIDE',
         'L3 \+ R3  CHANGE VIEW',
         'META BUTTON  RECENTER',
         'DIORAMA CONTROL GUIDE',
@@ -494,7 +494,7 @@ foreach ($sourcePattern in @(
         'TRACK   FOLLOWS POSITION; ROOM HEADING',
         'FOLLOW  FOLLOWS POSITION \+ CJ / CAR',
         'FIXED   DIORAMA STAYS IN THE ROOM',
-        'DIORAMA SHORTCUTS ARE FIXED - OPEN GUIDE BELOW')) {
+        'DIORAMA SHORTCUTS FIXED - B RETURNS TO GUIDE')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 54 in-headset control guide audit failed: $sourcePattern"
     }
@@ -547,7 +547,7 @@ Write-Output 'PASS Package 60 three-channel Diorama tutorial controls'
 
 foreach ($sourcePattern in @(
         'constexpr int tipsRow = 0',
-        'DIORAMA MENU: HOLD BOTH GRIPS \+ MENU \(OR Y\)',
+        'DIORAMA MENU - HOLD BOTH GRIPS \+ MENU \(OR Y\)',
         'sessionMenuReminderShown')) {
     if (($xrSource + $mainSource) -notmatch $sourcePattern) {
         throw "Package 60 menu-discovery audit failed: $sourcePattern"
@@ -569,7 +569,7 @@ foreach ($sourcePattern in @(
         'IMMERSIVE VR BASE: GTA SAN ANDREAS VR QUEST',
         'BY THE ORIGINAL PORT CONTRIBUTORS',
         'LEARN THE CONTROLS',
-        'MENU > CONTROLS > DIORAMA CONTROL GUIDE')) {
+        'MENU > CONTROLS OPENS DIORAMA GUIDE')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 57 control-guide audit failed: $sourcePattern"
     }
@@ -653,3 +653,23 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 63 scoped touch-render tutorial capture'
+
+# Package 64 turns the validated global CFont boundary into a conservative
+# Diorama-only adapter. It must retain a fast content prefilter, a shell escape
+# hatch, an explicit branded prefix and mode-specific Controls navigation.
+foreach ($sourcePattern in @(
+        'LooksLikeDioramaTouchTutorial',
+        'no generic "tap" match',
+        'debug\.savr\.diorama_tutorials',
+        'AdaptDioramaTutorialForStockRender',
+        '~p~DIORAMA MR TIP~w~:',
+        'mode=global-content-filter',
+        'PublishCenteredNoticeText',
+        'CUSTOMIZE CONTROLS',
+        'A  CUSTOMIZE CONTROLS',
+        'menuPage = PG_CONTROLS_TIPS')) {
+    if (($xrSource + $cameraSource + $mainSource) -notmatch $sourcePattern) {
+        throw "Package 64 final tutorial/control-discovery audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 64 filtered tutorials, centred reminder and guide-first Controls'

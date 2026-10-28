@@ -337,3 +337,14 @@ intensity value so headset validation is unambiguous. Successful compositor
 updates report the live clock/weather values, final grade and whether the Quest
 used the META LUT or the basic brightness/contrast/saturation fallback. After
 validation, that single multiplier can be reduced without retuning the palette.
+
+Package 64 adapts the final retail font call rather than trying to predict
+which Android help queue a mission will use. In Diorama MR, only verified touch
+tutorial wording and semantic `~widget_*~` controls are replaced; subtitles,
+mission prose, menus and unknown prompts retain the original string and draw
+path. Adapted cards are labelled `DIORAMA MR TIP`, while unknown candidates are
+deduplicated in diagnostics for later additions. The adapter fails closed on a
+retail fingerprint mismatch and can be disabled at process start with
+`debug.savr.diorama_tutorials=0`. Controls now lands on the guide for the active
+play mode, with remapping explicitly secondary, and the menu chord is repeated
+once per Diorama application session in a five-second top-centre notice.

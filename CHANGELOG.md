@@ -1,5 +1,21 @@
 # Changelog
 
+## Package 64 final Diorama tutorial adapter and guide-first Controls
+
+- Turn the verified retail `CFont::PrintString` boundary into a conservative
+  Diorama-only adapter. The global hook changes only known Android touch
+  tutorial phrases or semantic `~widget_*~` control markers; all other GTA
+  text continues through the original render call unchanged.
+- Prefix successfully adapted cards with `DIORAMA MR TIP` and retain GTA's
+  colour markers for the stock font renderer. Unknown mobile-style candidates
+  are logged once and remain untouched. Set
+  `debug.savr.diorama_tutorials=0` before launch to disable this final adapter.
+- Show the Diorama menu chord once per application session in a dedicated
+  top-centre notice for five seconds, independently of the movable timer HUD.
+- Make **Controls** open the active mode's guide first. `A` opens the secondary
+  **Customize Controls** page and `B` returns to the main menu; the guide and
+  remapping remain mode-specific.
+
 ## Package 63 touch-render tutorial capture
 
 - Intercept the verified retail `CFont::PrintString` entry and inspect only

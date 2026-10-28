@@ -9,9 +9,12 @@ import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.text.Layout;
+import android.text.Spannable;
+import android.text.SpannableStringBuilder;
 import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.view.Surface;
 
 import java.io.File;
@@ -170,6 +173,43 @@ public final class SavrApplication extends Application {
     private Typeface vrBigTypeface;
     private int vrTextRenders;
 
+    private static CharSequence styleVrText(String source) {
+        SpannableStringBuilder output = new SpannableStringBuilder();
+        int currentColor = Color.WHITE;
+        int colorStart = 0;
+        for (int index = 0; index < source.length();) {
+            if (source.charAt(index) == '~') {
+                int end = source.indexOf('~', index + 1);
+                if (end > index + 1 && end - index <= 32) {
+                    String marker = source.substring(index + 1, end);
+                    if (marker.equalsIgnoreCase("n")) {
+                        output.append('\n');
+                    } else if (marker.equalsIgnoreCase("p") ||
+                               marker.equalsIgnoreCase("w")) {
+                        if (currentColor != Color.WHITE &&
+                                output.length() > colorStart) {
+                            output.setSpan(new ForegroundColorSpan(currentColor),
+                                    colorStart, output.length(),
+                                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        }
+                        currentColor = marker.equalsIgnoreCase("p")
+                                ? Color.rgb(196, 116, 255) : Color.WHITE;
+                        colorStart = output.length();
+                    }
+                    // All GTA formatting/widget markers stay non-printing.
+                    index = end + 1;
+                    continue;
+                }
+            }
+            output.append(source.charAt(index++));
+        }
+        if (currentColor != Color.WHITE && output.length() > colorStart) {
+            output.setSpan(new ForegroundColorSpan(currentColor), colorStart,
+                    output.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return output;
+    }
+
     /**
      * Rasterise one current game string, not a screenshot crop. Native calls
      * this only when the text changes and uploads the returned transparent
@@ -179,9 +219,8 @@ public final class SavrApplication extends Application {
         if (width <= 0 || height <= 0 || source == null || source.isEmpty()) {
             return new int[0];
         }
-        String text = source.replace("~n~", "\n")
-                .replaceAll("~[A-Za-z0-9_]+~", "");
-        if (text.isEmpty()) {
+        CharSequence text = styleVrText(source);
+        if (TextUtils.isEmpty(text)) {
             return new int[0];
         }
 
