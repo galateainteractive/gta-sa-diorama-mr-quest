@@ -48,9 +48,6 @@
 namespace savr::vrcam {
 namespace {
 
-bool LogTutorialBufferSnapshot(const char* channel, int slot,
-                               const std::int16_t* text, int capacity);
-
 // The scene camera matrix inside CCamera. Proven by disassembly: both
 // CalculateDerivedValues and CopyCameraMatrixToRWCam read these exact offsets.
 // Four CVectors (right/forward/up/pos), 0x10 stride, each vector three floats.
@@ -22483,27 +22480,14 @@ void RenderGameplayHudPass() {
     // the final GXT text into CHud. Publish those characters directly instead
     // of asking the OpenXR compositor to discover them in a screenshot crop.
     const std::int16_t* helpText=nullptr;
-    if (tabletop::Enabled()) {
-        LogTutorialBufferSnapshot("brief-buffer", 0,
-                                  g.CHud_m_Message, 400);
-        if (g.CHud_m_BigMessage) {
-            for (int style=0;style<8;++style) {
-                LogTutorialBufferSnapshot("big-buffer", style,
-                                          g.CHud_m_BigMessage+style*128,
-                                          128);
-            }
-        }
-    }
     if (g.CWidgetHelpText_m_pInstance&&*g.CWidgetHelpText_m_pInstance) {
         const auto* widget=static_cast<const std::uint8_t*>(
             *g.CWidgetHelpText_m_pInstance);
         // Ten retail help queue entries, each 0x334 bytes. The first 800 bytes
-        // of an entry are GxtChar[400]. Diagnose every occupied entry even if
-        // GTA bypassed AddMessageToQueue, then publish the first one as before.
+        // of an entry are GxtChar[400]. Publish the first occupied entry.
         for (int slot=0;slot<10;++slot) {
             const auto* candidate=reinterpret_cast<const std::int16_t*>(
                 widget+0xcc+slot*0x334);
-            LogTutorialBufferSnapshot("help-buffer", slot, candidate, 400);
             if (candidate[0]!=0) {
                 if (!helpText) helpText=candidate;
             }
@@ -26935,147 +26919,8 @@ void* InstallTrampoline(void* target, void* replacement) {
     return tramp;
 }
 
-// Android's mobile tutorials all enter the same CWidgetHelpText queue before
-// they are styled or rendered. Observing this boundary is both more complete
-// and cheaper to test than trying to catch a short-lived help card in logcat:
-// every distinct source string is reported once when GTA enqueues it.
-using WidgetHelpAddMessageFn = void (*)(void* self, std::int16_t* text,
-                                        bool topStyle,
-                                        std::uint16_t displayTime,
-                                        float width, float height,
-                                        std::uint32_t flags);
-WidgetHelpAddMessageFn g_origWidgetHelpAddMessage = nullptr;
 using FontPrintStringFn = void (*)(float x, float y, std::int16_t* text);
 FontPrintStringFn g_origFontPrintString = nullptr;
-
-std::uint32_t TutorialQueueHash(const std::int16_t* text, int capacity) {
-    std::uint32_t hash = 2166136261u;
-    if (!text) return hash;
-    const int boundedCapacity = std::clamp(capacity, 0, 400);
-    for (int i = 0; i < boundedCapacity && text[i] != 0; ++i) {
-        const std::uint16_t value = static_cast<std::uint16_t>(text[i]);
-        hash ^= value & 0xffu;
-        hash *= 16777619u;
-        hash ^= value >> 8u;
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
-std::string TutorialQueuePreview(const std::int16_t* text, int capacity) {
-    std::string preview;
-    if (!text) return preview;
-    preview.reserve(240);
-    const int boundedCapacity = std::clamp(capacity, 0, 400);
-    for (int i = 0; i < boundedCapacity && text[i] != 0 &&
-         preview.size() < 239u; ++i) {
-        const std::uint16_t value = static_cast<std::uint16_t>(text[i]);
-        if (value == '\n' || value == '\r' || value == '\t') {
-            preview.push_back(' ');
-        } else if (value >= 0x20u && value < 0x7fu) {
-            preview.push_back(static_cast<char>(value));
-        } else {
-            preview.push_back('?');
-        }
-    }
-    return preview;
-}
-
-bool LogTutorialBufferSnapshot(const char* channel, int slot,
-                               const std::int16_t* text, int capacity) {
-    if (!tabletop::Enabled() || !text || capacity <= 0 || text[0] == 0)
-        return false;
-    const std::uint32_t textHash = TutorialQueueHash(text, capacity);
-    std::uint32_t channelHash = 2166136261u;
-    if (channel) {
-        for (const char* c=channel;*c!='\0';++c) {
-            channelHash ^= static_cast<std::uint8_t>(*c);
-            channelHash *= 16777619u;
-        }
-    }
-    const std::uint64_t key =
-        (static_cast<std::uint64_t>(textHash) << 32u) ^
-        static_cast<std::uint64_t>(channelHash) ^
-        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(slot)) << 1u);
-    static std::mutex logMutex;
-    static std::vector<std::uint64_t> loggedKeys;
-    bool firstOccurrence = false;
-    {
-        std::lock_guard<std::mutex> lock(logMutex);
-        if (std::find(loggedKeys.begin(), loggedKeys.end(), key) ==
-            loggedKeys.end()) {
-            if (loggedKeys.size() >= 512u) loggedKeys.erase(loggedKeys.begin());
-            loggedKeys.push_back(key);
-            firstOccurrence = true;
-        }
-    }
-    if (!firstOccurrence) return false;
-    const std::string preview = TutorialQueuePreview(text, capacity);
-    LOGI("[tabletop.tutorial.buffer] channel=%s slot=%d hash=%08x "
-         "capacity=%d text=%.239s",
-         channel ? channel : "unknown", slot, textHash, capacity,
-         preview.c_str());
-    return true;
-}
-
-void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
-                            std::uint16_t displayTime, float width,
-                            float height, std::uint32_t flags) {
-    if (tabletop::Enabled() && text && text[0] != 0) {
-        const std::uint32_t hash = TutorialQueueHash(text, 400);
-        static std::mutex logMutex;
-        static std::vector<std::uint32_t> loggedHashes;
-        bool firstOccurrence = false;
-        {
-            std::lock_guard<std::mutex> lock(logMutex);
-            if (std::find(loggedHashes.begin(), loggedHashes.end(), hash) ==
-                loggedHashes.end()) {
-                if (loggedHashes.size() >= 256u)
-                    loggedHashes.erase(loggedHashes.begin());
-                loggedHashes.push_back(hash);
-                firstOccurrence = true;
-            }
-        }
-        if (firstOccurrence) {
-            const std::string preview = TutorialQueuePreview(text, 400);
-            LOGI("[tabletop.tutorial.queue] hash=%08x top=%d time=%u "
-                 "size=%.1fx%.1f flags=%u text=%.239s",
-                 hash, topStyle ? 1 : 0,
-                 static_cast<unsigned>(displayTime),
-                 static_cast<double>(width), static_cast<double>(height),
-                 static_cast<unsigned>(flags), preview.c_str());
-        }
-    }
-    if (g_origWidgetHelpAddMessage) {
-        g_origWidgetHelpAddMessage(self, text, topStyle, displayTime,
-                                   width, height, flags);
-    }
-}
-
-bool TutorialTextContainsAsciiNoCase(const std::int16_t* text, int capacity,
-                                     const char* needle) {
-    if (!text || capacity <= 0 || !needle || !needle[0]) return false;
-    int needleLength = 0;
-    while (needle[needleLength] != '\0') ++needleLength;
-    const auto fold=[](int character) {
-        return character >= 'A' && character <= 'Z'
-            ? character + ('a' - 'A') : character;
-    };
-    for (int start = 0; start + needleLength <= capacity &&
-                        text[start] != 0; ++start) {
-        bool matches = true;
-        for (int i = 0; i < needleLength; ++i) {
-            if (text[start + i] == 0 ||
-                fold(static_cast<std::uint16_t>(text[start + i])) !=
-                    fold(static_cast<unsigned char>(needle[i]))) {
-                matches = false;
-                break;
-            }
-        }
-        if (matches) return true;
-    }
-    return false;
-}
 
 bool LooksLikeDioramaTouchTutorial(const std::int16_t* text, int capacity) {
     // Semantic controls and exact screen-region phrases can be adapted. Generic
@@ -27087,9 +26932,20 @@ bool LooksLikeDioramaTouchTutorial(const std::int16_t* text, int capacity) {
         "touch the screen", "climb out of the water", "crouch ~a~",
         "tap ", "swipe ", "weapon icon",
     };
+    if (!text || capacity <= 0) return false;
+    char ascii[401]{};
+    const int boundedCapacity = std::clamp(capacity, 0, 400);
+    int length = 0;
+    while (length < boundedCapacity && text[length] != 0) {
+        const std::uint16_t value = static_cast<std::uint16_t>(text[length]);
+        const char character = value < 0x80u ? static_cast<char>(value) : '?';
+        ascii[length] = character >= 'A' && character <= 'Z'
+            ? static_cast<char>(character + ('a' - 'A')) : character;
+        ++length;
+    }
+    ascii[length] = '\0';
     for (const char* signal : kSignals) {
-        if (TutorialTextContainsAsciiNoCase(text, capacity, signal))
-            return true;
+        if (std::strstr(ascii, signal)) return true;
     }
     return false;
 }
@@ -27120,63 +26976,10 @@ void OnFontPrintString(float x, float y, std::int16_t* text) {
             static_cast<int>(adaptedText.size()))) {
         renderedText = adaptedText.data();
     }
-    const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>(
-        __builtin_return_address(0));
-    const std::uintptr_t callerOffset =
-        g.LoadBase && caller >= g.LoadBase ? caller - g.LoadBase : 0u;
-    // All four retail help-text PrintString call sites live inside this exact
-    // audited range. Other HUD/subtitle/font traffic takes the untouched fast
-    // path, so the diagnostic cannot become a general per-frame text logger.
-    constexpr std::uintptr_t kHelpTextBegin = 0x364414u;
-    constexpr std::uintptr_t kHelpTextEnd = 0x3654b4u;
-    if (tabletop::Enabled() && callerOffset >= kHelpTextBegin &&
-        callerOffset < kHelpTextEnd) {
-        const bool firstOccurrence = LogTutorialBufferSnapshot(
-            "touch-print", static_cast<int>(callerOffset), text, 400);
-        if (firstOccurrence) {
-            const std::string preview = TutorialQueuePreview(text, 400);
-            LOGI("[tabletop.tutorial.render] caller=0x%lx x=%.1f y=%.1f "
-                 "text=%.239s",
-                 static_cast<unsigned long>(callerOffset),
-                 static_cast<double>(x), static_cast<double>(y),
-                 preview.c_str());
-        }
-    }
     if (g_origFontPrintString) g_origFontPrintString(x, y, renderedText);
 }
 
-bool InstallTutorialQueueDiagnostic() {
-    if (!tabletop::Enabled() || !g.LoadBase) return true;
-    void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
-    void* const target = handle ? dlsym(
-        handle, "_ZN15CWidgetHelpText17AddMessageToQueueEPsbtffj") : nullptr;
-    constexpr std::uintptr_t kRetailOffset = 0x364014u;
-    static constexpr std::uint32_t kRetailPrologue[4] = {
-        0xfc190feau, 0x6d0123e9u, 0xa9027bfdu, 0xa90367fcu,
-    };
-    bool fingerprint = target &&
-        reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == kRetailOffset;
-    std::uint32_t observed[4]{};
-    if (fingerprint) {
-        std::memcpy(observed, target, sizeof(observed));
-        fingerprint = std::memcmp(observed, kRetailPrologue,
-                                  sizeof(observed)) == 0;
-    }
-    if (fingerprint) {
-        g_origWidgetHelpAddMessage =
-            reinterpret_cast<WidgetHelpAddMessageFn>(InstallTrampoline(
-                target, reinterpret_cast<void*>(&OnWidgetHelpAddMessage)));
-    }
-    LOGI("[tabletop.tutorial.queue] install active=%d fingerprint=%d "
-         "target=%p offset=0x%lx",
-         g_origWidgetHelpAddMessage ? 1 : 0, fingerprint ? 1 : 0, target,
-         target ? static_cast<unsigned long>(
-             reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul);
-    if (handle) dlclose(handle);
-    return g_origWidgetHelpAddMessage != nullptr;
-}
-
-bool InstallTutorialRenderDiagnostic() {
+bool InstallTutorialRenderAdapter() {
     if (!tabletop::Enabled() || !g.LoadBase) return true;
     void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
     void* const target = handle ? dlsym(
@@ -27198,7 +27001,7 @@ bool InstallTutorialRenderDiagnostic() {
             InstallTrampoline(target,
                               reinterpret_cast<void*>(&OnFontPrintString)));
     }
-    LOGI("[tabletop.tutorial.render] install active=%d fingerprint=%d "
+    LOGI("[tabletop.tutorial] adapter active=%d fingerprint=%d "
          "target=%p offset=0x%lx mode=global-content-filter",
          g_origFontPrintString ? 1 : 0, fingerprint ? 1 : 0, target,
          target ? static_cast<unsigned long>(
@@ -32694,11 +32497,10 @@ bool Install() {
     }
     LOGI("[vr] head-tracked camera hook installed on CopyCameraMatrixToRWCam");
 
-    // Capture every distinct mobile tutorial at its common enqueue boundary.
-    // This is diagnostic-only: the retail string and queue behavior are left
-    // untouched, and the hook fails closed on any non-2.11.311 binary.
-    InstallTutorialQueueDiagnostic();
-    InstallTutorialRenderDiagnostic();
+    // Adapt only known mobile-control strings at the final stock font boundary.
+    // The former queue/buffer diagnostics are retired from production; unknown
+    // candidates are logged once by the adapter and otherwise remain untouched.
+    InstallTutorialRenderAdapter();
 
     // Bind the user-facing shadow toggle to MobileSettings entry 5 and install
     // the fingerprinted eight-vehicle budget before the first gameplay frame.

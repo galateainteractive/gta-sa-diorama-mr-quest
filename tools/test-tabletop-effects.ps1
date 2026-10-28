@@ -547,13 +547,12 @@ Write-Output 'PASS Package 60 three-channel Diorama tutorial controls'
 
 foreach ($sourcePattern in @(
         'constexpr int tipsRow = 0',
-        'DIORAMA MENU - HOLD BOTH GRIPS \+ MENU \(OR Y\)',
-        'sessionMenuReminderShown')) {
+        'HOLD BOTH GRIPS \+ MENU \(OR Y\)')) {
     if (($xrSource + $mainSource) -notmatch $sourcePattern) {
         throw "Package 60 menu-discovery audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 60 first-row guide and per-session menu reminder'
+Write-Output 'PASS Package 60 first-row guide and menu-chord discovery text'
 
 # Package 57 also replaces the crowded one-screen Diorama reference with two
 # colour-grouped pages and keeps the first-run welcome focused on discovery.
@@ -591,49 +590,9 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 59 hollow low-opacity Diorama objective cones'
 
-# Package 61 observes the single stock mobile-help enqueue boundary. Verify the
-# exact retail prologue as well as the fail-closed source guards and the fast
-# current-time logcat capture used for headset validation.
-$tutorialQueue = (& $Objdump -d --start-address=0x364014 --stop-address=0x364024 $LibGame) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'Tutorial queue disassembly failed' }
-foreach ($word in @('fc190fea', '6d0123e9', 'a9027bfd', 'a90367fc')) {
-    if ($tutorialQueue -notmatch $word) {
-        throw "Package 61 tutorial queue prologue mismatch: $word"
-    }
-}
-$captureSource = Get-Content -Raw -LiteralPath (
-    Join-Path $projectRoot 'tools\capture-tabletop-diagnostics.ps1')
-foreach ($sourcePattern in @(
-        'InstallTutorialQueueDiagnostic\(\)',
-        '_ZN15CWidgetHelpText17AddMessageToQueueEPsbtffj',
-        'kRetailOffset = 0x364014u',
-        '\[tabletop\.tutorial\.queue\]',
-        'loggedHashes\.size\(\) >= 256u',
-        'logcat -T 1 -v threadtime')) {
-    if (($cameraSource + $captureSource) -notmatch $sourcePattern) {
-        throw "Package 61 tutorial queue audit failed: $sourcePattern"
-    }
-}
-Write-Output 'PASS Package 61 complete tutorial queue capture and fast logcat start'
-
-# Package 62 reads every final tutorial buffer even when the stock game bypasses
-# the enqueue function observed by Package 61.
-foreach ($sourcePattern in @(
-        'LogTutorialBufferSnapshot\("brief-buffer", 0',
-        'for \(int style=0;style<8;\+\+style\)',
-        'LogTutorialBufferSnapshot\("big-buffer", style',
-        'for \(int slot=0;slot<10;\+\+slot\)',
-        'LogTutorialBufferSnapshot\("help-buffer", slot',
-        '\[tabletop\.tutorial\.buffer\]',
-        'loggedKeys\.size\(\) >= 512u')) {
-    if ($cameraSource -notmatch $sourcePattern) {
-        throw "Package 62 direct tutorial-buffer audit failed: $sourcePattern"
-    }
-}
-Write-Output 'PASS Package 62 direct brief, big and ten-slot help capture'
-
-# Package 63 captures only CFont::PrintString calls originating from the
-# audited CWidgetHelpText range.
+# Packages 61-63 established the retail text path. Production now keeps only
+# the final adapter hook and explicitly retires the old queue and per-frame
+# buffer diagnostics.
 $fontPrint = (& $Objdump -d --start-address=0x5d6ec4 --stop-address=0x5d6ed4 $LibGame) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw 'CFont::PrintString disassembly failed' }
 foreach ($word in @('d10183ff', '6d0223e9', 'a9037bfd', 'f90023f5')) {
@@ -642,17 +601,25 @@ foreach ($word in @('d10183ff', '6d0223e9', 'a9037bfd', 'f90023f5')) {
     }
 }
 foreach ($sourcePattern in @(
-        'InstallTutorialRenderDiagnostic\(\)',
+        'InstallTutorialRenderAdapter\(\)',
         '_ZN5CFont11PrintStringEffPs',
         'kRetailOffset = 0x5d6ec4u',
-        'kHelpTextBegin = 0x364414u',
-        'kHelpTextEnd = 0x3654b4u',
-        '\[tabletop\.tutorial\.render\]')) {
+        'former queue/buffer diagnostics are retired')) {
     if ($cameraSource -notmatch $sourcePattern) {
-        throw "Package 63 touch-render tutorial audit failed: $sourcePattern"
+        throw "Production tutorial-adapter audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 63 scoped touch-render tutorial capture'
+foreach ($retiredPattern in @(
+        'InstallTutorialQueueDiagnostic',
+        'LogTutorialBufferSnapshot',
+        '\[tabletop\.tutorial\.buffer\]',
+        '\[tabletop\.tutorial\.queue\]',
+        'kHelpTextBegin = 0x364414u')) {
+    if ($cameraSource -match $retiredPattern) {
+        throw "Retired production tutorial diagnostic remains: $retiredPattern"
+    }
+}
+Write-Output 'PASS production final-font adapter with old tutorial diagnostics retired'
 
 # Package 64 turns the validated global CFont boundary into a conservative
 # Diorama-only adapter. It must retain a fast content prefilter, a shell escape
@@ -664,7 +631,6 @@ foreach ($sourcePattern in @(
         'AdaptDioramaTutorialForStockRender',
         '~p~DIORAMA MR TIP~w~:',
         'mode=global-content-filter',
-        'PublishCenteredNoticeText',
         'CUSTOMIZE CONTROLS',
         'A  CUSTOMIZE CONTROLS',
         'menuPage = PG_CONTROLS_TIPS')) {
@@ -672,14 +638,13 @@ foreach ($sourcePattern in @(
         throw "Package 64 final tutorial/control-discovery audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 64 filtered tutorials, centred reminder and guide-first Controls'
+Write-Output 'PASS Package 64 filtered tutorials and guide-first Controls'
 
 # Package 65 fixes the brand-new-install reminder handoff and expands only the
 # exact opening Android tutorials proven in the official English GXT. Generic
 # touch wording is diagnostic-only; only known widget prompts normalise Tap to
 # Press after a successful control replacement.
 foreach ($sourcePattern in @(
-        'Do not consume the session reminder here',
         'Use the Left Stick to move Carl\.',
         'Walk into the red marker to continue\. Hold B to sprint\.',
         'Press R3 to open the weapon selector\.',
@@ -693,4 +658,21 @@ foreach ($sourcePattern in @(
         throw "Package 65 opening-tutorial/reminder audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 65 first-session reminder and exact opening tutorials'
+Write-Output 'PASS Package 65 exact opening tutorials'
+
+# Package 66 replaces the unreliable transient HUD notice with one persistent,
+# cached and transparent banner over every GTA frontend/pause menu.
+foreach ($sourcePattern in @(
+        'void BuildFrontendMenuHint\(\)',
+        'DIORAMA MR MENU',
+        'HOLD BOTH GRIPS \+ MENU \(OR Y\)',
+        'OPEN VR SETTINGS AND CONTROLS',
+        'const bool frontendHint = !configuredPanel',
+        'constexpr std::uint64_t kFrontendHintRevision',
+        'const bool cacheablePanel = profilerPanel \|\| frontendHint',
+        'const bool frontendMenuHint = tabletop::Enabled\(\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 66 persistent frontend hint audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 66 persistent cached GTA-menu discovery banner'

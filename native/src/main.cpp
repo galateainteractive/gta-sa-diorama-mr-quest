@@ -1028,7 +1028,6 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
                 gfxSel = 0, gfxDistanceSel = 0, controlsSel = 0;
     static int  controlsTipsPage = 0;
     static bool aboutFirstRun = false, aboutArmed = false;
-    static bool sessionMenuReminderShown = false;
     static bool openPrev = false, enterPrev = false, backPrev = false;
     static int  tUp = 0, tDown = 0, tMinus = 0, tPlus = 0;
     // One RIGHT/master calibration drives both hands. Frame counts provide the
@@ -1125,15 +1124,6 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             menuPage = PG_ABOUT;
             aboutFirstRun = true;
             aboutArmed = false;
-            // Do not consume the session reminder here. Once the Welcome is
-            // closed and CJ becomes controllable again, the centred chord hint
-            // must still be shown — especially on a brand-new installation.
-        } else if (controllableGameplay && tabletop::Enabled() &&
-                   savr::locomotion::WelcomeSeen() &&
-                   !sessionMenuReminderShown) {
-            xr::PublishCenteredNoticeText(
-                "DIORAMA MENU - HOLD BOTH GRIPS + MENU (OR Y)", 5.0f);
-            sessionMenuReminderShown = true;
         }
 
         const bool openChord = grips && (in.menu || in.y);

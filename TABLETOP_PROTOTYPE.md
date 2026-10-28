@@ -355,3 +355,12 @@ the exact opening Android cards from the user's verified `american.gxt` to the
 Quest controls for movement, sprint, weapon selection and melee. Known semantic
 widgets may safely normalise `Tap` to `Press`; unknown touch wording is logged
 once and otherwise remains unchanged.
+
+Package 66 replaces the short gameplay reminder with a persistent lower banner
+on GTA's own frontend and pause-menu theater screen. The banner is transparent
+outside its compact high-contrast card and uses the existing cached OpenXR menu
+swapchain, so it is present whenever players need to rediscover the Diorama
+menu chord without adding gameplay composition work. The temporary tutorial
+enqueue hook, per-frame help-buffer scans and scoped final-render diagnostics
+from Packages 61-63 are removed from production; only the bounded final-font
+adapter and once-per-unknown-text reporting remain.

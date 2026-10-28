@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 66 persistent GTA-menu Diorama discovery
+
+- Replace the unreliable timed gameplay reminder with a persistent transparent
+  banner over GTA's own frontend and pause-menu theater screen. Every menu visit
+  now shows a large `DIORAMA MR MENU` heading and
+  `HOLD BOTH GRIPS + MENU (OR Y)` at the bottom without covering the menu.
+- Cache the banner in the existing OpenXR panel swapchain. Its pixels upload
+  only when a swapchain image first needs the fixed content, not every frame.
+- Retire the Package 61-63 production diagnostics: remove the enqueue hook,
+  the per-frame scans of brief/big/ten help buffers and the scoped render logs.
+  The required final-font adapter remains fingerprint-guarded and uses one
+  bounded ASCII prefilter; unknown touch tutorials log only once per phrase.
+
 ## Package 65 first-session reminder and opening tutorials
 
 - Keep the centred Diorama-menu reminder pending while the one-time Welcome

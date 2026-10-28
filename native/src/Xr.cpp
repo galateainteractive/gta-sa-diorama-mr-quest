@@ -85,8 +85,6 @@ struct HudTextState {
     std::u16string radio;
     std::u16string status;
     std::uint64_t statusUntilNs{};
-    std::u16string centeredNotice;
-    std::uint64_t centeredNoticeUntilNs{};
     int bigStyle{};
     std::uint64_t revision{};
 };
@@ -105,7 +103,6 @@ struct HudTextTexture {
 HudTextTexture g_briefTextTexture;
 HudTextTexture g_bigTextTexture;
 HudTextTexture g_timerTextTexture;
-HudTextTexture g_centeredNoticeTexture;
 
 bool ReplaceAll(std::u16string& text, std::u16string_view needle,
                 std::u16string_view replacement) {
@@ -4787,13 +4784,6 @@ HudTextState SnapshotHudText() {
         g_hudTextState.statusUntilNs = 0;
         ++g_hudTextState.revision;
     }
-    if (!g_hudTextState.centeredNotice.empty() &&
-        g_hudTextState.centeredNoticeUntilNs != 0 &&
-        MonotonicNowNs() >= g_hudTextState.centeredNoticeUntilNs) {
-        g_hudTextState.centeredNotice.clear();
-        g_hudTextState.centeredNoticeUntilNs = 0;
-        ++g_hudTextState.revision;
-    }
     return g_hudTextState;
 }
 
@@ -4940,8 +4930,6 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     UpdateHudTextTexture(g_briefTextTexture,smallText,0,textureRevision);
     UpdateHudTextTexture(g_bigTextTexture,bigText,1,textureRevision);
     UpdateHudTextTexture(g_timerTextTexture,timerText,0,textureRevision);
-    UpdateHudTextTexture(g_centeredNoticeTexture,textState.centeredNotice,0,
-                         textureRevision);
     // Per-eye convergence: shift every destination rect toward the nose by
     // the parallax of a plane kHudPlaneDistanceMetres away, so crops and
     // text fuse at that depth instead of at infinity behind the world.
@@ -5050,20 +5038,6 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     drawDirectText(hud::HELP_TEXT,g_briefTextTexture);
     drawDirectText(hud::TIMERS,g_timerTextTexture);
 
-    // This reminder is deliberately independent of HUD calibration. It is a
-    // short session-level discoverability hint, not a persistent game HUD
-    // element, and therefore always occupies a small top-centre safe area.
-    if (g_centeredNoticeTexture.visible && g_centeredNoticeTexture.texture) {
-        constexpr float kNoticeWidth = 0.66f;
-        constexpr float kNoticeHeight = 0.11f;
-        glBindTexture(GL_TEXTURE_2D,g_centeredNoticeTexture.texture);
-        glUniform4f(s.hudCompositeSourceRectUniform,0.0f,0.0f,1.0f,1.0f);
-        glUniform4f(s.hudCompositeDestinationRectUniform,
-                    (1.0f-kNoticeWidth)*0.5f+hudDepthShiftUv,0.035f,
-                    kNoticeWidth,kNoticeHeight);
-        glUniform1f(s.hudCompositeHighlightUniform,0.0f);
-        glDrawArrays(GL_TRIANGLES,0,3);
-    }
 
     if (calibrating) {
         // The calibration sample is always drawn at the element's real final
@@ -5955,23 +5929,6 @@ void PublishStatusText(const char* text, float durationSeconds) {
     g_hudTextState.status = std::move(next);
     g_hudTextState.statusUntilNs = g_hudTextState.status.empty()
         ? 0 : MonotonicNowNs() + durationNs;
-    ++g_hudTextState.revision;
-}
-
-void PublishCenteredNoticeText(const char* text, float durationSeconds) {
-    std::u16string next;
-    if (text) {
-        for (const char* c = text; *c != '\0' && next.size() < 96; ++c)
-            next.push_back(static_cast<char16_t>(
-                static_cast<unsigned char>(*c)));
-    }
-    const std::uint64_t durationNs = static_cast<std::uint64_t>(
-        std::max(0.0f, durationSeconds) * 1000000000.0f);
-    std::lock_guard<std::mutex> lock(g_hudTextMutex);
-    g_hudTextState.centeredNotice = std::move(next);
-    g_hudTextState.centeredNoticeUntilNs =
-        g_hudTextState.centeredNotice.empty()
-            ? 0 : MonotonicNowNs() + durationNs;
     ++g_hudTextState.revision;
 }
 
@@ -7935,6 +7892,19 @@ void PanelClear() {
     }
 }
 
+void BuildFrontendMenuHint() {
+    // The GTA frontend remains visible underneath. Only this compact lower
+    // banner is opaque enough to guarantee contrast against every menu page.
+    std::memset(g_panelPixels, 0, sizeof(g_panelPixels));
+    constexpr int cx = kPanelW / 2;
+    PanelFillRect(22, 372, kPanelW - 22, 502, 12, 14, 34, 224);
+    PanelTextOutlined("DIORAMA MR MENU", cx, 390, 4, 255, 185, 105);
+    PanelTextOutlined("HOLD BOTH GRIPS + MENU (OR Y)", cx, 442, 2,
+                      235, 242, 255);
+    PanelTextOutlined("OPEN VR SETTINGS AND CONTROLS", cx, 474, 2,
+                      145, 220, 255);
+}
+
 // Root VR menu: the list of sections (Vice City style). A enters a section, B
 // closes. The stick moves the highlight.
 // Vice City parity: the CONTROLS page. One layout row (DEFAULT / SWAPPED
@@ -9289,15 +9259,25 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
     const bool controlsMenuA = g_controlsMenuActive.load(std::memory_order_relaxed);
     const bool controlsTipsA = g_controlsTipsActive.load(std::memory_order_relaxed);
     const bool aboutMenuA = g_aboutActive.load(std::memory_order_relaxed);
-    const bool profilerPanel = !(mainMenu || calibMenu || holsterCalibMenu ||
+    const bool configuredPanel = mainMenu || calibMenu || holsterCalibMenu ||
         holsterMenu || drivingMenu || drivingCalibMenu || locomotionMenu ||
         vehicleCameraMenu ||
         basketballMenu || basketballCalibMenu || hudMenu ||
         graphicsMenu || graphicsDistanceMenu || cheatMenu ||
-        controlsMenuA || controlsTipsA || aboutMenuA);
+        controlsMenuA || controlsTipsA || aboutMenuA;
+    const bool frontendHint = !configuredPanel && !s.debugVisible &&
+        tabletop::Enabled() && vrcam::IsMobileMenuOpen();
+    const bool profilerPanel = !configuredPanel && !frontendHint;
 
     std::uint64_t contentRevision = 0;
-    if (profilerPanel) {
+    if (frontendHint) {
+        constexpr std::uint64_t kFrontendHintRevision = 0xd10a0001ull;
+        contentRevision = kFrontendHintRevision;
+        if (g_profilerPanelRevision != contentRevision) {
+            BuildFrontendMenuHint();
+            g_profilerPanelRevision = contentRevision;
+        }
+    } else if (profilerPanel) {
         contentRevision = perf::DebugStatsRevision();
         if (g_profilerPanelRevision != contentRevision) {
             const perf::DebugStatsSnapshot stats = perf::GetDebugStats();
@@ -9358,7 +9338,9 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
             g_debugImageNames[i] = s.debug.images[i].image;
         g_debugImageRevisions.assign(s.debug.images.size(), ~std::uint64_t{0});
     }
-    const bool needsUpload = !profilerPanel || idx >= g_debugImageRevisions.size() ||
+    const bool cacheablePanel = profilerPanel || frontendHint;
+    const bool needsUpload = !cacheablePanel ||
+        idx >= g_debugImageRevisions.size() ||
         g_debugImageRevisions[idx] != contentRevision;
     if (needsUpload) {
         GLint prevTex = 0;
@@ -9368,7 +9350,7 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kPanelW, kPanelH,
                         GL_RGBA, GL_UNSIGNED_BYTE, g_panelPixels);
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
-        if (profilerPanel && idx < g_debugImageRevisions.size())
+        if (cacheablePanel && idx < g_debugImageRevisions.size())
             g_debugImageRevisions[idx] = contentRevision;
     }
 
@@ -13955,7 +13937,10 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         // submit the old three crop quads: their opaque black background and
         // guessed SA regions were the broken path.
 
-        // FPS/debug panel on top, as a head-locked quad (both grips + A toggles it).
+        // FPS/debug panel, VR settings, or the persistent Diorama frontend
+        // discovery banner on top as one shared head-locked quad.
+        const bool frontendMenuHint = tabletop::Enabled() &&
+            vrcam::IsMobileMenuOpen() && !s.debugVisible;
         if ((s.debugVisible || g_menuVisible.load(std::memory_order_relaxed) ||
              g_calibActive.load(std::memory_order_relaxed) ||
              g_mainMenuActive.load(std::memory_order_relaxed) ||
@@ -13972,7 +13957,8 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
              g_gfxDistanceActive.load(std::memory_order_relaxed) ||
              g_controlsMenuActive.load(std::memory_order_relaxed) ||
              g_controlsTipsActive.load(std::memory_order_relaxed) ||
-             g_aboutActive.load(std::memory_order_relaxed)) &&
+             g_aboutActive.load(std::memory_order_relaxed) ||
+             frontendMenuHint) &&
             PresentDebugPanel(debugQuad)) {
             layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&debugQuad);
         }
