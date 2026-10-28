@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Serial = '2G0YC1ZF7B08DM',
+    [string]$Serial = '',
     [string]$OutputDirectory = ''
 )
 
@@ -25,6 +25,32 @@ if (-not $adb) {
     throw "ADB was not found. Checked paths: $($adbCandidates -join '; ')"
 }
 
+& $adb start-server | Out-Host
+if ([string]::IsNullOrWhiteSpace($Serial)) {
+    $authorizedQuests = @(
+        & $adb devices -l |
+            ForEach-Object {
+                if ($_ -match '^\s*(\S+)\s+device\s+.*\bmodel:Quest(?:_|\s)') {
+                    $Matches[1]
+                }
+            }
+    )
+    if ($authorizedQuests.Count -eq 0) {
+        throw 'No authorized Meta Quest was found. Connect the headset, accept USB debugging inside it, and run this BAT again.'
+    }
+    if ($authorizedQuests.Count -gt 1) {
+        throw "More than one authorized Quest was found: $($authorizedQuests -join ', '). Disconnect the headset you do not want to capture."
+    }
+    $Serial = $authorizedQuests[0]
+} else {
+    $requested = @(& $adb devices | Where-Object {
+        $_ -match ('^\s*' + [regex]::Escape($Serial) + '\s+device(?:\s|$)')
+    })
+    if ($requested.Count -ne 1) {
+        throw "Requested Quest is not connected and authorized: $Serial"
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $logPath = Join-Path $OutputDirectory "tabletop-$stamp.log"
@@ -44,7 +70,6 @@ Write-Host ''
 
 while ($true) {
     try {
-        & $adb start-server 2>&1 | Tee-Object -FilePath $logPath -Append | Out-Host
         & $adb -s $Serial wait-for-device 2>&1 |
             Tee-Object -FilePath $logPath -Append | Out-Host
         "# connected $(Get-Date -Format o)" |
