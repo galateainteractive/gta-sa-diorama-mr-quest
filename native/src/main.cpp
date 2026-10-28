@@ -1028,6 +1028,7 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
                 gfxSel = 0, gfxDistanceSel = 0, controlsSel = 0;
     static int  controlsTipsPage = 0;
     static bool aboutFirstRun = false, aboutArmed = false;
+    static bool sessionMenuReminderShown = false;
     static bool openPrev = false, enterPrev = false, backPrev = false;
     static int  tUp = 0, tDown = 0, tMinus = 0, tPlus = 0;
     // One RIGHT/master calibration drives both hands. Frame counts provide the
@@ -1115,14 +1116,22 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         }
         const bool widescreen = g.TheCamera &&
             *(reinterpret_cast<const std::uint8_t*>(g.TheCamera) + 0x43) != 0;
-        if (menuPage == PG_NONE && inGameplay && playerExists &&
-            !formalCutscene && controlsEnabled && !widescreen &&
+        const bool controllableGameplay = menuPage == PG_NONE && inGameplay &&
+            playerExists && !formalCutscene && controlsEnabled && !widescreen;
+        if (controllableGameplay &&
             !savr::locomotion::WelcomeSeen() &&
             (std::abs(in.leftStick[0]) >= 0.2f ||
              std::abs(in.leftStick[1]) >= 0.2f)) {
             menuPage = PG_ABOUT;
             aboutFirstRun = true;
             aboutArmed = false;
+            sessionMenuReminderShown = true;
+        } else if (controllableGameplay && tabletop::Enabled() &&
+                   savr::locomotion::WelcomeSeen() &&
+                   !sessionMenuReminderShown) {
+            xr::PublishStatusText(
+                "DIORAMA MENU: HOLD BOTH GRIPS + MENU (OR Y)", 7.0f);
+            sessionMenuReminderShown = true;
         }
 
         const bool openChord = grips && (in.menu || in.y);
@@ -1698,16 +1707,17 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             // Layout + five independent stick options + six button sources.
             // This page intentionally edits only the gameplay mapping; its own
             // navigation keeps consuming the raw left stick above.
-            const int firstStick = 1;
+            const int tipsRow = 0;
+            const int layoutRow = 1;
+            const int firstStick = layoutRow + 1;
             const int firstButton = firstStick + savr::locomotion::STICK_OPT_COUNT;
-            const int tipsRow = firstButton + savr::locomotion::BIND_SRC_COUNT;
-            const int resetRow = tipsRow + 1;
+            const int resetRow = firstButton + savr::locomotion::BIND_SRC_COUNT;
             const int backRow = resetRow + 1;
             const int NC = backRow + 1;
             if (navUp)   controlsSel = (controlsSel - 1 + NC) % NC;
             if (navDown) controlsSel = (controlsSel + 1) % NC;
             const int step = minus ? -1 : (plus ? 1 : 0);
-            if (controlsSel == 0 && (step || enter)) {
+            if (controlsSel == layoutRow && (step || enter)) {
                 const int layout = savr::locomotion::ControlsLayout();
                 savr::locomotion::ApplyControlsLayout(
                     layout == savr::locomotion::CONTROLS_LAYOUT_DEFAULT
@@ -1716,7 +1726,7 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             } else if (controlsSel >= firstStick && controlsSel < firstButton &&
                        (step || enter)) {
                 savr::locomotion::ToggleStickOption(controlsSel - firstStick);
-            } else if (controlsSel >= firstButton && controlsSel < tipsRow && step) {
+            } else if (controlsSel >= firstButton && controlsSel < resetRow && step) {
                 savr::locomotion::CycleButtonBinding(controlsSel - firstButton, step);
             }
             if (enter && controlsSel == tipsRow) {

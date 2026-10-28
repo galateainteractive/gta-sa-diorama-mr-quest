@@ -519,10 +519,10 @@ foreach ($sourcePattern in @(
 Write-Output 'PASS Package 55 compact ring labels and full centre names'
 
 # Package 56 introduced the copied Diorama help-string adapter. Package 57
-# applies the same bounded adapter to the brief channel used by early lessons,
-# and gives the bicycle tutorial exact Quest-native instructions.
+# applies it to brief/help, while Package 60 also covers large messages and
+# tolerates the formatting markers used by the retail bicycle lesson.
 foreach ($sourcePattern in @(
-        'std::u16string AdaptDioramaTutorialText\(std::u16string text\)',
+        'std::u16string AdaptDioramaTutorialText\(std::u16string text,',
         'text\.empty\(\) \|\| !tabletop::Enabled\(\)',
         '~widget_enter_targeting~", u"L2"',
         '~widget_attack~", u"X / R2 WHILE AIMING"',
@@ -535,13 +535,25 @@ foreach ($sourcePattern in @(
         'Left Stick up and down to shift your weight',
         'no partial "tap" rewriting is allowed',
         '\[tabletop\.tutorial\] unmapped',
+        '\[tabletop\.tutorial\] mobile-unmapped',
+        'nextBig=AdaptDioramaTutorialText\(std::move\(nextBig\), "big"\)',
         'nextBrief=AdaptDioramaTutorialText\(\s*copyGxt',
         'nextHelp=AdaptDioramaTutorialText')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 56 Diorama tutorial audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 57 two-channel Diorama tutorial controls'
+Write-Output 'PASS Package 60 three-channel Diorama tutorial controls'
+
+foreach ($sourcePattern in @(
+        'constexpr int tipsRow = 0',
+        'DIORAMA MENU: HOLD BOTH GRIPS \+ MENU \(OR Y\)',
+        'sessionMenuReminderShown')) {
+    if (($xrSource + $mainSource) -notmatch $sourcePattern) {
+        throw "Package 60 menu-discovery audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 60 first-row guide and per-session menu reminder'
 
 # Package 57 also replaces the crowded one-screen Diorama reference with two
 # colour-grouped pages and keeps the first-run welcome focused on discovery.

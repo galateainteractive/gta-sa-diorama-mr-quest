@@ -117,6 +117,25 @@ bool ReplaceAll(std::u16string& text, std::u16string_view needle,
     return changed;
 }
 
+bool ContainsAsciiNoCase(const std::u16string& text,
+                         std::u16string_view needle) {
+    if (needle.empty() || needle.size() > text.size()) return false;
+    const auto fold=[](char16_t c) {
+        return c >= u'A' && c <= u'Z' ? static_cast<char16_t>(c + 32) : c;
+    };
+    for (std::size_t start = 0; start + needle.size() <= text.size(); ++start) {
+        bool matches = true;
+        for (std::size_t i = 0; i < needle.size(); ++i) {
+            if (fold(text[start + i]) != fold(needle[i])) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) return true;
+    }
+    return false;
+}
+
 std::uint32_t TutorialTextHash(const std::u16string& text) {
     std::uint32_t hash = 2166136261u;
     for (const char16_t character : text) {
@@ -148,7 +167,8 @@ std::string TutorialTextPreview(const std::u16string& text) {
 // touch icon belonged. Replace only controls whose Diorama bridge is already
 // proven. The prose, language and original game buffers remain untouched;
 // unknown controls deliberately fall through to the retail text.
-std::u16string AdaptDioramaTutorialText(std::u16string text) {
+std::u16string AdaptDioramaTutorialText(std::u16string text,
+                                        const char* channel) {
     if (text.empty() || !tabletop::Enabled()) return text;
 
     struct WidgetLabel {
@@ -224,6 +244,30 @@ std::u16string AdaptDioramaTutorialText(std::u16string text) {
             break;
         }
     }
+
+    // Some GXT paths add colour/reset markers or split the sentence into the
+    // large-message channel. Match distinctive complete ideas as a safe
+    // fallback; this cannot rewrite unrelated mission prose merely containing
+    // a generic word such as "tap" or "bike".
+    if (ContainsAsciiNoCase(text, u"get on the bike") &&
+        (ContainsAsciiNoCase(text, u"widget_explicit_bicycle") ||
+         ContainsAsciiNoCase(text, u"tap"))) {
+        text.assign(u"Press Y to get on the bike.");
+        ++replacements;
+    } else if (ContainsAsciiNoCase(text, u"lower right corner") &&
+               ContainsAsciiNoCase(text, u"pedal")) {
+        text.assign(u"Hold R2 to pedal.");
+        ++replacements;
+    } else if (ContainsAsciiNoCase(text, u"left side of the screen") &&
+               ContainsAsciiNoCase(text, u"shift your weight")) {
+        text.assign(
+            u"Move the Left Stick up and down to shift your weight on the bike.");
+        ++replacements;
+    } else if (ContainsAsciiNoCase(text, u"bunny hop") &&
+               ContainsAsciiNoCase(text, u"lower right corner")) {
+        text.assign(u"Press A to do a bunny hop.");
+        ++replacements;
+    }
     for (const WidgetLabel& mapping : kWidgetLabels) {
         if (ReplaceAll(text, mapping.widget, mapping.label)) ++replacements;
     }
@@ -271,13 +315,26 @@ std::u16string AdaptDioramaTutorialText(std::u16string text) {
         }
     }
     if (firstOccurrence && replacements > 0) {
-        LOGI("[tabletop.tutorial] adapted hash=%08x controls=%d chars=%zu",
-             sourceHash, replacements, text.size());
+        LOGI("[tabletop.tutorial] adapted channel=%s hash=%08x controls=%d chars=%zu",
+             channel ? channel : "unknown", sourceHash, replacements,
+             text.size());
     }
     if (firstOccurrence && text.find(u"~widget_") != std::u16string::npos) {
         const std::string preview = TutorialTextPreview(text);
-        LOGI("[tabletop.tutorial] unmapped hash=%08x chars=%zu text=%.180s",
-             sourceHash, text.size(), preview.c_str());
+        LOGI("[tabletop.tutorial] unmapped channel=%s hash=%08x chars=%zu text=%.180s",
+             channel ? channel : "unknown", sourceHash, text.size(),
+             preview.c_str());
+    }
+    const bool mobileWording =
+        ContainsAsciiNoCase(text, u"lower right corner") ||
+        ContainsAsciiNoCase(text, u"left side of the screen") ||
+        ContainsAsciiNoCase(text, u"double tapping") ||
+        ContainsAsciiNoCase(text, u"touch the screen");
+    if (firstOccurrence && replacements == 0 && mobileWording) {
+        const std::string preview = TutorialTextPreview(text);
+        LOGI("[tabletop.tutorial] mobile-unmapped channel=%s hash=%08x chars=%zu text=%.180s",
+             channel ? channel : "unknown", sourceHash, text.size(),
+             preview.c_str());
     }
     return text;
 }
@@ -5753,10 +5810,11 @@ void PublishHudText(const std::int16_t* brief, int briefCapacity,
             break;
         }
     }
+    nextBig=AdaptDioramaTutorialText(std::move(nextBig), "big");
     std::u16string nextBrief=AdaptDioramaTutorialText(
-        copyGxt(brief,briefCapacity));
+        copyGxt(brief,briefCapacity), "brief");
     std::u16string nextHelp=AdaptDioramaTutorialText(
-        copyGxt(help,helpCapacity));
+        copyGxt(help,helpCapacity), "help");
 
     std::lock_guard<std::mutex> lock(g_hudTextMutex);
     if (g_hudTextState.brief==nextBrief&&g_hudTextState.help==nextHelp&&
@@ -7965,14 +8023,18 @@ void BuildControlsMenu() {
                      ? "DIORAMA SHORTCUTS ARE FIXED - OPEN GUIDE BELOW"
                      : "GAMEPLAY ONLY - MENU CURSOR STAYS RAW",
                  cx, 56, 2, 150, 185, 150);
-    constexpr int firstStick = 1;
+    constexpr int tipsRow = 0;
+    constexpr int layoutRow = 1;
+    constexpr int firstStick = layoutRow + 1;
     constexpr int firstButton = firstStick + locomotion::STICK_OPT_COUNT;
-    constexpr int tipsRow = firstButton + locomotion::BIND_SRC_COUNT;
-    constexpr int resetRow = tipsRow + 1;
+    constexpr int resetRow = firstButton + locomotion::BIND_SRC_COUNT;
     constexpr int backRow = resetRow + 1;
     constexpr int rowCount = backRow + 1;
     char rows[rowCount][64]{};
-    std::snprintf(rows[0], sizeof(rows[0]), "LAYOUT  < %s >",
+    std::snprintf(rows[tipsRow], sizeof(rows[0]), "%s",
+                  tabletop::Enabled() ? "DIORAMA CONTROL GUIDE"
+                                      : "IMMERSIVE CONTROL GUIDE");
+    std::snprintf(rows[layoutRow], sizeof(rows[0]), "LAYOUT  < %s >",
                   locomotion::ControlsLayoutName());
     const char* stickLabels[locomotion::STICK_OPT_COUNT]={
         "SWAP MOVE / TURN STICKS", "INVERT MOVE X", "INVERT MOVE Y",
@@ -7986,9 +8048,6 @@ void BuildControlsMenu() {
                       locomotion::ButtonActionName(
                           locomotion::GetButtonBinding(srcRow)));
     }
-    std::snprintf(rows[tipsRow], sizeof(rows[0]), "%s",
-                  tabletop::Enabled() ? "DIORAMA CONTROL GUIDE"
-                                      : "IMMERSIVE CONTROL GUIDE");
     std::snprintf(rows[resetRow], sizeof(rows[0]), "RESET DEFAULTS");
     std::snprintf(rows[backRow], sizeof(rows[0]), "BACK");
     const int sel = g_controlsSel.load(std::memory_order_relaxed);

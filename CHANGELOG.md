@@ -1,5 +1,22 @@
 # Changelog
 
+## Package 60 tutorial delivery and menu discovery
+
+- Put the mode-specific **Diorama Control Guide** at the first row of the
+  Controls page, ahead of remapping and layout options.
+- Keep the full Welcome as a one-time mod-install message, while showing a
+  compact `HOLD BOTH GRIPS + MENU (OR Y)` reminder once per application
+  session when controllable Diorama gameplay begins. Starting a new GTA save
+  no longer needs to reset the persistent Welcome flag for the menu chord to
+  remain discoverable.
+- Apply the Diorama tutorial adapter to GTA's large-message channel in addition
+  to brief/help text. This covers early bicycle lessons that bypassed the two
+  previously intercepted HUD paths.
+- Make the verified bicycle translations tolerant of GTA formatting markers
+  while retaining narrow phrase matching. Add channel-labelled, once-per-text
+  diagnostics for any remaining mobile screen-region wording without creating
+  a per-frame logging cost.
+
 ## Package 59 unobtrusive Diorama objective cones
 
 - Replace the filled red/yellow/blue stock objective cone with a hollow
