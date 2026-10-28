@@ -10597,11 +10597,11 @@ __attribute__((noinline)) void OnPlaceMarkerCone(
         const float presentationScale = ObjectiveMarkerPresentationScale();
         const float markerHeight = g_tabletopActive.load(
             std::memory_order_acquire)
-            ? std::clamp(markerHeightGame * presentationScale, 0.12f, 0.48f)
+            ? std::clamp(markerHeightGame * presentationScale, 0.10f, 0.38f)
             : markerHeightGame;
         const float markerRadius = g_tabletopActive.load(
             std::memory_order_acquire)
-            ? std::clamp(markerRadiusGame * presentationScale, 0.045f, 0.22f)
+            ? std::clamp(markerRadiusGame * presentationScale, 0.035f, 0.16f)
             : markerRadiusGame;
         const GameSymbols::Vec3 markerCenter = *point;
         float markerTracking[3]{};
@@ -10692,11 +10692,11 @@ __attribute__((noinline)) void OnPlaceMarkerSet(
     const float presentationScale = ObjectiveMarkerPresentationScale();
     const float markerHeight = g_tabletopActive.load(
         std::memory_order_acquire)
-        ? std::clamp(markerHeightGame * presentationScale, 0.12f, 0.55f)
+        ? std::clamp(markerHeightGame * presentationScale, 0.10f, 0.40f)
         : markerHeightGame;
     const float markerRadius = g_tabletopActive.load(
         std::memory_order_acquire)
-        ? std::clamp(markerRadiusGame * presentationScale, 0.045f, 0.28f)
+        ? std::clamp(markerRadiusGame * presentationScale, 0.035f, 0.18f)
         : markerRadiusGame;
     float markerTracking[3]{};
     float worldGame[3]{};

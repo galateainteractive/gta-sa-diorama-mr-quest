@@ -55,8 +55,15 @@ transform as CJ. Their presentation has a physical minimum size and is drawn as
 navigation UI, so shrinking the model does not hide them in the ground. Their
 late stereo projection converts the eye pass's game-unit clip distances back
 to physical metres using the scale captured for the same frame. In tabletop
-mode their coloured surfaces use 58% opacity so the miniature streets, vehicles
-and buildings remain visible behind the navigation cue.
+mode mission cylinders use 58% opacity, while stock objective cones use a
+hollow 34%-opacity outline so miniature streets, vehicles and buildings remain
+visible behind the navigation cue.
+
+Package 59 makes stock red/yellow/blue cones less obstructive without changing
+their gameplay position. In Diorama MR only, a 34%-opacity perimeter and four
+guide ribs replace the filled surface, and the distance-based minimum footprint
+is smaller. Mission cylinders retain their 58% presentation and Immersive VR
+retains the original filled cone.
 
 The waypoint selected on the retail pause map remains inside GTA's map only.
 The experimental custom 3D boundary beacon was removed after headset testing;

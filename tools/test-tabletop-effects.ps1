@@ -563,3 +563,18 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 57 two-page control guide and focused welcome'
+
+# Package 59 changes only tabletop stock cones: the original immersive fill
+# remains, mission cylinders keep their established opacity, and Diorama uses
+# a smaller hollow outline that cannot cover the target at its centre.
+foreach ($sourcePattern in @(
+        'constexpr float kTabletopConeOpacity = 0\.34f',
+        'primitive = GL_LINES',
+        'constexpr int railCount = 4',
+        'restrainedCone \? 0\.022f : 0\.035f',
+        'tabletopMode \? kTabletopConeOpacity : 1\.0f')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 59 hollow objective-cone audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 59 hollow low-opacity Diorama objective cones'

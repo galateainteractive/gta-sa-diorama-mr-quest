@@ -11163,7 +11163,7 @@ void RebaseObjectiveMarkersToTabletopMask(
 
 void DrawStockObjectiveArrow(const float* mvp,
                              const ObjectiveMarkerVisual& marker,
-                             float opacity) {
+                             float opacity, bool tabletopMode) {
     // Exact low-poly diamond_3 silhouette used by the mobile game: one bright
     // downward tip and an 11-vertex darker translucent ring, with no cap.
     constexpr int ringCount = 11;
@@ -11189,10 +11189,34 @@ void DrawStockObjectiveArrow(const float* mvp,
         vertex[2] = marker.center.z + std::sin(angle) * marker.radius;
         vertex[3] = ringShade;
         vertex[4] = ringAlpha;
-        indices[ring * 3 + 0] = 0;
-        indices[ring * 3 + 1] = static_cast<unsigned short>(ring + 1);
-        indices[ring * 3 + 2] = static_cast<unsigned short>(
-            1 + (ring + 1) % ringCount);
+    }
+
+    int indexCount = 0;
+    GLenum primitive = GL_TRIANGLES;
+    if (tabletopMode) {
+        // A filled cone hid moving targets such as the opening mission's blue
+        // bicycle. Diorama keeps the official colour and world position, but
+        // draws only the perimeter and four guide ribs so the target remains
+        // visible through the centre. This is navigation UI, not game geometry.
+        primitive = GL_LINES;
+        for (int ring = 0; ring < ringCount; ++ring) {
+            indices[indexCount++] = static_cast<unsigned short>(ring + 1);
+            indices[indexCount++] = static_cast<unsigned short>(
+                1 + (ring + 1) % ringCount);
+        }
+        constexpr int railCount = 4;
+        for (int rail = 0; rail < railCount; ++rail) {
+            indices[indexCount++] = 0;
+            indices[indexCount++] = static_cast<unsigned short>(
+                1 + rail * ringCount / railCount);
+        }
+    } else {
+        for (int ring = 0; ring < ringCount; ++ring) {
+            indices[indexCount++] = 0;
+            indices[indexCount++] = static_cast<unsigned short>(ring + 1);
+            indices[indexCount++] = static_cast<unsigned short>(
+                1 + (ring + 1) % ringCount);
+        }
     }
 
     EnsureMarkerProgram();
@@ -11215,7 +11239,9 @@ void DrawStockObjectiveArrow(const float* mvp,
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
                           reinterpret_cast<void*>(3 * sizeof(float)));
-    glDrawElements(GL_TRIANGLES, ringCount * 3, GL_UNSIGNED_SHORT, nullptr);
+    if (tabletopMode) glLineWidth(2.0f);
+    glDrawElements(primitive, indexCount, GL_UNSIGNED_SHORT, nullptr);
+    if (tabletopMode) glLineWidth(1.0f);
     glDisableVertexAttribArray(1);
     glDisableVertexAttribArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -11331,6 +11357,7 @@ void DrawObjectiveHighlights(const float* mvp,
     // terrain depth. Keep them readable, but let roads, vehicles and buildings
     // remain visible through their coloured volume.
     constexpr float kTabletopObjectiveOpacity = 0.58f;
+    constexpr float kTabletopConeOpacity = 0.34f;
     const float objectiveOpacity = tabletopMode
         ? kTabletopObjectiveOpacity : 1.0f;
 
@@ -11438,12 +11465,17 @@ void DrawObjectiveHighlights(const float* mvp,
                                                       vdot(delta, delta)));
             if (std::isfinite(distance)) {
                 const float oldHeight = marker.height;
-                const float maxRadius = marker.cylinder ? 0.30f : 0.22f;
-                const float maxHeight = marker.cylinder ? 0.48f : 0.55f;
+                const bool restrainedCone = marker.stockCone;
+                const float maxRadius = marker.cylinder ? 0.30f
+                    : (restrainedCone ? 0.15f : 0.22f);
+                const float maxHeight = marker.cylinder ? 0.48f
+                    : (restrainedCone ? 0.38f : 0.55f);
                 marker.radius = std::max(marker.radius,
-                    std::clamp(distance * 0.035f, 0.05f, maxRadius));
+                    std::clamp(distance * (restrainedCone ? 0.022f : 0.035f),
+                               restrainedCone ? 0.035f : 0.05f, maxRadius));
                 marker.height = std::max(marker.height,
-                    std::clamp(distance * 0.10f, 0.12f, maxHeight));
+                    std::clamp(distance * (restrainedCone ? 0.07f : 0.10f),
+                               restrainedCone ? 0.10f : 0.12f, maxHeight));
                 // Mission-area cylinders are grounded. Preserve their lower
                 // edge when extra presentation height is needed.
                 if (marker.cylinder)
@@ -11455,7 +11487,10 @@ void DrawObjectiveHighlights(const float* mvp,
             continue;
         }
         if (marker.stockCone) {
-            DrawStockObjectiveArrow(mvp, marker, objectiveOpacity);
+            DrawStockObjectiveArrow(
+                mvp, marker,
+                tabletopMode ? kTabletopConeOpacity : 1.0f,
+                tabletopMode);
             continue;
         }
         constexpr int segments = 16;

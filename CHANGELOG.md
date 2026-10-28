@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 59 unobtrusive Diorama objective cones
+
+- Replace the filled red/yellow/blue stock objective cone with a hollow
+  tabletop-only outline: a perimeter plus four guide ribs preserves the
+  official colour and position without hiding the bicycle, vehicle, person or
+  prop being identified.
+- Reduce cone opacity from 58% to 34% and reduce its distance-driven minimum
+  angular footprint. Mission-area cylinders and optional highlight cages keep
+  their established presentation.
+- Keep Immersive VR's filled stock marker unchanged. The new outline remains a
+  late stereo navigation overlay, avoiding the terrain/building occlusion that
+  previously made official markers disappear at some Diorama zoom levels.
+
 ## Package 58 first-run identity and upstream credit
 
 - Use the complete **GTA San Andreas Diorama MR** name in the first-run
