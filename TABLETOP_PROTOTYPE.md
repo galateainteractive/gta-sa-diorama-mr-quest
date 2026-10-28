@@ -46,12 +46,14 @@ Runtime controls:
 - selecting the already equipped weapon simply closes the selector without
   changing CJ's inventory.
 
-Package 70 temporarily adds a nearby-model isolator for the crossed-card shrubs.
-At the problem location, the first `Both Grips + X` begins capture; wait about
-two seconds and press it again to hide the first nearby scenery model. Further
-presses advance through distance-sorted IDs. Report the displayed ID when the
-target cards disappear. `Both Grips + B` restores the original scene at once.
-The test is Diorama-only, process-local and produces no periodic telemetry.
+Package 71 temporarily replaces the exhausted nearby-scenery test with a
+final-atomic procedural-plant isolator for the crossed-card shrubs. At the
+problem location, the first `Both Grips + X` begins capture; wait about two
+seconds and press it again to hide the most frequently submitted procedural
+model. Further presses advance through only the visible `procobj.ide` family
+plus `grasshouse`/`grassplant`. Report the displayed ID when the target cards
+disappear. `Both Grips + B` restores the original scene at once. The test is
+Diorama-only, process-local and produces no periodic telemetry.
 
 The physical miniature size is independent of the visible-world radius. Two
 grips may still resize the diorama freely without changing how many game-world

@@ -92,11 +92,11 @@ void SetInputBlocked(bool blocked);
 // with the native CPad hook, preventing stale movement or fire state.
 bool WeaponSelectorActive();
 
-// Temporary nearby-model isolator for identifying the scenery model that owns
-// the crossed-card Grove Street shrubs. Both grips + X captures/advances;
+// Temporary final-atomic isolator for identifying the procedural model that
+// owns the crossed-card Grove Street shrubs. Both grips + X captures/advances;
 // both grips + B restores the complete scene. State resets on launch.
-void AdvancePlantModelIsolator();
-void ResetPlantModelIsolator();
+void AdvanceProceduralPlantIsolator();
+void ResetProceduralPlantIsolator();
 
 // Body-fixed holster anchor in OpenXR LOCAL space. It uses the exact recentered
 // body frame that places the RenderWare holstered model, so looking around does

@@ -2598,26 +2598,24 @@ struct TabletopTransformState {
 TabletopTransformState g_tabletopTransform{};
 std::atomic<bool> g_tabletopWeaponSelectorActive{false};
 int g_tabletopWeaponSelectorSlot = 0;
-enum class PlantModelIsolatorState : int {
+enum class ProceduralPlantIsolatorState : int {
     Idle = 0,
     Capturing = 1,
     Isolating = 2,
 };
-struct PlantModelCandidate {
+struct ProceduralPlantCandidate {
     int modelId{-1};
-    float distanceSq{std::numeric_limits<float>::max()};
-    std::uint8_t paths{}; // bit 0 opaque, bit 1 alpha
+    std::uint32_t submissions{};
 };
-constexpr int kPlantModelCandidateCapacity = 96;
-constexpr float kPlantModelCaptureRadiusM = 35.0f;
-std::array<PlantModelCandidate, kPlantModelCandidateCapacity>
-    g_plantModelCandidates{};
-int g_plantModelCandidateCount = 0;
-int g_plantModelCandidateIndex = -1;
-std::atomic<int> g_plantModelIsolatorState{
-    static_cast<int>(PlantModelIsolatorState::Idle)};
-std::atomic<int> g_plantModelSuppressedId{-1};
-std::atomic_flag g_plantModelCandidateLock = ATOMIC_FLAG_INIT;
+constexpr int kProceduralPlantCandidateCapacity = 32;
+std::array<ProceduralPlantCandidate, kProceduralPlantCandidateCapacity>
+    g_proceduralPlantCandidates{};
+int g_proceduralPlantCandidateCount = 0;
+int g_proceduralPlantCandidateIndex = -1;
+std::atomic<int> g_proceduralPlantIsolatorState{
+    static_cast<int>(ProceduralPlantIsolatorState::Idle)};
+std::atomic<int> g_proceduralPlantSuppressedId{-1};
+std::atomic_flag g_proceduralPlantCandidateLock = ATOMIC_FLAG_INIT;
 std::atomic<bool> g_tabletopClassicAttackHeld{false};
 std::atomic<std::uint32_t> g_tabletopClassicAttackPressFrame{
     std::numeric_limits<std::uint32_t>::max()};
@@ -15608,8 +15606,11 @@ int OnSetupMapEntityVisibility(void* entity, void* modelInfo,
     return result;
 }
 
+bool ProcessProceduralPlantAtomic(void* atomic);
+
 void* OnAtomicDefaultRender(void* atomic) {
     if (!g_origAtomicDefaultRender) return atomic;
+    if (ProcessProceduralPlantAtomic(atomic)) return atomic;
     void* const entity = g_visibilityCurrentRenderEntity;
     TrafficAtomicRenderScope* const trafficScope =
         g_trafficAtomicRenderScope;
@@ -15883,74 +15884,61 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     return TabletopWorldInsideCoverage(world, radius);
 }
 
-void LockPlantModelCandidates() {
-    while (g_plantModelCandidateLock.test_and_set(std::memory_order_acquire)) {}
+void LockProceduralPlantCandidates() {
+    while (g_proceduralPlantCandidateLock.test_and_set(
+               std::memory_order_acquire)) {}
 }
 
-void UnlockPlantModelCandidates() {
-    g_plantModelCandidateLock.clear(std::memory_order_release);
+void UnlockProceduralPlantCandidates() {
+    g_proceduralPlantCandidateLock.clear(std::memory_order_release);
 }
 
-int PlantModelIdForEntity(const void* entity) {
-    if (!entity) return -1;
-    const auto* const bytes = static_cast<const std::uint8_t*>(entity);
-    const int entityType = bytes[0x5a] & 0x7;
-    // Buildings, objects and dummies cover ordinary scenery while excluding
-    // CJ, pedestrians and vehicles from this temporary isolator.
-    if (entityType != 1 && entityType != 4 && entityType != 5) return -1;
-    const int modelId = static_cast<int>(
-        *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
-    return modelId >= 0 && modelId < 20000 ? modelId : -1;
+bool IsProceduralPlantModelId(int modelId) {
+    // procobj.ide is the retail procedural-object family. grasshouse and
+    // grassplant are separate crossed-card models used by the same outdoor
+    // vegetation system. The earlier entity isolator proved that the target
+    // shrubs do not travel through the ordinary nearby-scenery path.
+    return (modelId >= 800 && modelId <= 906) ||
+        modelId == 3261 || modelId == 3409;
 }
 
-bool ProcessPlantModelIsolatorEntity(void* entity, bool alphaPath) {
-    const auto state = static_cast<PlantModelIsolatorState>(
-        g_plantModelIsolatorState.load(std::memory_order_acquire));
-    if (state == PlantModelIsolatorState::Idle ||
-        !g_tabletopActive.load(std::memory_order_relaxed)) {
-        return false;
-    }
-    const int modelId = PlantModelIdForEntity(entity);
-    if (modelId < 0) return false;
-    if (state == PlantModelIsolatorState::Isolating) {
-        return modelId == g_plantModelSuppressedId.load(
+bool ProcessProceduralPlantAtomic(void* atomic) {
+    const auto state = static_cast<ProceduralPlantIsolatorState>(
+        g_proceduralPlantIsolatorState.load(std::memory_order_acquire));
+    if (state == ProceduralPlantIsolatorState::Idle || !atomic ||
+        !g_tabletopActive.load(std::memory_order_relaxed) ||
+        !g.CVisibilityPlugins_GetModelInfoIndex) return false;
+    const int modelId = g.CVisibilityPlugins_GetModelInfoIndex(atomic);
+    if (!IsProceduralPlantModelId(modelId)) return false;
+    if (state == ProceduralPlantIsolatorState::Isolating) {
+        return modelId == g_proceduralPlantSuppressedId.load(
             std::memory_order_relaxed);
     }
-    if (!g_tabletopRadiusCenterValid) return false;
-    V3 world{};
-    if (!ReadEntityWorldPosition(entity, &world)) return false;
-    const float dx = world.x - g_tabletopRadiusCenter.x;
-    const float dy = world.y - g_tabletopRadiusCenter.y;
-    const float distanceSq = dx * dx + dy * dy;
-    if (!std::isfinite(distanceSq) ||
-        distanceSq > kPlantModelCaptureRadiusM * kPlantModelCaptureRadiusM) {
-        return false;
-    }
 
-    LockPlantModelCandidates();
-    if (static_cast<PlantModelIsolatorState>(
-            g_plantModelIsolatorState.load(std::memory_order_relaxed)) ==
-            PlantModelIsolatorState::Capturing) {
+    // Capture on one eye only. A bounded fixed array and one command-time sort
+    // keep the diagnostic allocation-free and silent during normal play.
+    if (g_renderingStereoEyeIndex != 0) return false;
+    LockProceduralPlantCandidates();
+    if (static_cast<ProceduralPlantIsolatorState>(
+            g_proceduralPlantIsolatorState.load(
+                std::memory_order_relaxed)) ==
+            ProceduralPlantIsolatorState::Capturing) {
         int found = -1;
-        for (int index = 0; index < g_plantModelCandidateCount; ++index) {
-            if (g_plantModelCandidates[index].modelId == modelId) {
+        for (int index = 0; index < g_proceduralPlantCandidateCount; ++index) {
+            if (g_proceduralPlantCandidates[index].modelId == modelId) {
                 found = index;
                 break;
             }
         }
-        if (found < 0 &&
-            g_plantModelCandidateCount < kPlantModelCandidateCapacity) {
-            found = g_plantModelCandidateCount++;
-            g_plantModelCandidates[found] = {};
-            g_plantModelCandidates[found].modelId = modelId;
+        if (found < 0 && g_proceduralPlantCandidateCount <
+                kProceduralPlantCandidateCapacity) {
+            found = g_proceduralPlantCandidateCount++;
+            g_proceduralPlantCandidates[found] = {};
+            g_proceduralPlantCandidates[found].modelId = modelId;
         }
-        if (found >= 0) {
-            auto& candidate = g_plantModelCandidates[found];
-            candidate.distanceSq = std::min(candidate.distanceSq, distanceSq);
-            candidate.paths |= alphaPath ? 0x2u : 0x1u;
-        }
+        if (found >= 0) ++g_proceduralPlantCandidates[found].submissions;
     }
-    UnlockPlantModelCandidates();
+    UnlockProceduralPlantCandidates();
     return false;
 }
 
@@ -16001,7 +15989,6 @@ void OnRenderOneRoad(void* entity) {
 }
 
 void OnRenderOneNonRoad(void* entity) {
-    if (ProcessPlantModelIsolatorEntity(entity, false)) return;
     if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
     // The radial gate is already tightly bounded. Re-testing accepted
     // tabletop content against two slightly different eye frusta caused
@@ -16046,7 +16033,6 @@ void OnRenderAlphaEntity(void* entity, float distance) {
     const bool diagnostic = g_tabletopActive.load(std::memory_order_relaxed) &&
         (diagnosticEye == 0 || diagnosticEye == 1);
 #endif
-    if (ProcessPlantModelIsolatorEntity(entity, true)) return;
     if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) {
 #if defined(SAVR_DEV)
         if (diagnostic) ++g_tabletopAlphaDepthWitness.rejected[diagnosticEye];
@@ -32534,99 +32520,96 @@ bool WeaponSelectorActive() {
     return g_tabletopWeaponSelectorActive.load(std::memory_order_acquire);
 }
 
-void AdvancePlantModelIsolator() {
+void AdvanceProceduralPlantIsolator() {
     if (!tabletop::Enabled()) return;
-    const auto state = static_cast<PlantModelIsolatorState>(
-        g_plantModelIsolatorState.load(std::memory_order_acquire));
-    if (state == PlantModelIsolatorState::Idle) {
-        LockPlantModelCandidates();
-        for (auto& candidate : g_plantModelCandidates) candidate = {};
-        g_plantModelCandidateCount = 0;
-        g_plantModelCandidateIndex = -1;
-        g_plantModelSuppressedId.store(-1, std::memory_order_relaxed);
-        g_plantModelIsolatorState.store(
-            static_cast<int>(PlantModelIsolatorState::Capturing),
+    const auto state = static_cast<ProceduralPlantIsolatorState>(
+        g_proceduralPlantIsolatorState.load(std::memory_order_acquire));
+    if (state == ProceduralPlantIsolatorState::Idle) {
+        LockProceduralPlantCandidates();
+        for (auto& candidate : g_proceduralPlantCandidates) candidate = {};
+        g_proceduralPlantCandidateCount = 0;
+        g_proceduralPlantCandidateIndex = -1;
+        g_proceduralPlantSuppressedId.store(-1, std::memory_order_relaxed);
+        g_proceduralPlantIsolatorState.store(
+            static_cast<int>(ProceduralPlantIsolatorState::Capturing),
             std::memory_order_release);
-        UnlockPlantModelCandidates();
+        UnlockProceduralPlantCandidates();
         xr::PublishStatusText(
-            "MODEL TEST: CAPTURING - WAIT, THEN GRIPS + X", 5.0f);
+            "PLANT TEST: CAPTURING - WAIT, THEN GRIPS + X", 5.0f);
         __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.model_isolator] capture_started radius=%.0fm",
-            static_cast<double>(kPlantModelCaptureRadiusM));
+            "[tabletop.procedural_plant] capture_started");
     } else {
-        PlantModelCandidate selected{};
+        ProceduralPlantCandidate selected{};
         int selectedIndex = -1;
         int candidateCount = 0;
-        LockPlantModelCandidates();
-        candidateCount = g_plantModelCandidateCount;
+        LockProceduralPlantCandidates();
+        candidateCount = g_proceduralPlantCandidateCount;
         if (candidateCount > 0) {
-            if (state == PlantModelIsolatorState::Capturing) {
-                std::sort(g_plantModelCandidates.begin(),
-                          g_plantModelCandidates.begin() + candidateCount,
-                          [](const PlantModelCandidate& left,
-                             const PlantModelCandidate& right) {
-                              if (left.distanceSq != right.distanceSq)
-                                  return left.distanceSq < right.distanceSq;
+            if (state == ProceduralPlantIsolatorState::Capturing) {
+                std::sort(g_proceduralPlantCandidates.begin(),
+                          g_proceduralPlantCandidates.begin() + candidateCount,
+                          [](const ProceduralPlantCandidate& left,
+                             const ProceduralPlantCandidate& right) {
+                              if (left.submissions != right.submissions)
+                                  return left.submissions > right.submissions;
                               return left.modelId < right.modelId;
                           });
-                g_plantModelCandidateIndex = 0;
+                g_proceduralPlantCandidateIndex = 0;
             } else {
-                g_plantModelCandidateIndex =
-                    (g_plantModelCandidateIndex + 1) % candidateCount;
+                g_proceduralPlantCandidateIndex =
+                    (g_proceduralPlantCandidateIndex + 1) % candidateCount;
             }
-            selectedIndex = g_plantModelCandidateIndex;
-            selected = g_plantModelCandidates[selectedIndex];
-            g_plantModelSuppressedId.store(
+            selectedIndex = g_proceduralPlantCandidateIndex;
+            selected = g_proceduralPlantCandidates[selectedIndex];
+            g_proceduralPlantSuppressedId.store(
                 selected.modelId, std::memory_order_relaxed);
-            g_plantModelIsolatorState.store(
-                static_cast<int>(PlantModelIsolatorState::Isolating),
+            g_proceduralPlantIsolatorState.store(
+                static_cast<int>(ProceduralPlantIsolatorState::Isolating),
                 std::memory_order_release);
         } else {
-            g_plantModelSuppressedId.store(-1, std::memory_order_relaxed);
-            g_plantModelIsolatorState.store(
-                static_cast<int>(PlantModelIsolatorState::Idle),
+            g_proceduralPlantSuppressedId.store(-1,
+                std::memory_order_relaxed);
+            g_proceduralPlantIsolatorState.store(
+                static_cast<int>(ProceduralPlantIsolatorState::Idle),
                 std::memory_order_release);
         }
-        UnlockPlantModelCandidates();
+        UnlockProceduralPlantCandidates();
 
         if (selectedIndex < 0) {
             xr::PublishStatusText(
-                "MODEL TEST: NO NEARBY SCENERY - TRY AGAIN", 5.0f);
+                "PLANT TEST: NO PROCEDURAL MODELS VISIBLE", 5.0f);
             __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-                "[tabletop.model_isolator] capture_empty");
+                "[tabletop.procedural_plant] capture_empty");
         } else {
-            const char* path = selected.paths == 0x3u
-                ? "OPAQUE+ALPHA" : (selected.paths == 0x2u
-                    ? "ALPHA" : "OPAQUE");
             char label[96]{};
             std::snprintf(label, sizeof(label),
-                "MODEL TEST %d/%d: ID %d %s",
-                selectedIndex + 1, candidateCount, selected.modelId, path);
+                "PLANT TEST %d/%d: ID %d HIDDEN",
+                selectedIndex + 1, candidateCount, selected.modelId);
             xr::PublishStatusText(label, 5.0f);
             __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-                "[tabletop.model_isolator] index=%d/%d model=%d path=%s distance=%.1fm",
-                selectedIndex + 1, candidateCount, selected.modelId, path,
-                static_cast<double>(std::sqrt(selected.distanceSq)));
+                "[tabletop.procedural_plant] index=%d/%d model=%d submissions=%u",
+                selectedIndex + 1, candidateCount, selected.modelId,
+                selected.submissions);
         }
     }
     xr::TriggerHaptic(0, 0.55f, 100.0f, 55.0f);
     xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
 }
 
-void ResetPlantModelIsolator() {
-    LockPlantModelCandidates();
-    g_plantModelSuppressedId.store(-1, std::memory_order_relaxed);
-    g_plantModelIsolatorState.store(
-        static_cast<int>(PlantModelIsolatorState::Idle),
+void ResetProceduralPlantIsolator() {
+    LockProceduralPlantCandidates();
+    g_proceduralPlantSuppressedId.store(-1, std::memory_order_relaxed);
+    g_proceduralPlantIsolatorState.store(
+        static_cast<int>(ProceduralPlantIsolatorState::Idle),
         std::memory_order_release);
-    g_plantModelCandidateCount = 0;
-    g_plantModelCandidateIndex = -1;
-    UnlockPlantModelCandidates();
-    xr::PublishStatusText("MODEL TEST: ORIGINAL SCENE RESTORED", 4.0f);
+    g_proceduralPlantCandidateCount = 0;
+    g_proceduralPlantCandidateIndex = -1;
+    UnlockProceduralPlantCandidates();
+    xr::PublishStatusText("PLANT TEST: ORIGINAL SCENE RESTORED", 4.0f);
     xr::TriggerHaptic(0, 0.4f, 80.0f, 45.0f);
     xr::TriggerHaptic(1, 0.4f, 80.0f, 45.0f);
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-        "[tabletop.model_isolator] reset");
+        "[tabletop.procedural_plant] reset");
 }
 
 bool GetHolsterAnchorTracking(int point, float positionOut[3]) {

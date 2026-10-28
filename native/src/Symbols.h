@@ -294,6 +294,10 @@ struct GameSymbols {
     //   frame modelling matrix @ frame+0x20
     void  (*RwFrameTransform)(void* frame, const void* matrix, int combineOp);
     void* (*AtomicDefaultRenderCallBack)(void* atomic);
+    // The RenderWare visibility plugin stores the originating GTA model index
+    // directly on each atomic, including procedural objects that bypass the
+    // ordinary CEntity render wrappers.
+    int   (*CVisibilityPlugins_GetModelInfoIndex)(void* atomic);
     // The game's own weapon render (RenderWeaponPedsForPC) writes the bone matrix
     // into the frame's LOCAL matrix (frame+0x20), then RwFrameUpdateObjects marks
     // it dirty so RwFrameGetLTM recomputes the LTM (frame+0x60) with correct flags.

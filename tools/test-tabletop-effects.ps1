@@ -698,49 +698,55 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 68 plant experiment retired and Release telemetry remains quiet'
 
-# Package 70 removes the completed Package 69 renderer A/B and replaces it
-# with a bounded, nearby-scenery model isolator. Collection occurs only between
-# two deliberate chords; normal play has one atomic state check per wrapper.
+# Package 71 removes the exhausted nearby-scenery isolator and reads the model
+# index from the final RenderWare atomic instead. This covers procedural objects
+# that bypass the ordinary entity wrappers while admitting only retail's bounded
+# procobj family plus grasshouse/grassplant.
 foreach ($retiredPattern in @(
         'PlantDiagnosticMode',
         'OnDiagnosticDrawTriPlants',
         'CyclePlantDiagnosticMode',
-        'PLANT TEST: NO PROCEDURAL',
+        'PLANT TEST: NO PROCEDURAL\"',
         'PLANT TEST: NO STATIC VEGETATION',
-        '\[tabletop\.plant_ab\]')) {
+        '\[tabletop\.plant_ab\]',
+        'PlantModelIsolatorState',
+        'ProcessPlantModelIsolatorEntity',
+        'kPlantModelCaptureRadiusM',
+        '\[tabletop\.model_isolator\]')) {
     if (($cameraSource + $mainSource) -match $retiredPattern) {
-        throw "Package 70 retired Package 69 diagnostic remains: $retiredPattern"
+        throw "Package 71 retired diagnostic remains: $retiredPattern"
     }
 }
 foreach ($sourcePattern in @(
-        'enum class PlantModelIsolatorState',
-        'kPlantModelCandidateCapacity = 96',
-        'kPlantModelCaptureRadiusM = 35\.0f',
-        'bool ProcessPlantModelIsolatorEntity\(void\* entity, bool alphaPath\)',
-        'entityType != 1 && entityType != 4 && entityType != 5',
-        'void AdvancePlantModelIsolator\(\)',
-        'void ResetPlantModelIsolator\(\)',
-        'MODEL TEST: CAPTURING - WAIT, THEN GRIPS \+ X',
-        'MODEL TEST %d/%d: ID %d %s',
-        'MODEL TEST: ORIGINAL SCENE RESTORED',
-        '\[tabletop\.model_isolator\] index=%d/%d model=%d',
+        'enum class ProceduralPlantIsolatorState',
+        'kProceduralPlantCandidateCapacity = 32',
+        'bool IsProceduralPlantModelId\(int modelId\)',
+        'modelId >= 800 && modelId <= 906',
+        'modelId == 3261 \|\| modelId == 3409',
+        'bool ProcessProceduralPlantAtomic\(void\* atomic\)',
+        'CVisibilityPlugins_GetModelInfoIndex\(atomic\)',
+        'void AdvanceProceduralPlantIsolator\(\)',
+        'void ResetProceduralPlantIsolator\(\)',
+        'PLANT TEST: CAPTURING - WAIT, THEN GRIPS \+ X',
+        'PLANT TEST %d/%d: ID %d HIDDEN',
+        'PLANT TEST: ORIGINAL SCENE RESTORED',
+        '\[tabletop\.procedural_plant\] index=%d/%d model=%d',
         'modelIsolatorAdvance.*tabletop::Enabled\(\)',
         'modelIsolatorReset.*tabletop::Enabled\(\)')) {
     if (($cameraSource + $mainSource) -notmatch $sourcePattern) {
-        throw "Package 70 nearby-model isolator audit failed: $sourcePattern"
+        throw "Package 71 procedural-atomic isolator audit failed: $sourcePattern"
     }
 }
-if (([regex]::Matches(
-        $cameraSource,
-        'if \(ProcessPlantModelIsolatorEntity\(entity, (?:false|true)\)\) return;')).Count -ne 2) {
-    throw 'Package 70 model isolator must cover exactly opaque and alpha wrappers'
+if (([regex]::Matches($cameraSource,
+        'if \(ProcessProceduralPlantAtomic\(atomic\)\) return atomic;')).Count -ne 1) {
+    throw 'Package 71 isolator must act once at the final atomic callback'
 }
 foreach ($forbiddenPattern in @(
         'kPPTriPlantBlackThreshold',
         'g_tabletopPlantAmbientColor',
         'g_tabletopPlantRenderStateGet')) {
     if ($cameraSource -match $forbiddenPattern) {
-        throw "Package 70 reintroduced plant mutation: $forbiddenPattern"
+        throw "Package 71 reintroduced plant mutation: $forbiddenPattern"
     }
 }
-Write-Output 'PASS Package 70 bounded nearby-scenery model isolator'
+Write-Output 'PASS Package 71 bounded procedural-atomic model isolator'

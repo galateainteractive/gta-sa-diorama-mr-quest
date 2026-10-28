@@ -1056,9 +1056,9 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             return 3;                                    // ~216/s
         };
 
-        // Package 70 temporary nearby-model isolator. Both chords are blocked
-        // from GTA by the existing `!grips` gameplay-provider gate below.
-        // X captures/advances one model; B restores the complete scene.
+        // Package 71 temporary procedural-plant atomic isolator. Both chords
+        // are blocked from GTA by the existing `!grips` gameplay-provider gate
+        // below. X captures/advances one procedural model; B restores it.
         static bool modelIsolatorAdvancePrev = false;
         static bool modelIsolatorResetPrev = false;
         const bool modelIsolatorAdvance = tabletop::Enabled() &&
@@ -1066,9 +1066,9 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         const bool modelIsolatorReset = tabletop::Enabled() &&
             menuPage == PG_NONE && inGameplay && grips && in.b;
         if (modelIsolatorAdvance && !modelIsolatorAdvancePrev)
-            vrcam::AdvancePlantModelIsolator();
+            vrcam::AdvanceProceduralPlantIsolator();
         if (modelIsolatorReset && !modelIsolatorResetPrev)
-            vrcam::ResetPlantModelIsolator();
+            vrcam::ResetProceduralPlantIsolator();
         modelIsolatorAdvancePrev = modelIsolatorAdvance;
         modelIsolatorResetPrev = modelIsolatorReset;
 

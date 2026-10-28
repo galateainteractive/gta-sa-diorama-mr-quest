@@ -1,5 +1,19 @@
 # Changelog
 
+## Package 71 procedural-plant final-atomic isolator
+
+- Retire the Package 70 nearby-scenery isolator after headset testing traversed
+  every candidate without affecting the crossed-card shrubs. This proves that
+  the target bypasses the ordinary opaque/alpha entity wrappers.
+- Read GTA's model index at the final RenderWare atomic callback and admit only
+  the bounded retail procedural family (IDs 800-906) plus `grasshouse` (3261)
+  and `grassplant` (3409). Houses, roads, vehicles, pedestrians and unrelated
+  scenery can no longer enter this diagnostic list.
+- Keep the same deliberate controls: the first `Both Grips + X` captures the
+  visible procedural IDs, later presses hide one exact model at a time, and
+  `Both Grips + B` restores everything. The test resets on launch, is active
+  only in Diorama MR and performs no periodic logging.
+
 ## Package 70 nearby-scenery model isolator
 
 - Remove the completed Package 69 procedural/static vegetation A/B. Headset
