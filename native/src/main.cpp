@@ -1026,6 +1026,7 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
     static int  vehicleCameraSel = 0;
     static int  locomotionSel = 0, hudSel = 0, hudCropSel = 0, hudWristSel = 0,
                 gfxSel = 0, gfxDistanceSel = 0, controlsSel = 0;
+    static int  controlsTipsPage = 0;
     static bool aboutFirstRun = false, aboutArmed = false;
     static bool openPrev = false, enterPrev = false, backPrev = false;
     static int  tUp = 0, tDown = 0, tMinus = 0, tPlus = 0;
@@ -1718,13 +1719,18 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             } else if (controlsSel >= firstButton && controlsSel < tipsRow && step) {
                 savr::locomotion::CycleButtonBinding(controlsSel - firstButton, step);
             }
-            if (enter && controlsSel == tipsRow) menuPage = PG_CONTROLS_TIPS;
+            if (enter && controlsSel == tipsRow) {
+                menuPage = PG_CONTROLS_TIPS;
+                controlsTipsPage = 0;
+            }
             if (enter && controlsSel == resetRow) savr::locomotion::ResetControls();
             if (enter && controlsSel == backRow) menuPage = PG_MAIN;
             if (back) menuPage = PG_MAIN;
             break;
         }
         case PG_CONTROLS_TIPS: {
+            if (minus) controlsTipsPage = 0;
+            if (plus) controlsTipsPage = 1;
             if (enter || back) menuPage = PG_CONTROLS;
             break;
         }
@@ -1801,7 +1807,8 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         xr::SetMenuState(menuPage == PG_CHEATS,cheatSel,cheatRows,cheatCategory);
         xr::SetGraphicsMenu(menuPage == PG_GRAPHICS, gfxSel);
         xr::SetControlsMenu(menuPage == PG_CONTROLS, controlsSel);
-        xr::SetControlsTipsMenu(menuPage == PG_CONTROLS_TIPS);
+        xr::SetControlsTipsMenu(menuPage == PG_CONTROLS_TIPS,
+                                controlsTipsPage);
         xr::SetAboutMenu(menuPage == PG_ABOUT, aboutFirstRun);
         xr::SetGraphicsDistanceMenu(
             menuPage == PG_GRAPHICS_DISTANCES, gfxDistanceSel);

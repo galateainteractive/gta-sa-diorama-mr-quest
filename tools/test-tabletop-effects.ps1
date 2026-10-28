@@ -486,14 +486,13 @@ Write-Output 'PASS Package 53 raised selector, wider ring and opaque outlined la
 # Package 54 keeps the current production bindings discoverable in-headset and
 # prevents the fixed Diorama shortcuts from looking like ordinary remap rows.
 foreach ($sourcePattern in @(
-        'CURRENT COMMANDS: MENU > CONTROLS > GUIDE',
-        'R3 WEAPONS - L3\+R3 CAMERA - META RECENTER',
+        'MENU > CONTROLS > DIORAMA CONTROL GUIDE',
+        'R3 WEAPONS   L3\+R3 VIEW   META RECENTER',
         'DIORAMA CONTROL GUIDE',
-        'R3 OPEN WEAPON SELECTOR',
-        'TRACK: FOLLOW POSITION, KEEP ROOM HEADING',
-        'FOLLOW: FOLLOW POSITION \+ CJ/CAR HEADING',
-        'FIXED: LEAVE THE DIORAMA IN THE ROOM',
-        'RIGHT STICK DOES NOT ROTATE THE DIORAMA',
+        'R3  OPEN SELECTOR',
+        'TRACK   FOLLOWS POSITION; ROOM HEADING',
+        'FOLLOW  FOLLOWS POSITION \+ CJ / CAR',
+        'FIXED   DIORAMA STAYS IN THE ROOM',
         'DIORAMA SHORTCUTS ARE FIXED - OPEN GUIDE BELOW')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 54 in-headset control guide audit failed: $sourcePattern"
@@ -518,9 +517,9 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 55 compact ring labels and full centre names'
 
-# Package 56 adapts only the copied Diorama help string. Semantic widget
-# markers preserve the retail prose/language, exact touch-only messages use a
-# strict allowlist, and Immersive VR returns before any replacement.
+# Package 56 introduced the copied Diorama help-string adapter. Package 57
+# applies the same bounded adapter to the brief channel used by early lessons,
+# and gives the bicycle tutorial exact Quest-native instructions.
 foreach ($sourcePattern in @(
         'std::u16string AdaptDioramaTutorialText\(std::u16string text\)',
         'text\.empty\(\) \|\| !tabletop::Enabled\(\)',
@@ -528,13 +527,33 @@ foreach ($sourcePattern in @(
         '~widget_attack~", u"X / R2 WHILE AIMING"',
         '~widget_explicit_crouch~", u"L3"',
         '~widget_enter_car~", u"Y"',
+        '~widget_explicit_bicycle~", u"Y"',
         '~widget_explicit_next_weapon~", u"R3 WEAPON SELECTOR"',
         '~widget_phone~", u"BOTH GRIPS \+ R2"',
+        'Hold R2 to pedal\.',
+        'Left Stick up and down to shift your weight',
         'no partial "tap" rewriting is allowed',
         '\[tabletop\.tutorial\] unmapped',
+        'nextBrief=AdaptDioramaTutorialText\(\s*copyGxt',
         'nextHelp=AdaptDioramaTutorialText')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 56 Diorama tutorial audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 56 Diorama-only semantic tutorial controls'
+Write-Output 'PASS Package 57 two-channel Diorama tutorial controls'
+
+# Package 57 also replaces the crowded one-screen Diorama reference with two
+# colour-grouped pages and keeps the first-run welcome focused on discovery.
+foreach ($sourcePattern in @(
+        'g_controlsTipsPage',
+        'ON FOOT & DIORAMA - 1 / 2',
+        'VIEWS & VEHICLES - 2 / 2',
+        'L2 / R2  PAGE',
+        'START HERE',
+        'LEARN THE CONTROLS',
+        'MENU > CONTROLS > DIORAMA CONTROL GUIDE')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 57 control-guide audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 57 two-page control guide and focused welcome'

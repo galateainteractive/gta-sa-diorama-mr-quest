@@ -174,7 +174,7 @@ std::u16string AdaptDioramaTutorialText(std::u16string text) {
         {u"~widget_minigame_cancel~", u"BOTH GRIPS + B"},
         {u"~widget_basketball_shoot~", u"R2"},
         {u"~widget_player_info~", u"R2"},
-        {u"~widget_explicit_bicycle~", u"R2"},
+        {u"~widget_explicit_bicycle~", u"Y"},
         {u"~widget_explicit_bunny_hop~", u"A"},
         {u"~widget_button_swim~", u"B"},
         {u"~widget_accelerate~", u"R2"},
@@ -196,6 +196,34 @@ std::u16string AdaptDioramaTutorialText(std::u16string text) {
 
     const std::uint32_t sourceHash = TutorialTextHash(text);
     int replacements = 0;
+
+    // The first bicycle lesson mixes a semantic bike icon with prose that
+    // describes Android screen regions. Match the complete verified retail
+    // sentences before the generic widget pass so the Diorama instructions
+    // describe the actual Quest bridge rather than merely replacing the icon.
+    struct ExactBicycleText {
+        std::u16string_view mobile;
+        std::u16string_view diorama;
+    };
+    static constexpr ExactBicycleText kExactBicycleTexts[] = {
+        {u"Tap ~m~~widget_explicit_bicycle~ to get on the bike.",
+         u"Press Y to get on the bike."},
+        {u"Press ~m~~widget_explicit_bicycle~ to get on the bike.",
+         u"Press Y to get on the bike."},
+        {u"Press and hold the lower right corner of the screen to pedal.",
+         u"Hold R2 to pedal."},
+        {u"Touch forward and back on the left side of the screen to shift your weight on the bike.",
+         u"Move the Left Stick up and down to shift your weight on the bike."},
+        {u"You can do a bunny hop by double tapping the lower right corner of the screen.",
+         u"Press A to do a bunny hop."},
+    };
+    for (const ExactBicycleText& mapping : kExactBicycleTexts) {
+        if (text == mapping.mobile) {
+            text.assign(mapping.diorama);
+            ++replacements;
+            break;
+        }
+    }
     for (const WidgetLabel& mapping : kWidgetLabels) {
         if (ReplaceAll(text, mapping.widget, mapping.label)) ++replacements;
     }
@@ -732,6 +760,7 @@ std::atomic<int>      g_gfxSel{0};
 std::atomic<bool>     g_controlsMenuActive{false};
 std::atomic<int>      g_controlsSel{0};
 std::atomic<bool>     g_controlsTipsActive{false};
+std::atomic<int>      g_controlsTipsPage{0};
 std::atomic<bool>     g_aboutActive{false};
 std::atomic<bool>     g_aboutFirstRun{false};
 std::atomic<bool>     g_gfxDistanceActive{false}; // draw-distance submenu shown
@@ -5724,7 +5753,8 @@ void PublishHudText(const std::int16_t* brief, int briefCapacity,
             break;
         }
     }
-    std::u16string nextBrief=copyGxt(brief,briefCapacity);
+    std::u16string nextBrief=AdaptDioramaTutorialText(
+        copyGxt(brief,briefCapacity));
     std::u16string nextHelp=AdaptDioramaTutorialText(
         copyGxt(help,helpCapacity));
 
@@ -6079,8 +6109,10 @@ void SetControlsMenu(bool active, int selection) {
     g_controlsSel.store(selection, std::memory_order_relaxed);
 }
 
-void SetControlsTipsMenu(bool active) {
+void SetControlsTipsMenu(bool active, int page) {
     g_controlsTipsActive.store(active, std::memory_order_relaxed);
+    g_controlsTipsPage.store(std::clamp(page, 0, 1),
+                             std::memory_order_relaxed);
 }
 
 void SetAboutMenu(bool active, bool firstRun) {
@@ -7766,64 +7798,66 @@ void BuildAboutMenu() {
     std::snprintf(versionLine, sizeof(versionLine),
                   "VR BASE %s - DEVELOPMENT PREVIEW", kModVersionShown);
     PanelTextFit(versionLine, cx, 54, 2, 170, 190, 210);
-    PanelFillRect(34, 78, kPanelW - 34, 130, 34, 55, 92, 245);
-    PanelTextFit("OPEN THE DIORAMA MENU", cx, 84, 3, 255, 205, 80);
-    PanelTextFit("HOLD BOTH GRIPS + MENU (OR Y)", cx, 109, 2, 235, 242, 255);
-    static const char* const kLines[] = {
-        "GALATEA DIORAMA MODS",
-        "PLAY MODE: DIORAMA MR OR IMMERSIVE VR",
-        "MODE CHANGES APPLY AFTER RESTART",
-        "DIORAMA: PASSTHROUGH MINIATURE WORLD",
-        "CURRENT COMMANDS: MENU > CONTROLS > GUIDE",
-        "R3 WEAPONS - L3+R3 CAMERA - META RECENTER",
-        "IMMERSIVE CONTROLS USE TRACKED HANDS",
+    PanelFillRect(34, 78, kPanelW - 34, 138, 34, 55, 92, 245);
+    PanelTextFit("OPEN THE DIORAMA MENU", cx, 86, 3, 255, 205, 80);
+    PanelTextFit("HOLD BOTH GRIPS + MENU (OR Y)", cx, 116, 2, 235, 242, 255);
+
+    if (firstRun) {
+        PanelFillRect(42, 162, kPanelW - 42, 188, 48, 38, 78, 205);
+        PanelTextFit("START HERE", cx, 166, 2, 255, 185, 105);
+        PanelTextFit("DIORAMA MR IS THE DEFAULT PLAY MODE", cx, 204, 2,
+                     225, 238, 248);
+        PanelTextFit("MAIN MENU > PLAY MODE CHANGES IT", cx, 230, 2,
+                     150, 220, 255);
+        PanelTextFit("RESTART THE GAME TO APPLY A MODE CHANGE", cx, 256, 2,
+                     150, 220, 255);
+
+        PanelFillRect(42, 294, kPanelW - 42, 320, 48, 38, 78, 205);
+        PanelTextFit("LEARN THE CONTROLS", cx, 298, 2, 255, 185, 105);
+        PanelTextFit("MENU > CONTROLS > DIORAMA CONTROL GUIDE", cx, 336, 2,
+                     225, 238, 248);
+        PanelTextFit("L2 / R2 CHANGES THE GUIDE PAGE", cx, 362, 2,
+                     150, 220, 255);
+        PanelTextFit("R3 WEAPONS   L3+R3 VIEW   META RECENTER", cx, 396, 2,
+                     210, 225, 235);
+        PanelTextFit("PRESS ANY BUTTON TO CLOSE", cx, 458, 2,
+                     255, 205, 80);
+        return;
+    }
+
+    PanelFillRect(42, 162, kPanelW - 42, 188, 48, 38, 78, 205);
+    PanelTextFit("GALATEA DIORAMA MODS", cx, 166, 2, 255, 185, 105);
+    static const char* const kAboutLines[] = {
+        "DIORAMA MR: PASSTHROUGH MINIATURE WORLD",
+        "IMMERSIVE VR: ORIGINAL TRACKED-HAND MODE",
+        "MAIN MENU > PLAY MODE; RESTART TO APPLY",
+        "CONTROLS > GUIDE FOR CURRENT COMMANDS",
         "SOURCE CODE AND CREDITS: PROJECT README",
         "ACTIVE DEVELOPMENT - EXPECT ROUGH EDGES",
         "DISCUSSION: FLAT2VR DISCORD",
         "discord.com/channels/747967102895390741/1543691482861408276",
-        "PRESS ANY BUTTON TO CLOSE",
     };
-    const int count = static_cast<int>(sizeof(kLines) / sizeof(kLines[0]));
-    const int top = 146, rowH = 27;
+    const int count = static_cast<int>(
+        sizeof(kAboutLines) / sizeof(kAboutLines[0]));
+    const int top = 208, rowH = 29;
     for (int i = 0; i < count; ++i) {
-        const bool close = i == count - 1;
-        const bool link = i == count - 2;
-        PanelTextFit(kLines[i], cx, top + i * rowH, 2,
-                     close ? 255 : (link ? 140 : 210),
-                     close ? 205 : (link ? 200 : 225),
-                     close ? 80 : (link ? 255 : 235));
+        const bool link = i == count - 1;
+        PanelTextFit(kAboutLines[i], cx, top + i * rowH, 2,
+                     link ? 140 : 210,
+                     link ? 200 : 225,
+                     link ? 255 : 235);
     }
+    PanelTextFit("PRESS ANY BUTTON TO CLOSE", cx, 466, 2,
+                 255, 205, 80);
 }
 
 void BuildControlsTipsMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
     const bool diorama = tabletop::Enabled();
-    PanelText(diorama ? "DIORAMA CONTROL GUIDE" : "IMMERSIVE CONTROL GUIDE",
-              cx, 12, 3, 100, 225, 255);
-    static const char* const kDioramaTips[] = {
-        "GRIPS+MENU (OR Y)  OPEN VR MENU",
-        "A JUMP   B SPRINT   X CLASSIC ATTACK",
-        "Y ENTER / EXIT VEHICLE   L3 CROUCH",
-        "L2 HOLD AIM   R2 FIRE WHILE AIMING",
-        "R3 OPEN WEAPON SELECTOR",
-        "RIGHT STICK HIGHLIGHT   R3 EQUIP / CLOSE",
-        "L3+R3 CAMERA: TRACK > FOLLOW > FIXED",
-        "TRACK: FOLLOW POSITION, KEEP ROOM HEADING",
-        "FOLLOW: FOLLOW POSITION + CJ/CAR HEADING",
-        "FIXED: LEAVE THE DIORAMA IN THE ROOM",
-        "HOLD META: RECENTER QUEST + DIORAMA",
-        "RIGHT STICK DOES NOT ROTATE THE DIORAMA",
-        "FIXED: ONE GRIP DRAGS THE MAP",
-        "TWO GRIPS MOVE / ROTATE / RESIZE",
-        "VISIBLE WORLD RADIUS: FIXED 60 M",
-        "VEHICLES: R2 GAS   L2 BRAKE/REVERSE",
-        "LEFT STICK STEERS VEHICLES / BIKES",
-        "PLANES: R2 GAS; LEFT STICK FLIES",
-        "HYDRA NOZZLES + HELI YAW: RIGHT STICK",
-        "PARACHUTE: A OPENS; STICKS STEER",
-        "PROMPTS: R2 YES / HOLD   L2 NO",
-    };
+    PanelTextFit(diorama ? "DIORAMA CONTROL GUIDE"
+                         : "IMMERSIVE CONTROL GUIDE",
+                 cx, 12, 3, 100, 225, 255);
     static const char* const kImmersiveTips[] = {
         "GRIPS+MENU (OR Y)  OPEN VR MENU",
         "Y ENTER/EXIT   X JUMP   A SPRINT",
@@ -7848,14 +7882,74 @@ void BuildControlsTipsMenu() {
         "CUTSCENE: R3 CAMERA / L3 REMEMBER",
         "L3+R3 RECENTER   GRIPS+R3 CAMERA VIEW",
     };
-    const char* const* tips = diorama ? kDioramaTips : kImmersiveTips;
-    const int count = diorama
-        ? static_cast<int>(sizeof(kDioramaTips) / sizeof(kDioramaTips[0]))
-        : static_cast<int>(sizeof(kImmersiveTips) / sizeof(kImmersiveTips[0]));
-    const int top = 42, rowH = 21;
-    for (int i = 0; i < count; ++i)
-        PanelTextFit(tips[i], cx, top + i * rowH, 2, 210, 225, 235);
-    PanelText("A / B BACK", cx, kPanelH - 18, 2, 150, 185, 150);
+    if (!diorama) {
+        const int count = static_cast<int>(
+            sizeof(kImmersiveTips) / sizeof(kImmersiveTips[0]));
+        const int top = 42, rowH = 19;
+        for (int i = 0; i < count; ++i)
+            PanelTextFit(kImmersiveTips[i], cx, top + i * rowH, 2,
+                         210, 225, 235);
+        PanelText("A / B BACK", cx, kPanelH - 18, 2, 150, 185, 150);
+        return;
+    }
+
+    const int page = g_controlsTipsPage.load(std::memory_order_relaxed);
+    PanelTextFit(page == 0 ? "ON FOOT & DIORAMA - 1 / 2"
+                           : "VIEWS & VEHICLES - 2 / 2",
+                 cx, 44, 2, 170, 190, 210);
+    const auto section = [&](const char* title, int y) {
+        PanelFillRect(42, y - 4, kPanelW - 42, y + 22,
+                      48, 38, 78, 205);
+        PanelTextFit(title, cx, y, 2, 255, 185, 105);
+    };
+    const auto command = [&](const char* text, int y, bool accent = false) {
+        PanelTextFit(text, cx, y, 2,
+                     accent ? 150 : 225,
+                     accent ? 220 : 238,
+                     accent ? 255 : 248);
+    };
+
+    if (page == 0) {
+        section("MENU", 72);
+        command("BOTH GRIPS + MENU (OR Y)   OPEN / CLOSE", 100, true);
+
+        section("ON FOOT", 134);
+        command("A  JUMP        B  SPRINT", 162);
+        command("X  ATTACK      Y  ENTER / EXIT", 184);
+        command("L3  CROUCH     L2  AIM", 206);
+        command("R2  FIRE WHILE AIMING", 228, true);
+
+        section("WEAPONS", 262);
+        command("R3  OPEN SELECTOR", 290);
+        command("RIGHT STICK  CHOOSE    R3  EQUIP", 312, true);
+
+        section("DIORAMA", 346);
+        command("L3 + R3  CHANGE VIEW", 374);
+        command("META BUTTON  RECENTER", 396, true);
+        command("ONE GRIP  DRAG IN FIXED MODE", 418);
+        command("TWO GRIPS  MOVE / ROTATE / RESIZE", 440, true);
+    } else {
+        section("VIEWS", 72);
+        command("TRACK   FOLLOWS POSITION; ROOM HEADING", 100);
+        command("FOLLOW  FOLLOWS POSITION + CJ / CAR", 122, true);
+        command("FIXED   DIORAMA STAYS IN THE ROOM", 144);
+
+        section("VEHICLES", 178);
+        command("LEFT STICK  STEER", 206);
+        command("R2  ACCELERATE / PEDAL", 228, true);
+        command("L2  BRAKE / REVERSE", 250);
+
+        section("FLIGHT", 284);
+        command("LEFT STICK  FLY", 312);
+        command("RIGHT STICK  HELI YAW / HYDRA NOZZLES", 334, true);
+        command("A  OPEN PARACHUTE", 356);
+
+        section("PROMPTS", 390);
+        command("R2  YES / HOLD", 418, true);
+        command("L2  NO", 440);
+    }
+    PanelTextFit("L2 / R2  PAGE       A / B  BACK",
+                 cx, kPanelH - 20, 2, 150, 185, 150);
 }
 
 void BuildControlsMenu() {

@@ -178,6 +178,14 @@ text contains no widget marker. Unknown controls retain their original text
 path and emit one bounded `[tabletop.tutorial] unmapped` diagnostic per distinct
 message for safe follow-up coverage.
 
+Package 57 extends that same Diorama-only boundary to GTA's brief-text channel,
+which is where the opening bicycle lessons are published. Exact verified
+English bicycle sentences teach `Y` to mount, hold `R2` to pedal, left-stick
+weight shifting and `A` bunny hop; generic semantic widgets continue to retain
+the original sentence and language. The in-headset reference is split into two
+colour-grouped pages selected with `L2`/`R2`, and the automatic welcome is now
+a short start-here page rather than a dense copy of the full About panel.
+
 Package 46 makes the requested presentation defaults explicit: gameplay starts
 at `visual_scale=0.010` in the translation-following `Track`/conveyor view. A
 preserved settings file is migrated only when its scale is exactly the former

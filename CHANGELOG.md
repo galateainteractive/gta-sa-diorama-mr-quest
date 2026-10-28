@@ -1,5 +1,23 @@
 # Changelog
 
+## Package 57 tutorial coverage and readable control guide
+
+- Adapt both GTA HUD tutorial channels while Diorama MR is active, so early
+  mission lessons no longer bypass the Quest-control translation merely
+  because the retail game publishes them as brief text instead of help text.
+- Correct the opening bicycle lesson to teach the actual Diorama controls:
+  `Y` mounts the bicycle, holding `R2` pedals, the left stick shifts weight,
+  and `A` performs a bunny hop. Immersive VR and retail GXT data remain
+  untouched.
+- Replace the crowded single-page Diorama command list with two colour-grouped
+  pages for on-foot/Diorama and views/vehicles. `L2` and `R2` select a page;
+  `A` or `B` returns to Controls.
+- Separate the automatic first-run welcome from the full About page. New
+  players now see only menu discovery, play-mode restart behaviour, the path
+  to the control guide, and the three essential Diorama shortcuts.
+- Keep the first-run audio path unchanged pending a live capture of the rare
+  fresh-install-only stutter; the verified audio payload itself is complete.
+
 ## Package 56 Diorama-aware tutorial controls
 
 - Translate GTA Android's semantic touch-widget markers into the proven Quest
