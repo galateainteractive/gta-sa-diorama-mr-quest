@@ -615,3 +615,19 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 61 complete tutorial queue capture and fast logcat start'
+
+# Package 62 reads every final tutorial buffer even when the stock game bypasses
+# the enqueue function observed by Package 61.
+foreach ($sourcePattern in @(
+        'LogTutorialBufferSnapshot\("brief-buffer", 0',
+        'for \(int style=0;style<8;\+\+style\)',
+        'LogTutorialBufferSnapshot\("big-buffer", style',
+        'for \(int slot=0;slot<10;\+\+slot\)',
+        'LogTutorialBufferSnapshot\("help-buffer", slot',
+        '\[tabletop\.tutorial\.buffer\]',
+        'loggedKeys\.size\(\) >= 512u')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 62 direct tutorial-buffer audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 62 direct brief, big and ten-slot help capture'

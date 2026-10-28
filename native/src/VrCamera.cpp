@@ -48,6 +48,9 @@
 namespace savr::vrcam {
 namespace {
 
+void LogTutorialBufferSnapshot(const char* channel, int slot,
+                               const std::int16_t* text, int capacity);
+
 // The scene camera matrix inside CCamera. Proven by disassembly: both
 // CalculateDerivedValues and CopyCameraMatrixToRWCam read these exact offsets.
 // Four CVectors (right/forward/up/pos), 0x10 stride, each vector three floats.
@@ -22480,17 +22483,29 @@ void RenderGameplayHudPass() {
     // the final GXT text into CHud. Publish those characters directly instead
     // of asking the OpenXR compositor to discover them in a screenshot crop.
     const std::int16_t* helpText=nullptr;
+    if (tabletop::Enabled()) {
+        LogTutorialBufferSnapshot("brief-buffer", 0,
+                                  g.CHud_m_Message, 400);
+        if (g.CHud_m_BigMessage) {
+            for (int style=0;style<8;++style) {
+                LogTutorialBufferSnapshot("big-buffer", style,
+                                          g.CHud_m_BigMessage+style*128,
+                                          128);
+            }
+        }
+    }
     if (g.CWidgetHelpText_m_pInstance&&*g.CWidgetHelpText_m_pInstance) {
         const auto* widget=static_cast<const std::uint8_t*>(
             *g.CWidgetHelpText_m_pInstance);
         // Ten retail help queue entries, each 0x334 bytes. The first 800 bytes
-        // of an entry are GxtChar[400]. Prefer the first non-empty entry.
+        // of an entry are GxtChar[400]. Diagnose every occupied entry even if
+        // GTA bypassed AddMessageToQueue, then publish the first one as before.
         for (int slot=0;slot<10;++slot) {
             const auto* candidate=reinterpret_cast<const std::int16_t*>(
                 widget+0xcc+slot*0x334);
+            LogTutorialBufferSnapshot("help-buffer", slot, candidate, 400);
             if (candidate[0]!=0) {
-                helpText=candidate;
-                break;
+                if (!helpText) helpText=candidate;
             }
         }
     }
@@ -26931,10 +26946,11 @@ using WidgetHelpAddMessageFn = void (*)(void* self, std::int16_t* text,
                                         std::uint32_t flags);
 WidgetHelpAddMessageFn g_origWidgetHelpAddMessage = nullptr;
 
-std::uint32_t TutorialQueueHash(const std::int16_t* text) {
+std::uint32_t TutorialQueueHash(const std::int16_t* text, int capacity) {
     std::uint32_t hash = 2166136261u;
     if (!text) return hash;
-    for (int i = 0; i < 400 && text[i] != 0; ++i) {
+    const int boundedCapacity = std::clamp(capacity, 0, 400);
+    for (int i = 0; i < boundedCapacity && text[i] != 0; ++i) {
         const std::uint16_t value = static_cast<std::uint16_t>(text[i]);
         hash ^= value & 0xffu;
         hash *= 16777619u;
@@ -26944,11 +26960,13 @@ std::uint32_t TutorialQueueHash(const std::int16_t* text) {
     return hash;
 }
 
-std::string TutorialQueuePreview(const std::int16_t* text) {
+std::string TutorialQueuePreview(const std::int16_t* text, int capacity) {
     std::string preview;
     if (!text) return preview;
     preview.reserve(240);
-    for (int i = 0; i < 400 && text[i] != 0 && preview.size() < 239u; ++i) {
+    const int boundedCapacity = std::clamp(capacity, 0, 400);
+    for (int i = 0; i < boundedCapacity && text[i] != 0 &&
+         preview.size() < 239u; ++i) {
         const std::uint16_t value = static_cast<std::uint16_t>(text[i]);
         if (value == '\n' || value == '\r' || value == '\t') {
             preview.push_back(' ');
@@ -26961,11 +26979,47 @@ std::string TutorialQueuePreview(const std::int16_t* text) {
     return preview;
 }
 
+void LogTutorialBufferSnapshot(const char* channel, int slot,
+                               const std::int16_t* text, int capacity) {
+    if (!tabletop::Enabled() || !text || capacity <= 0 || text[0] == 0)
+        return;
+    const std::uint32_t textHash = TutorialQueueHash(text, capacity);
+    std::uint32_t channelHash = 2166136261u;
+    if (channel) {
+        for (const char* c=channel;*c!='\0';++c) {
+            channelHash ^= static_cast<std::uint8_t>(*c);
+            channelHash *= 16777619u;
+        }
+    }
+    const std::uint64_t key =
+        (static_cast<std::uint64_t>(textHash) << 32u) ^
+        static_cast<std::uint64_t>(channelHash) ^
+        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(slot)) << 1u);
+    static std::mutex logMutex;
+    static std::vector<std::uint64_t> loggedKeys;
+    bool firstOccurrence = false;
+    {
+        std::lock_guard<std::mutex> lock(logMutex);
+        if (std::find(loggedKeys.begin(), loggedKeys.end(), key) ==
+            loggedKeys.end()) {
+            if (loggedKeys.size() >= 512u) loggedKeys.erase(loggedKeys.begin());
+            loggedKeys.push_back(key);
+            firstOccurrence = true;
+        }
+    }
+    if (!firstOccurrence) return;
+    const std::string preview = TutorialQueuePreview(text, capacity);
+    LOGI("[tabletop.tutorial.buffer] channel=%s slot=%d hash=%08x "
+         "capacity=%d text=%.239s",
+         channel ? channel : "unknown", slot, textHash, capacity,
+         preview.c_str());
+}
+
 void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
                             std::uint16_t displayTime, float width,
                             float height, std::uint32_t flags) {
     if (tabletop::Enabled() && text && text[0] != 0) {
-        const std::uint32_t hash = TutorialQueueHash(text);
+        const std::uint32_t hash = TutorialQueueHash(text, 400);
         static std::mutex logMutex;
         static std::vector<std::uint32_t> loggedHashes;
         bool firstOccurrence = false;
@@ -26980,7 +27034,7 @@ void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
             }
         }
         if (firstOccurrence) {
-            const std::string preview = TutorialQueuePreview(text);
+            const std::string preview = TutorialQueuePreview(text, 400);
             LOGI("[tabletop.tutorial.queue] hash=%08x top=%d time=%u "
                  "size=%.1fx%.1f flags=%u text=%.239s",
                  hash, topStyle ? 1 : 0,

@@ -1,5 +1,15 @@
 # Changelog
 
+## Package 62 direct tutorial-buffer capture
+
+- Diagnose the final text state directly instead of relying on the Package 61
+  enqueue hook. Diorama MR now records each distinct occupied value from the
+  brief-message buffer, all eight large-message styles and all ten mobile-help
+  queue slots, including strings written without `AddMessageToQueue`.
+- Deduplicate by channel, slot and text hash with a bounded 512-entry history.
+  Empty buffers remain free and occupied buffers add only a small diagnostic
+  scan; retail text, rendering and Immersive VR remain unchanged.
+
 ## Package 61 complete mobile tutorial capture
 
 - Observe GTA Android's common `CWidgetHelpText::AddMessageToQueue` boundary in
