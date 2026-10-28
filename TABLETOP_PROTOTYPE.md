@@ -348,3 +348,10 @@ retail fingerprint mismatch and can be disabled at process start with
 `debug.savr.diorama_tutorials=0`. Controls now lands on the guide for the active
 play mode, with remapping explicitly secondary, and the menu chord is repeated
 once per Diorama application session in a five-second top-centre notice.
+
+Package 65 fixes the new-install handoff between Welcome and that centred
+notice: closing Welcome no longer consumes the session reminder. It also maps
+the exact opening Android cards from the user's verified `american.gxt` to the
+Quest controls for movement, sprint, weapon selection and melee. Known semantic
+widgets may safely normalise `Tap` to `Press`; unknown touch wording is logged
+once and otherwise remains unchanged.

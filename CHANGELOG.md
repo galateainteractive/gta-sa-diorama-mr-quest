@@ -1,5 +1,19 @@
 # Changelog
 
+## Package 65 first-session reminder and opening tutorials
+
+- Keep the centred Diorama-menu reminder pending while the one-time Welcome
+  page is open. A new installation now shows the five-second
+  `BOTH GRIPS + MENU (OR Y)` hint as soon as the Welcome closes and CJ becomes
+  controllable, instead of incorrectly treating the Welcome as the reminder.
+- Add exact official-English mappings for the opening Android instructions:
+  move Carl with the Left Stick, sprint with `B`, open the weapon selector with
+  `R3`, and perform a melee attack with `X`.
+- Add proven mappings for camera view (`L3 + R3`), yes (`R2`) and no (`L2`).
+  Android `Tap` becomes `Press` only after a known semantic widget was replaced.
+- Observe unknown final-font `Tap`, `Touch`, `Swipe` and weapon-icon cards once
+  in diagnostics while preserving their original text for safe future mapping.
+
 ## Package 64 final Diorama tutorial adapter and guide-first Controls
 
 - Turn the verified retail `CFont::PrintString` boundary into a conservative

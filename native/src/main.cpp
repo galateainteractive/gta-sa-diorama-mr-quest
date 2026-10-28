@@ -1125,7 +1125,9 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             menuPage = PG_ABOUT;
             aboutFirstRun = true;
             aboutArmed = false;
-            sessionMenuReminderShown = true;
+            // Do not consume the session reminder here. Once the Welcome is
+            // closed and CJ becomes controllable again, the centred chord hint
+            // must still be shown — especially on a brand-new installation.
         } else if (controllableGameplay && tabletop::Enabled() &&
                    savr::locomotion::WelcomeSeen() &&
                    !sessionMenuReminderShown) {

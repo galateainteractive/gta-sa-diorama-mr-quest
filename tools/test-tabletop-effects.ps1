@@ -659,7 +659,7 @@ Write-Output 'PASS Package 63 scoped touch-render tutorial capture'
 # hatch, an explicit branded prefix and mode-specific Controls navigation.
 foreach ($sourcePattern in @(
         'LooksLikeDioramaTouchTutorial',
-        'no generic "tap" match',
+        'leaves them byte-for-byte unchanged',
         'debug\.savr\.diorama_tutorials',
         'AdaptDioramaTutorialForStockRender',
         '~p~DIORAMA MR TIP~w~:',
@@ -673,3 +673,24 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 64 filtered tutorials, centred reminder and guide-first Controls'
+
+# Package 65 fixes the brand-new-install reminder handoff and expands only the
+# exact opening Android tutorials proven in the official English GXT. Generic
+# touch wording is diagnostic-only; only known widget prompts normalise Tap to
+# Press after a successful control replacement.
+foreach ($sourcePattern in @(
+        'Do not consume the session reminder here',
+        'Use the Left Stick to move Carl\.',
+        'Walk into the red marker to continue\. Hold B to sprint\.',
+        'Press R3 to open the weapon selector\.',
+        'Press X to perform a melee attack\.',
+        '~widget_camera~", u"L3 \+ R3"',
+        '~widget_reply_yes~", u"R2"',
+        '~widget_reply_no~", u"L2"',
+        'Normalise Android''s touch verb only in that proven case',
+        '"tap ", "swipe ", "weapon icon"')) {
+    if (($xrSource + $cameraSource + $mainSource) -notmatch $sourcePattern) {
+        throw "Package 65 opening-tutorial/reminder audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 65 first-session reminder and exact opening tutorials'

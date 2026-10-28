@@ -27078,12 +27078,14 @@ bool TutorialTextContainsAsciiNoCase(const std::int16_t* text, int capacity,
 }
 
 bool LooksLikeDioramaTouchTutorial(const std::int16_t* text, int capacity) {
-    // Intentionally no generic "tap" match. These are either semantic control
-    // tokens or distinctive Android tutorial phrases already audited above.
+    // Semantic controls and exact screen-region phrases can be adapted. Generic
+    // touch verbs enter the adapter only so unknown cards are logged once;
+    // AdaptDioramaTutorialText still leaves them byte-for-byte unchanged.
     static constexpr const char* kSignals[] = {
         "~widget_", "lower right corner", "lower left corner",
         "left side of the screen", "double tap the center",
         "touch the screen", "climb out of the water", "crouch ~a~",
+        "tap ", "swipe ", "weapon icon",
     };
     for (const char* signal : kSignals) {
         if (TutorialTextContainsAsciiNoCase(text, capacity, signal))

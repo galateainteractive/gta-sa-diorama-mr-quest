@@ -215,6 +215,10 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         {u"~widget_explicit_flight_secondary_attack~", u"B"},
         {u"~widget_explicit_throw~", u"R2"},
         {u"~widget_explicit_extinguisher~", u"L2 + R2"},
+        {u"~widget_camera~", u"L3 + R3"},
+        {u"~widget_vc_shoot~", u"R2"},
+        {u"~widget_reply_yes~", u"R2"},
+        {u"~widget_reply_no~", u"L2"},
     };
 
     const std::uint32_t sourceHash = TutorialTextHash(text);
@@ -283,6 +287,14 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         std::u16string_view diorama;
     };
     static constexpr ExactHelpText kExactHelpTexts[] = {
+        {u"Touch the lower left corner of the screen to move Carl.",
+         u"Use the Left Stick to move Carl."},
+        {u"Walk into the red marker to continue. Press and hold the lower right corner of your screen to sprint.",
+         u"Walk into the red marker to continue. Hold B to sprint."},
+        {u"Press the weapon icon in the upper right corner of the screen to cycle through your available weapons.",
+         u"Press R3 to open the weapon selector."},
+        {u"Tap ~m~X to perform a melee attack.",
+         u"Press X to perform a melee attack."},
         {u"Double tap the lower left corner of the screen to crouch and sneak around the house quietly.",
          u"Press L3 to crouch and sneak around the house quietly."},
         {u"~s~Double tap the center of the screen to open the parachute now.",
@@ -299,6 +311,14 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
             ++replacements;
             break;
         }
+    }
+
+    // A known semantic widget already proves that this is a control prompt.
+    // Normalise Android's touch verb only in that proven case; generic mission
+    // prose containing the word "tap" is never rewritten.
+    if (replacements > 0) {
+        ReplaceAll(text, u"Tap ~m~", u"Press ");
+        ReplaceAll(text, u"tap ~m~", u"press ");
     }
 
     // Log each distinct source at most once per process. A capture therefore
@@ -332,7 +352,10 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         ContainsAsciiNoCase(text, u"lower right corner") ||
         ContainsAsciiNoCase(text, u"left side of the screen") ||
         ContainsAsciiNoCase(text, u"double tapping") ||
-        ContainsAsciiNoCase(text, u"touch the screen");
+        ContainsAsciiNoCase(text, u"touch the screen") ||
+        ContainsAsciiNoCase(text, u"tap ") ||
+        ContainsAsciiNoCase(text, u"swipe ") ||
+        ContainsAsciiNoCase(text, u"weapon icon");
     if (firstOccurrence && replacements == 0 && mobileWording) {
         const std::string preview = TutorialTextPreview(text);
         LOGI("[tabletop.tutorial] mobile-unmapped channel=%s hash=%08x chars=%zu text=%.180s",
