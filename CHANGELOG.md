@@ -1,5 +1,17 @@
 # Changelog
 
+## Package 69 bounded plant-renderer A/B
+
+- Add one temporary, process-local headset comparison for the unresolved black
+  shrubs. `Both Grips + X` cycles `ORIGINAL`, `NO PROCEDURAL` and
+  `NO STATIC VEGETATION`, with a four-second status line and haptic confirmation.
+- `NO PROCEDURAL` skips only the fingerprint-verified retail
+  `CGrassRenderer::DrawTriPlants` submission. `NO STATIC VEGETATION` skips the
+  existing audited model family 615-792 in both opaque and alpha entity paths.
+- Reset to `ORIGINAL` on every launch and write only one log line when the mode
+  changes. No colour, alpha, blend state, save, game logic or Immersive VR path
+  is modified by this diagnostic.
+
 ## Package 68 retire ineffective procedural-plant experiment
 
 - Remove the Package 67 `CGrassRenderer::DrawTriPlants` colour/blend wrapper

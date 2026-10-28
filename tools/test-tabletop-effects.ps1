@@ -683,8 +683,7 @@ Write-Output 'PASS Package 66 persistent cached GTA-menu discovery banner'
 foreach ($retiredPattern in @(
         'OnTabletopDrawTriPlants',
         'g_origTabletopDrawTriPlants',
-        'kPPTriPlantBlackThreshold',
-        '_ZN14CGrassRenderer13DrawTriPlants')) {
+        'kPPTriPlantBlackThreshold')) {
     if ($cameraSource -match $retiredPattern) {
         throw "Package 68 retired plant experiment remains: $retiredPattern"
     }
@@ -698,3 +697,44 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 68 plant experiment retired and Release telemetry remains quiet'
+
+# Package 69 is a bounded, process-local A/B rather than another speculative
+# fix. It may suppress the audited procedural draw or the already-classified
+# static vegetation family, but must not mutate colour, alpha or render state.
+$drawTriPlants = (& $Objdump -d --start-address=0x35e548 --stop-address=0x35e558 $LibGame) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw 'CGrassRenderer::DrawTriPlants disassembly failed' }
+foreach ($word in @('d10343ff', '6d033bef', '6d0433ed', '6d052beb')) {
+    if ($drawTriPlants -notmatch $word) {
+        throw "Package 69 DrawTriPlants prologue mismatch: $word"
+    }
+}
+foreach ($sourcePattern in @(
+        'enum class PlantDiagnosticMode',
+        'PlantDiagnosticMode::NoProcedural',
+        'PlantDiagnosticMode::NoStaticVegetation',
+        'bool OnDiagnosticDrawTriPlants\(',
+        'if \(suppress\) return true;',
+        'void CyclePlantDiagnosticMode\(\)',
+        'PLANT TEST: ORIGINAL',
+        'PLANT TEST: NO PROCEDURAL',
+        'PLANT TEST: NO STATIC VEGETATION',
+        '\[tabletop\.plant_ab\] mode=%d label=%s',
+        'tabletop::Enabled\(\) &&\s*menuPage == PG_NONE && inGameplay && grips && in\.x')) {
+    if (($cameraSource + $mainSource) -notmatch $sourcePattern) {
+        throw "Package 69 plant A/B audit failed: $sourcePattern"
+    }
+}
+if (([regex]::Matches(
+        $cameraSource,
+        'if \((?:diagnosticModelId|modelId) >= 615 && (?:diagnosticModelId|modelId) <= 792\) return;')).Count -lt 2) {
+    throw 'Package 69 static vegetation is not suppressed in both render paths'
+}
+foreach ($forbiddenPattern in @(
+        'kPPTriPlantBlackThreshold',
+        'g_tabletopPlantAmbientColor',
+        'g_tabletopPlantRenderStateGet')) {
+    if ($cameraSource -match $forbiddenPattern) {
+        throw "Package 69 reintroduced plant mutation: $forbiddenPattern"
+    }
+}
+Write-Output 'PASS Package 69 bounded three-mode plant renderer A/B'

@@ -46,6 +46,12 @@ Runtime controls:
 - selecting the already equipped weapon simply closes the selector without
   changing CJ's inventory.
 
+Package 69 temporarily adds one diagnostic-only chord: `Both Grips + X` cycles
+`PLANT TEST: ORIGINAL`, `NO PROCEDURAL` and `NO STATIC VEGETATION`. It is
+available only during Diorama gameplay, resets to `ORIGINAL` on every launch,
+and produces no periodic telemetry. It exists solely to identify which retail
+renderer owns the black shrubs observed near the opening Grove Street scene.
+
 The physical miniature size is independent of the visible-world radius. Two
 grips may still resize the diorama freely without changing how many game-world
 metres are streamed and rendered around CJ or the current vehicle.
@@ -372,3 +378,11 @@ insufficient. Package 68 removes that experiment and restores the retail plant
 draw unchanged. The useful Package 67 cleanup remains: old flicker-investigation
 witnesses are `SAVR_DEV`-only, removing their frame-by-frame aggregation and
 periodic Android logging from production while retaining real error reports.
+
+Package 69 performs the next diagnosis in one headset visit rather than across
+multiple speculative builds. `NO PROCEDURAL` bypasses only the verified
+`DrawTriPlants` submission; `NO STATIC VEGETATION` bypasses model IDs 615-792
+in the existing opaque and alpha wrappers. A disappearing shrub identifies its
+render family immediately. If it survives both modes, the next investigation
+can target a different billboard/shadow/material pass without retaining either
+suppression in the eventual public build.

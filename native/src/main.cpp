@@ -1056,6 +1056,17 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             return 3;                                    // ~216/s
         };
 
+        // Package 69 temporary plant-renderer A/B. Keep this behind a chord
+        // that cannot reach GTA gameplay (the generic provider is disabled
+        // while both grips are held), and change state only on the X edge.
+        // The mode is process-local and therefore always starts ORIGINAL.
+        static bool plantDiagnosticChordPrev = false;
+        const bool plantDiagnosticChord = tabletop::Enabled() &&
+            menuPage == PG_NONE && inGameplay && grips && in.x;
+        if (plantDiagnosticChord && !plantDiagnosticChordPrev)
+            vrcam::CyclePlantDiagnosticMode();
+        plantDiagnosticChordPrev = plantDiagnosticChord;
+
         // Primary open chord is grips+Menu (Vice City style); grips+Y is the
         // fallback for setups where the Menu click is swallowed. grips+B was a
         // legacy third fallback and is deliberately GONE: B now fires the
