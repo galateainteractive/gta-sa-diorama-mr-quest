@@ -698,43 +698,49 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 68 plant experiment retired and Release telemetry remains quiet'
 
-# Package 69 is a bounded, process-local A/B rather than another speculative
-# fix. It may suppress the audited procedural draw or the already-classified
-# static vegetation family, but must not mutate colour, alpha or render state.
-$drawTriPlants = (& $Objdump -d --start-address=0x35e548 --stop-address=0x35e558 $LibGame) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'CGrassRenderer::DrawTriPlants disassembly failed' }
-foreach ($word in @('d10343ff', '6d033bef', '6d0433ed', '6d052beb')) {
-    if ($drawTriPlants -notmatch $word) {
-        throw "Package 69 DrawTriPlants prologue mismatch: $word"
+# Package 70 removes the completed Package 69 renderer A/B and replaces it
+# with a bounded, nearby-scenery model isolator. Collection occurs only between
+# two deliberate chords; normal play has one atomic state check per wrapper.
+foreach ($retiredPattern in @(
+        'PlantDiagnosticMode',
+        'OnDiagnosticDrawTriPlants',
+        'CyclePlantDiagnosticMode',
+        'PLANT TEST: NO PROCEDURAL',
+        'PLANT TEST: NO STATIC VEGETATION',
+        '\[tabletop\.plant_ab\]')) {
+    if (($cameraSource + $mainSource) -match $retiredPattern) {
+        throw "Package 70 retired Package 69 diagnostic remains: $retiredPattern"
     }
 }
 foreach ($sourcePattern in @(
-        'enum class PlantDiagnosticMode',
-        'PlantDiagnosticMode::NoProcedural',
-        'PlantDiagnosticMode::NoStaticVegetation',
-        'bool OnDiagnosticDrawTriPlants\(',
-        'if \(suppress\) return true;',
-        'void CyclePlantDiagnosticMode\(\)',
-        'PLANT TEST: ORIGINAL',
-        'PLANT TEST: NO PROCEDURAL',
-        'PLANT TEST: NO STATIC VEGETATION',
-        '\[tabletop\.plant_ab\] mode=%d label=%s',
-        'tabletop::Enabled\(\) &&\s*menuPage == PG_NONE && inGameplay && grips && in\.x')) {
+        'enum class PlantModelIsolatorState',
+        'kPlantModelCandidateCapacity = 96',
+        'kPlantModelCaptureRadiusM = 35\.0f',
+        'bool ProcessPlantModelIsolatorEntity\(void\* entity, bool alphaPath\)',
+        'entityType != 1 && entityType != 4 && entityType != 5',
+        'void AdvancePlantModelIsolator\(\)',
+        'void ResetPlantModelIsolator\(\)',
+        'MODEL TEST: CAPTURING - WAIT, THEN GRIPS \+ X',
+        'MODEL TEST %d/%d: ID %d %s',
+        'MODEL TEST: ORIGINAL SCENE RESTORED',
+        '\[tabletop\.model_isolator\] index=%d/%d model=%d',
+        'modelIsolatorAdvance.*tabletop::Enabled\(\)',
+        'modelIsolatorReset.*tabletop::Enabled\(\)')) {
     if (($cameraSource + $mainSource) -notmatch $sourcePattern) {
-        throw "Package 69 plant A/B audit failed: $sourcePattern"
+        throw "Package 70 nearby-model isolator audit failed: $sourcePattern"
     }
 }
 if (([regex]::Matches(
         $cameraSource,
-        'if \((?:diagnosticModelId|modelId) >= 615 && (?:diagnosticModelId|modelId) <= 792\) return;')).Count -lt 2) {
-    throw 'Package 69 static vegetation is not suppressed in both render paths'
+        'if \(ProcessPlantModelIsolatorEntity\(entity, (?:false|true)\)\) return;')).Count -ne 2) {
+    throw 'Package 70 model isolator must cover exactly opaque and alpha wrappers'
 }
 foreach ($forbiddenPattern in @(
         'kPPTriPlantBlackThreshold',
         'g_tabletopPlantAmbientColor',
         'g_tabletopPlantRenderStateGet')) {
     if ($cameraSource -match $forbiddenPattern) {
-        throw "Package 69 reintroduced plant mutation: $forbiddenPattern"
+        throw "Package 70 reintroduced plant mutation: $forbiddenPattern"
     }
 }
-Write-Output 'PASS Package 69 bounded three-mode plant renderer A/B'
+Write-Output 'PASS Package 70 bounded nearby-scenery model isolator'

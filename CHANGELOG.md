@@ -1,5 +1,19 @@
 # Changelog
 
+## Package 70 nearby-scenery model isolator
+
+- Remove the completed Package 69 procedural/static vegetation A/B. Headset
+  testing proved that the crossed-card shrubs in front of Grove Street houses
+  belong to neither tested renderer family.
+- Add a process-local nearby-scenery isolator. The first `Both Grips + X`
+  starts a bounded 35-metre capture; after a short wait, the second press sorts
+  the visible scenery models by distance and hides only the nearest candidate.
+  Further presses advance one model at a time and display its model ID plus
+  `OPAQUE`, `ALPHA` or `OPAQUE+ALPHA` path.
+- `Both Grips + B` immediately restores the complete scene. Collection uses a
+  fixed 96-entry array only while explicitly armed, excludes pedestrians and
+  vehicles, writes one event per command and never touches saves or Immersive VR.
+
 ## Package 69 bounded plant-renderer A/B
 
 - Add one temporary, process-local headset comparison for the unresolved black
@@ -11,6 +25,9 @@
 - Reset to `ORIGINAL` on every launch and write only one log line when the mode
   changes. No colour, alpha, blend state, save, game logic or Immersive VR path
   is modified by this diagnostic.
+- Headset validation showed the crossed-card shrubs did not change in either
+  suppression mode. Package 70 therefore retires this A/B and moves to exact
+  nearby-model isolation.
 
 ## Package 68 retire ineffective procedural-plant experiment
 

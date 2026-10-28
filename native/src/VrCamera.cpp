@@ -2598,13 +2598,26 @@ struct TabletopTransformState {
 TabletopTransformState g_tabletopTransform{};
 std::atomic<bool> g_tabletopWeaponSelectorActive{false};
 int g_tabletopWeaponSelectorSlot = 0;
-enum class PlantDiagnosticMode : int {
-    Original = 0,
-    NoProcedural = 1,
-    NoStaticVegetation = 2,
+enum class PlantModelIsolatorState : int {
+    Idle = 0,
+    Capturing = 1,
+    Isolating = 2,
 };
-std::atomic<int> g_plantDiagnosticMode{
-    static_cast<int>(PlantDiagnosticMode::Original)};
+struct PlantModelCandidate {
+    int modelId{-1};
+    float distanceSq{std::numeric_limits<float>::max()};
+    std::uint8_t paths{}; // bit 0 opaque, bit 1 alpha
+};
+constexpr int kPlantModelCandidateCapacity = 96;
+constexpr float kPlantModelCaptureRadiusM = 35.0f;
+std::array<PlantModelCandidate, kPlantModelCandidateCapacity>
+    g_plantModelCandidates{};
+int g_plantModelCandidateCount = 0;
+int g_plantModelCandidateIndex = -1;
+std::atomic<int> g_plantModelIsolatorState{
+    static_cast<int>(PlantModelIsolatorState::Idle)};
+std::atomic<int> g_plantModelSuppressedId{-1};
+std::atomic_flag g_plantModelCandidateLock = ATOMIC_FLAG_INIT;
 std::atomic<bool> g_tabletopClassicAttackHeld{false};
 std::atomic<std::uint32_t> g_tabletopClassicAttackPressFrame{
     std::numeric_limits<std::uint32_t>::max()};
@@ -15870,6 +15883,77 @@ bool TabletopEntityInsideRadius(const void* entity, float extraRadiusM) {
     return TabletopWorldInsideCoverage(world, radius);
 }
 
+void LockPlantModelCandidates() {
+    while (g_plantModelCandidateLock.test_and_set(std::memory_order_acquire)) {}
+}
+
+void UnlockPlantModelCandidates() {
+    g_plantModelCandidateLock.clear(std::memory_order_release);
+}
+
+int PlantModelIdForEntity(const void* entity) {
+    if (!entity) return -1;
+    const auto* const bytes = static_cast<const std::uint8_t*>(entity);
+    const int entityType = bytes[0x5a] & 0x7;
+    // Buildings, objects and dummies cover ordinary scenery while excluding
+    // CJ, pedestrians and vehicles from this temporary isolator.
+    if (entityType != 1 && entityType != 4 && entityType != 5) return -1;
+    const int modelId = static_cast<int>(
+        *reinterpret_cast<const std::int16_t*>(bytes + 0x32));
+    return modelId >= 0 && modelId < 20000 ? modelId : -1;
+}
+
+bool ProcessPlantModelIsolatorEntity(void* entity, bool alphaPath) {
+    const auto state = static_cast<PlantModelIsolatorState>(
+        g_plantModelIsolatorState.load(std::memory_order_acquire));
+    if (state == PlantModelIsolatorState::Idle ||
+        !g_tabletopActive.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const int modelId = PlantModelIdForEntity(entity);
+    if (modelId < 0) return false;
+    if (state == PlantModelIsolatorState::Isolating) {
+        return modelId == g_plantModelSuppressedId.load(
+            std::memory_order_relaxed);
+    }
+    if (!g_tabletopRadiusCenterValid) return false;
+    V3 world{};
+    if (!ReadEntityWorldPosition(entity, &world)) return false;
+    const float dx = world.x - g_tabletopRadiusCenter.x;
+    const float dy = world.y - g_tabletopRadiusCenter.y;
+    const float distanceSq = dx * dx + dy * dy;
+    if (!std::isfinite(distanceSq) ||
+        distanceSq > kPlantModelCaptureRadiusM * kPlantModelCaptureRadiusM) {
+        return false;
+    }
+
+    LockPlantModelCandidates();
+    if (static_cast<PlantModelIsolatorState>(
+            g_plantModelIsolatorState.load(std::memory_order_relaxed)) ==
+            PlantModelIsolatorState::Capturing) {
+        int found = -1;
+        for (int index = 0; index < g_plantModelCandidateCount; ++index) {
+            if (g_plantModelCandidates[index].modelId == modelId) {
+                found = index;
+                break;
+            }
+        }
+        if (found < 0 &&
+            g_plantModelCandidateCount < kPlantModelCandidateCapacity) {
+            found = g_plantModelCandidateCount++;
+            g_plantModelCandidates[found] = {};
+            g_plantModelCandidates[found].modelId = modelId;
+        }
+        if (found >= 0) {
+            auto& candidate = g_plantModelCandidates[found];
+            candidate.distanceSq = std::min(candidate.distanceSq, distanceSq);
+            candidate.paths |= alphaPath ? 0x2u : 0x1u;
+        }
+    }
+    UnlockPlantModelCandidates();
+    return false;
+}
+
 void OnRenderOneRoad(void* entity) {
     if (g_tabletopActive.load(std::memory_order_acquire)) {
         // ScanWorld has already bounded and ordered the tabletop sector set.
@@ -15917,18 +16001,7 @@ void OnRenderOneRoad(void* entity) {
 }
 
 void OnRenderOneNonRoad(void* entity) {
-    if (g_tabletopActive.load(std::memory_order_acquire) && entity &&
-        static_cast<PlantDiagnosticMode>(
-            g_plantDiagnosticMode.load(std::memory_order_relaxed)) ==
-            PlantDiagnosticMode::NoStaticVegetation) {
-        const int modelId = static_cast<int>(
-            *reinterpret_cast<const std::int16_t*>(
-                static_cast<const std::uint8_t*>(entity) + 0x32));
-        // Exact generic vegetation span already used by the visibility and
-        // streaming profiles. This test deliberately hides the whole audited
-        // family so one headset comparison can identify a static model path.
-        if (modelId >= 615 && modelId <= 792) return;
-    }
+    if (ProcessPlantModelIsolatorEntity(entity, false)) return;
     if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) return;
     // The radial gate is already tightly bounded. Re-testing accepted
     // tabletop content against two slightly different eye frusta caused
@@ -15973,15 +16046,7 @@ void OnRenderAlphaEntity(void* entity, float distance) {
     const bool diagnostic = g_tabletopActive.load(std::memory_order_relaxed) &&
         (diagnosticEye == 0 || diagnosticEye == 1);
 #endif
-    if (g_tabletopActive.load(std::memory_order_acquire) && entity &&
-        static_cast<PlantDiagnosticMode>(
-            g_plantDiagnosticMode.load(std::memory_order_relaxed)) ==
-            PlantDiagnosticMode::NoStaticVegetation) {
-        const int diagnosticModelId = static_cast<int>(
-            *reinterpret_cast<const std::int16_t*>(
-                static_cast<const std::uint8_t*>(entity) + 0x32));
-        if (diagnosticModelId >= 615 && diagnosticModelId <= 792) return;
-    }
+    if (ProcessPlantModelIsolatorEntity(entity, true)) return;
     if (!TabletopEntityInsideRadius(entity, kTabletopObjectOverscanM)) {
 #if defined(SAVR_DEV)
         if (diagnostic) ++g_tabletopAlphaDepthWitness.rejected[diagnosticEye];
@@ -27929,22 +27994,8 @@ void InstallGameUpdateHitchProfiler() {
 
 using TabletopPlantUpdateFn = void (*)(const void*);
 using SetGrassAlphaDistanceFn = void (*)(float, float);
-using DrawTriPlantsFn = bool (*)(void*, int, void**, void*);
 TabletopPlantUpdateFn g_origTabletopPlantUpdate = nullptr;
 SetGrassAlphaDistanceFn g_setGrassAlphaDistance = nullptr;
-DrawTriPlantsFn g_origDiagnosticDrawTriPlants = nullptr;
-
-bool OnDiagnosticDrawTriPlants(void* plants, int count, void** atomics,
-                               void* matrix) {
-    if (!g_origDiagnosticDrawTriPlants) return false;
-    const bool suppress =
-        g_tabletopActive.load(std::memory_order_acquire) &&
-        static_cast<PlantDiagnosticMode>(
-            g_plantDiagnosticMode.load(std::memory_order_relaxed)) ==
-            PlantDiagnosticMode::NoProcedural;
-    if (suppress) return true;
-    return g_origDiagnosticDrawTriPlants(plants, count, atomics, matrix);
-}
 
 void OnTabletopPlantUpdate(const void* cameraPosition) {
     ScopedGameUpdateTiming timing(GameUpdateSubsystem::Plants);
@@ -27986,17 +28037,11 @@ void InstallTabletopPlantCoverage() {
         gameHandle, "_ZN9CPlantMgr6UpdateERK7CVector");
     void* const distances = dlsym(
         gameHandle, "_ZN14CGrassRenderer20SetCloseFarAlphaDistEff");
-    void* const drawPlants = dlsym(
-        gameHandle,
-        "_ZN14CGrassRenderer13DrawTriPlantsEP10PPTriPlantiPP8RpAtomicP11RwMatrixTag");
     static constexpr std::uint32_t kUpdatePrologue[4] = {
         0x6dbc23e9u, 0xa9017bfdu, 0xf90013f5u, 0xa9034ff4u,
     };
     static constexpr std::uint32_t kDistancePrologue[4] = {
         0xb00026c8u, 0xb00026c9u, 0xf942f908u, 0xf942fd29u,
-    };
-    static constexpr std::uint32_t kDrawPlantsPrologue[4] = {
-        0xd10343ffu, 0x6d033befu, 0x6d0433edu, 0x6d052bebu,
     };
     const bool updateFingerprint = update &&
         reinterpret_cast<std::uintptr_t>(update) - g.LoadBase == 0x35f898u &&
@@ -28005,11 +28050,6 @@ void InstallTabletopPlantCoverage() {
         reinterpret_cast<std::uintptr_t>(distances) - g.LoadBase == 0x35e51cu &&
         std::memcmp(distances, kDistancePrologue,
                     sizeof(kDistancePrologue)) == 0;
-    const bool drawPlantsFingerprint = drawPlants &&
-        reinterpret_cast<std::uintptr_t>(drawPlants) - g.LoadBase ==
-            0x35e548u &&
-        std::memcmp(drawPlants, kDrawPlantsPrologue,
-                    sizeof(kDrawPlantsPrologue)) == 0;
     if (distanceFingerprint) {
         g_setGrassAlphaDistance =
             reinterpret_cast<SetGrassAlphaDistanceFn>(distances);
@@ -28019,17 +28059,11 @@ void InstallTabletopPlantCoverage() {
             InstallTrampoline(update,
                 reinterpret_cast<void*>(&OnTabletopPlantUpdate)));
     }
-    if (drawPlantsFingerprint) {
-        g_origDiagnosticDrawTriPlants = reinterpret_cast<DrawTriPlantsFn>(
-            InstallTrampoline(drawPlants,
-                reinterpret_cast<void*>(&OnDiagnosticDrawTriPlants)));
-    }
-    LOGI("[tabletop.plants] update_hook=%d diagnostic_draw_hook=%d "
-         "update_fp=%d distance_fp=%d draw_fp=%d radius=%.0fm",
+    LOGI("[tabletop.plants] update_hook=%d update_fp=%d distance_fp=%d "
+         "radius=%.0fm",
          g_origTabletopPlantUpdate ? 1 : 0,
-         g_origDiagnosticDrawTriPlants ? 1 : 0,
          updateFingerprint ? 1 : 0,
-         distanceFingerprint ? 1 : 0, drawPlantsFingerprint ? 1 : 0,
+         distanceFingerprint ? 1 : 0,
          static_cast<double>(tabletop::RadiusMeters()));
     dlclose(gameHandle);
 }
@@ -32500,25 +32534,99 @@ bool WeaponSelectorActive() {
     return g_tabletopWeaponSelectorActive.load(std::memory_order_acquire);
 }
 
-void CyclePlantDiagnosticMode() {
+void AdvancePlantModelIsolator() {
     if (!tabletop::Enabled()) return;
-    const int current = g_plantDiagnosticMode.load(std::memory_order_relaxed);
-    const int next = (current + 1) % 3;
-    g_plantDiagnosticMode.store(next, std::memory_order_release);
+    const auto state = static_cast<PlantModelIsolatorState>(
+        g_plantModelIsolatorState.load(std::memory_order_acquire));
+    if (state == PlantModelIsolatorState::Idle) {
+        LockPlantModelCandidates();
+        for (auto& candidate : g_plantModelCandidates) candidate = {};
+        g_plantModelCandidateCount = 0;
+        g_plantModelCandidateIndex = -1;
+        g_plantModelSuppressedId.store(-1, std::memory_order_relaxed);
+        g_plantModelIsolatorState.store(
+            static_cast<int>(PlantModelIsolatorState::Capturing),
+            std::memory_order_release);
+        UnlockPlantModelCandidates();
+        xr::PublishStatusText(
+            "MODEL TEST: CAPTURING - WAIT, THEN GRIPS + X", 5.0f);
+        __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.model_isolator] capture_started radius=%.0fm",
+            static_cast<double>(kPlantModelCaptureRadiusM));
+    } else {
+        PlantModelCandidate selected{};
+        int selectedIndex = -1;
+        int candidateCount = 0;
+        LockPlantModelCandidates();
+        candidateCount = g_plantModelCandidateCount;
+        if (candidateCount > 0) {
+            if (state == PlantModelIsolatorState::Capturing) {
+                std::sort(g_plantModelCandidates.begin(),
+                          g_plantModelCandidates.begin() + candidateCount,
+                          [](const PlantModelCandidate& left,
+                             const PlantModelCandidate& right) {
+                              if (left.distanceSq != right.distanceSq)
+                                  return left.distanceSq < right.distanceSq;
+                              return left.modelId < right.modelId;
+                          });
+                g_plantModelCandidateIndex = 0;
+            } else {
+                g_plantModelCandidateIndex =
+                    (g_plantModelCandidateIndex + 1) % candidateCount;
+            }
+            selectedIndex = g_plantModelCandidateIndex;
+            selected = g_plantModelCandidates[selectedIndex];
+            g_plantModelSuppressedId.store(
+                selected.modelId, std::memory_order_relaxed);
+            g_plantModelIsolatorState.store(
+                static_cast<int>(PlantModelIsolatorState::Isolating),
+                std::memory_order_release);
+        } else {
+            g_plantModelSuppressedId.store(-1, std::memory_order_relaxed);
+            g_plantModelIsolatorState.store(
+                static_cast<int>(PlantModelIsolatorState::Idle),
+                std::memory_order_release);
+        }
+        UnlockPlantModelCandidates();
 
-    const char* label = "PLANT TEST: ORIGINAL";
-    if (next == static_cast<int>(PlantDiagnosticMode::NoProcedural))
-        label = "PLANT TEST: NO PROCEDURAL";
-    else if (next ==
-             static_cast<int>(PlantDiagnosticMode::NoStaticVegetation))
-        label = "PLANT TEST: NO STATIC VEGETATION";
-
-    xr::PublishStatusText(label, 4.0f);
+        if (selectedIndex < 0) {
+            xr::PublishStatusText(
+                "MODEL TEST: NO NEARBY SCENERY - TRY AGAIN", 5.0f);
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.model_isolator] capture_empty");
+        } else {
+            const char* path = selected.paths == 0x3u
+                ? "OPAQUE+ALPHA" : (selected.paths == 0x2u
+                    ? "ALPHA" : "OPAQUE");
+            char label[96]{};
+            std::snprintf(label, sizeof(label),
+                "MODEL TEST %d/%d: ID %d %s",
+                selectedIndex + 1, candidateCount, selected.modelId, path);
+            xr::PublishStatusText(label, 5.0f);
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.model_isolator] index=%d/%d model=%d path=%s distance=%.1fm",
+                selectedIndex + 1, candidateCount, selected.modelId, path,
+                static_cast<double>(std::sqrt(selected.distanceSq)));
+        }
+    }
     xr::TriggerHaptic(0, 0.55f, 100.0f, 55.0f);
     xr::TriggerHaptic(1, 0.55f, 100.0f, 55.0f);
-    // One event per deliberate button edge; there is no frame/window sampler.
+}
+
+void ResetPlantModelIsolator() {
+    LockPlantModelCandidates();
+    g_plantModelSuppressedId.store(-1, std::memory_order_relaxed);
+    g_plantModelIsolatorState.store(
+        static_cast<int>(PlantModelIsolatorState::Idle),
+        std::memory_order_release);
+    g_plantModelCandidateCount = 0;
+    g_plantModelCandidateIndex = -1;
+    UnlockPlantModelCandidates();
+    xr::PublishStatusText("MODEL TEST: ORIGINAL SCENE RESTORED", 4.0f);
+    xr::TriggerHaptic(0, 0.4f, 80.0f, 45.0f);
+    xr::TriggerHaptic(1, 0.4f, 80.0f, 45.0f);
     __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
-        "[tabletop.plant_ab] mode=%d label=%s", next, label);
+        "[tabletop.model_isolator] reset");
 }
 
 bool GetHolsterAnchorTracking(int point, float positionOut[3]) {

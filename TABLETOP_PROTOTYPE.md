@@ -46,11 +46,12 @@ Runtime controls:
 - selecting the already equipped weapon simply closes the selector without
   changing CJ's inventory.
 
-Package 69 temporarily adds one diagnostic-only chord: `Both Grips + X` cycles
-`PLANT TEST: ORIGINAL`, `NO PROCEDURAL` and `NO STATIC VEGETATION`. It is
-available only during Diorama gameplay, resets to `ORIGINAL` on every launch,
-and produces no periodic telemetry. It exists solely to identify which retail
-renderer owns the black shrubs observed near the opening Grove Street scene.
+Package 70 temporarily adds a nearby-model isolator for the crossed-card shrubs.
+At the problem location, the first `Both Grips + X` begins capture; wait about
+two seconds and press it again to hide the first nearby scenery model. Further
+presses advance through distance-sorted IDs. Report the displayed ID when the
+target cards disappear. `Both Grips + B` restores the original scene at once.
+The test is Diorama-only, process-local and produces no periodic telemetry.
 
 The physical miniature size is independent of the visible-world radius. Two
 grips may still resize the diorama freely without changing how many game-world
@@ -386,3 +387,12 @@ in the existing opaque and alpha wrappers. A disappearing shrub identifies its
 render family immediately. If it survives both modes, the next investigation
 can target a different billboard/shadow/material pass without retaining either
 suppression in the eventual public build.
+
+Headset validation of Package 69 showed that the crossed-card shrubs survived
+both suppression modes, while other vegetation disappeared as expected. This
+rules out the procedural plant submission and model family 615-792. Package 70
+removes those suppressions and instead captures up to 96 ordinary scenery model
+IDs within 35 metres of CJ, sorted nearest-first. It hides only one selected ID
+in both opaque and alpha entity paths, shows the exact ID/path in-headset and
+restores everything on command. Pedestrians, vehicles, saves and Immersive VR
+remain outside the experiment.
