@@ -590,3 +590,28 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 59 hollow low-opacity Diorama objective cones'
+
+# Package 61 observes the single stock mobile-help enqueue boundary. Verify the
+# exact retail prologue as well as the fail-closed source guards and the fast
+# current-time logcat capture used for headset validation.
+$tutorialQueue = (& $Objdump -d --start-address=0x364014 --stop-address=0x364024 $LibGame) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw 'Tutorial queue disassembly failed' }
+foreach ($word in @('fc190fea', '6d0123e9', 'a9027bfd', 'a90367fc')) {
+    if ($tutorialQueue -notmatch $word) {
+        throw "Package 61 tutorial queue prologue mismatch: $word"
+    }
+}
+$captureSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'tools\capture-tabletop-diagnostics.ps1')
+foreach ($sourcePattern in @(
+        'InstallTutorialQueueDiagnostic\(\)',
+        '_ZN15CWidgetHelpText17AddMessageToQueueEPsbtffj',
+        'kRetailOffset = 0x364014u',
+        '\[tabletop\.tutorial\.queue\]',
+        'loggedHashes\.size\(\) >= 256u',
+        'logcat -T 1 -v threadtime')) {
+    if (($cameraSource + $captureSource) -notmatch $sourcePattern) {
+        throw "Package 61 tutorial queue audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 61 complete tutorial queue capture and fast logcat start'

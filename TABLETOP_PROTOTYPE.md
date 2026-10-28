@@ -193,6 +193,12 @@ the original sentence and language. The in-headset reference is split into two
 colour-grouped pages selected with `L2`/`R2`, and the automatic welcome is now
 a short start-here page rather than a dense copy of the full About panel.
 
+The next diagnostic pass observes the common mobile tutorial enqueue function
+itself. Each distinct `CWidgetHelpText::AddMessageToQueue` string is recorded
+once with bounded metadata, so any ordinary tutorial can reveal its exact GXT
+text without requiring a live capture at a particular mission frame. The
+retail queue and displayed text are not modified by this diagnostic.
+
 Package 58 gives that first-run page the complete GTA San Andreas Diorama MR
 identity. It names Diorama MR as the default, points to Immersive VR under the
 restart-gated Play Mode row, and presents short Galatea/upstream credits before

@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 61 complete mobile tutorial capture
+
+- Observe GTA Android's common `CWidgetHelpText::AddMessageToQueue` boundary in
+  Diorama MR and log each distinct tutorial string once. Any mobile tutorial is
+  now sufficient for diagnosis; testing no longer depends on catching the
+  short bicycle card or timing a live logcat session around a cutscene.
+- Keep this pass diagnostic-only: it does not rewrite the retail queue, add
+  per-frame work or affect Immersive VR, and it fails closed unless the exact
+  verified 2.11.311 symbol offset and ARM64 prologue match.
+- Start the standard diagnostic capture at the current device time rather than
+  replaying the entire historical logcat buffer. Short tutorial tests can now
+  begin immediately and the BAT may remain open during ordinary play.
+
 ## Package 60 tutorial delivery and menu discovery
 
 - Put the mode-specific **Diorama Control Guide** at the first row of the

@@ -74,7 +74,9 @@ while ($true) {
             Tee-Object -FilePath $logPath -Append | Out-Host
         "# connected $(Get-Date -Format o)" |
             Add-Content -LiteralPath $logPath -Encoding Unicode
-        & $adb -s $Serial logcat -v threadtime 'SAVR:I' '*:S' 2>&1 |
+        # Begin at the current moment instead of replaying the complete device
+        # log history. This makes short tutorial captures start immediately.
+        & $adb -s $Serial logcat -T 1 -v threadtime 'SAVR:I' '*:S' 2>&1 |
             Tee-Object -FilePath $logPath -Append | Out-Host
         "# logcat ended $(Get-Date -Format o); reconnecting" |
             Add-Content -LiteralPath $logPath -Encoding Unicode

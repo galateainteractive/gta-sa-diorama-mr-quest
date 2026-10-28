@@ -26920,6 +26920,112 @@ void* InstallTrampoline(void* target, void* replacement) {
     return tramp;
 }
 
+// Android's mobile tutorials all enter the same CWidgetHelpText queue before
+// they are styled or rendered. Observing this boundary is both more complete
+// and cheaper to test than trying to catch a short-lived help card in logcat:
+// every distinct source string is reported once when GTA enqueues it.
+using WidgetHelpAddMessageFn = void (*)(void* self, std::int16_t* text,
+                                        bool topStyle,
+                                        std::uint16_t displayTime,
+                                        float width, float height,
+                                        std::uint32_t flags);
+WidgetHelpAddMessageFn g_origWidgetHelpAddMessage = nullptr;
+
+std::uint32_t TutorialQueueHash(const std::int16_t* text) {
+    std::uint32_t hash = 2166136261u;
+    if (!text) return hash;
+    for (int i = 0; i < 400 && text[i] != 0; ++i) {
+        const std::uint16_t value = static_cast<std::uint16_t>(text[i]);
+        hash ^= value & 0xffu;
+        hash *= 16777619u;
+        hash ^= value >> 8u;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+std::string TutorialQueuePreview(const std::int16_t* text) {
+    std::string preview;
+    if (!text) return preview;
+    preview.reserve(240);
+    for (int i = 0; i < 400 && text[i] != 0 && preview.size() < 239u; ++i) {
+        const std::uint16_t value = static_cast<std::uint16_t>(text[i]);
+        if (value == '\n' || value == '\r' || value == '\t') {
+            preview.push_back(' ');
+        } else if (value >= 0x20u && value < 0x7fu) {
+            preview.push_back(static_cast<char>(value));
+        } else {
+            preview.push_back('?');
+        }
+    }
+    return preview;
+}
+
+void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
+                            std::uint16_t displayTime, float width,
+                            float height, std::uint32_t flags) {
+    if (tabletop::Enabled() && text && text[0] != 0) {
+        const std::uint32_t hash = TutorialQueueHash(text);
+        static std::mutex logMutex;
+        static std::vector<std::uint32_t> loggedHashes;
+        bool firstOccurrence = false;
+        {
+            std::lock_guard<std::mutex> lock(logMutex);
+            if (std::find(loggedHashes.begin(), loggedHashes.end(), hash) ==
+                loggedHashes.end()) {
+                if (loggedHashes.size() >= 256u)
+                    loggedHashes.erase(loggedHashes.begin());
+                loggedHashes.push_back(hash);
+                firstOccurrence = true;
+            }
+        }
+        if (firstOccurrence) {
+            const std::string preview = TutorialQueuePreview(text);
+            LOGI("[tabletop.tutorial.queue] hash=%08x top=%d time=%u "
+                 "size=%.1fx%.1f flags=%u text=%.239s",
+                 hash, topStyle ? 1 : 0,
+                 static_cast<unsigned>(displayTime),
+                 static_cast<double>(width), static_cast<double>(height),
+                 static_cast<unsigned>(flags), preview.c_str());
+        }
+    }
+    if (g_origWidgetHelpAddMessage) {
+        g_origWidgetHelpAddMessage(self, text, topStyle, displayTime,
+                                   width, height, flags);
+    }
+}
+
+bool InstallTutorialQueueDiagnostic() {
+    if (!tabletop::Enabled() || !g.LoadBase) return true;
+    void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    void* const target = handle ? dlsym(
+        handle, "_ZN15CWidgetHelpText17AddMessageToQueueEPsbtffj") : nullptr;
+    constexpr std::uintptr_t kRetailOffset = 0x364014u;
+    static constexpr std::uint32_t kRetailPrologue[4] = {
+        0xfc190feau, 0x6d0123e9u, 0xa9027bfdu, 0xa90367fcu,
+    };
+    bool fingerprint = target &&
+        reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == kRetailOffset;
+    std::uint32_t observed[4]{};
+    if (fingerprint) {
+        std::memcpy(observed, target, sizeof(observed));
+        fingerprint = std::memcmp(observed, kRetailPrologue,
+                                  sizeof(observed)) == 0;
+    }
+    if (fingerprint) {
+        g_origWidgetHelpAddMessage =
+            reinterpret_cast<WidgetHelpAddMessageFn>(InstallTrampoline(
+                target, reinterpret_cast<void*>(&OnWidgetHelpAddMessage)));
+    }
+    LOGI("[tabletop.tutorial.queue] install active=%d fingerprint=%d "
+         "target=%p offset=0x%lx",
+         g_origWidgetHelpAddMessage ? 1 : 0, fingerprint ? 1 : 0, target,
+         target ? static_cast<unsigned long>(
+             reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul);
+    if (handle) dlclose(handle);
+    return g_origWidgetHelpAddMessage != nullptr;
+}
+
 #ifdef SAVR_DEV
 using GameUpdateVoidFn = void (*)();
 using GameUpdateBoolFn = void (*)(bool);
@@ -32406,6 +32512,11 @@ bool Install() {
         return false;
     }
     LOGI("[vr] head-tracked camera hook installed on CopyCameraMatrixToRWCam");
+
+    // Capture every distinct mobile tutorial at its common enqueue boundary.
+    // This is diagnostic-only: the retail string and queue behavior are left
+    // untouched, and the hook fails closed on any non-2.11.311 binary.
+    InstallTutorialQueueDiagnostic();
 
     // Bind the user-facing shadow toggle to MobileSettings entry 5 and install
     // the fingerprinted eight-vehicle budget before the first gameplay frame.
