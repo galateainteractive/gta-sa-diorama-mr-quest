@@ -1,5 +1,16 @@
 # Changelog
 
+## Package 63 touch-render tutorial capture
+
+- Intercept the verified retail `CFont::PrintString` entry and inspect only
+  calls returning from `CWidgetHelpText`'s audited ARM64 code range. This sees
+  the final GXT string at the exact moment Android's touch tutorial is drawn,
+  after Packages 61 and 62 proved that visible prompts can bypass both the
+  enqueue function and the later copied HUD buffers.
+- Leave every unrelated HUD, subtitle and menu font call on the normal path.
+  The hook preserves the retail draw call, is Diorama-only for diagnostics and
+  fails closed unless the official 2.11.311 offset and prologue both match.
+
 ## Package 62 direct tutorial-buffer capture
 
 - Diagnose the final text state directly instead of relying on the Package 61

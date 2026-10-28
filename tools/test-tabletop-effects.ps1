@@ -631,3 +631,25 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 62 direct brief, big and ten-slot help capture'
+
+# Package 63 captures only CFont::PrintString calls originating from the
+# audited CWidgetHelpText range.
+$fontPrint = (& $Objdump -d --start-address=0x5d6ec4 --stop-address=0x5d6ed4 $LibGame) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw 'CFont::PrintString disassembly failed' }
+foreach ($word in @('d10183ff', '6d0223e9', 'a9037bfd', 'f90023f5')) {
+    if ($fontPrint -notmatch $word) {
+        throw "Package 63 CFont::PrintString prologue mismatch: $word"
+    }
+}
+foreach ($sourcePattern in @(
+        'InstallTutorialRenderDiagnostic\(\)',
+        '_ZN5CFont11PrintStringEffPs',
+        'kRetailOffset = 0x5d6ec4u',
+        'kHelpTextBegin = 0x364414u',
+        'kHelpTextEnd = 0x3654b4u',
+        '\[tabletop\.tutorial\.render\]')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 63 touch-render tutorial audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 63 scoped touch-render tutorial capture'

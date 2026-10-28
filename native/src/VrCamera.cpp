@@ -48,7 +48,7 @@
 namespace savr::vrcam {
 namespace {
 
-void LogTutorialBufferSnapshot(const char* channel, int slot,
+bool LogTutorialBufferSnapshot(const char* channel, int slot,
                                const std::int16_t* text, int capacity);
 
 // The scene camera matrix inside CCamera. Proven by disassembly: both
@@ -26945,6 +26945,8 @@ using WidgetHelpAddMessageFn = void (*)(void* self, std::int16_t* text,
                                         float width, float height,
                                         std::uint32_t flags);
 WidgetHelpAddMessageFn g_origWidgetHelpAddMessage = nullptr;
+using FontPrintStringFn = void (*)(float x, float y, std::int16_t* text);
+FontPrintStringFn g_origFontPrintString = nullptr;
 
 std::uint32_t TutorialQueueHash(const std::int16_t* text, int capacity) {
     std::uint32_t hash = 2166136261u;
@@ -26979,10 +26981,10 @@ std::string TutorialQueuePreview(const std::int16_t* text, int capacity) {
     return preview;
 }
 
-void LogTutorialBufferSnapshot(const char* channel, int slot,
+bool LogTutorialBufferSnapshot(const char* channel, int slot,
                                const std::int16_t* text, int capacity) {
     if (!tabletop::Enabled() || !text || capacity <= 0 || text[0] == 0)
-        return;
+        return false;
     const std::uint32_t textHash = TutorialQueueHash(text, capacity);
     std::uint32_t channelHash = 2166136261u;
     if (channel) {
@@ -27007,12 +27009,13 @@ void LogTutorialBufferSnapshot(const char* channel, int slot,
             firstOccurrence = true;
         }
     }
-    if (!firstOccurrence) return;
+    if (!firstOccurrence) return false;
     const std::string preview = TutorialQueuePreview(text, capacity);
     LOGI("[tabletop.tutorial.buffer] channel=%s slot=%d hash=%08x "
          "capacity=%d text=%.239s",
          channel ? channel : "unknown", slot, textHash, capacity,
          preview.c_str());
+    return true;
 }
 
 void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
@@ -27049,6 +27052,32 @@ void OnWidgetHelpAddMessage(void* self, std::int16_t* text, bool topStyle,
     }
 }
 
+void OnFontPrintString(float x, float y, std::int16_t* text) {
+    const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>(
+        __builtin_return_address(0));
+    const std::uintptr_t callerOffset =
+        g.LoadBase && caller >= g.LoadBase ? caller - g.LoadBase : 0u;
+    // All four retail help-text PrintString call sites live inside this exact
+    // audited range. Other HUD/subtitle/font traffic takes the untouched fast
+    // path, so the diagnostic cannot become a general per-frame text logger.
+    constexpr std::uintptr_t kHelpTextBegin = 0x364414u;
+    constexpr std::uintptr_t kHelpTextEnd = 0x3654b4u;
+    if (tabletop::Enabled() && callerOffset >= kHelpTextBegin &&
+        callerOffset < kHelpTextEnd) {
+        const bool firstOccurrence = LogTutorialBufferSnapshot(
+            "touch-print", static_cast<int>(callerOffset), text, 400);
+        if (firstOccurrence) {
+            const std::string preview = TutorialQueuePreview(text, 400);
+            LOGI("[tabletop.tutorial.render] caller=0x%lx x=%.1f y=%.1f "
+                 "text=%.239s",
+                 static_cast<unsigned long>(callerOffset),
+                 static_cast<double>(x), static_cast<double>(y),
+                 preview.c_str());
+        }
+    }
+    if (g_origFontPrintString) g_origFontPrintString(x, y, text);
+}
+
 bool InstallTutorialQueueDiagnostic() {
     if (!tabletop::Enabled() || !g.LoadBase) return true;
     void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
@@ -27078,6 +27107,37 @@ bool InstallTutorialQueueDiagnostic() {
              reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul);
     if (handle) dlclose(handle);
     return g_origWidgetHelpAddMessage != nullptr;
+}
+
+bool InstallTutorialRenderDiagnostic() {
+    if (!tabletop::Enabled() || !g.LoadBase) return true;
+    void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    void* const target = handle ? dlsym(
+        handle, "_ZN5CFont11PrintStringEffPs") : nullptr;
+    constexpr std::uintptr_t kRetailOffset = 0x5d6ec4u;
+    static constexpr std::uint32_t kRetailPrologue[4] = {
+        0xd10183ffu, 0x6d0223e9u, 0xa9037bfdu, 0xf90023f5u,
+    };
+    bool fingerprint = target &&
+        reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == kRetailOffset;
+    std::uint32_t observed[4]{};
+    if (fingerprint) {
+        std::memcpy(observed, target, sizeof(observed));
+        fingerprint = std::memcmp(observed, kRetailPrologue,
+                                  sizeof(observed)) == 0;
+    }
+    if (fingerprint) {
+        g_origFontPrintString = reinterpret_cast<FontPrintStringFn>(
+            InstallTrampoline(target,
+                              reinterpret_cast<void*>(&OnFontPrintString)));
+    }
+    LOGI("[tabletop.tutorial.render] install active=%d fingerprint=%d "
+         "target=%p offset=0x%lx scoped=help-text-callers",
+         g_origFontPrintString ? 1 : 0, fingerprint ? 1 : 0, target,
+         target ? static_cast<unsigned long>(
+             reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul);
+    if (handle) dlclose(handle);
+    return g_origFontPrintString != nullptr;
 }
 
 #ifdef SAVR_DEV
@@ -32571,6 +32631,7 @@ bool Install() {
     // This is diagnostic-only: the retail string and queue behavior are left
     // untouched, and the hook fails closed on any non-2.11.311 binary.
     InstallTutorialQueueDiagnostic();
+    InstallTutorialRenderDiagnostic();
 
     // Bind the user-facing shadow toggle to MobileSettings entry 5 and install
     // the fingerprinted eight-vehicle budget before the first gameplay frame.

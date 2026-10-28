@@ -205,6 +205,11 @@ brief buffer, every large-message style and all ten help slots, logging only a
 new channel/slot/text combination. This diagnostic still leaves the stored and
 displayed strings untouched.
 
+Package 63 moves the diagnostic to the final font boundary. It hooks the exact
+retail `CFont::PrintString` entry but records only return addresses inside the
+audited `CWidgetHelpText` implementation, capturing the GXT string at the
+moment the mobile touch layer draws it without logging unrelated HUD text.
+
 Package 58 gives that first-run page the complete GTA San Andreas Diorama MR
 identity. It names Diorama MR as the default, points to Immersive VR under the
 restart-gated Play Mode row, and presents short Galatea/upstream credits before
