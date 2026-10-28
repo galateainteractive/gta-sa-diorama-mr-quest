@@ -27901,22 +27901,8 @@ void InstallGameUpdateHitchProfiler() {
 
 using TabletopPlantUpdateFn = void (*)(const void*);
 using SetGrassAlphaDistanceFn = void (*)(float, float);
-using ProcessProceduralTriangleFn = int (*)(void*, void*);
 TabletopPlantUpdateFn g_origTabletopPlantUpdate = nullptr;
 SetGrassAlphaDistanceFn g_setGrassAlphaDistance = nullptr;
-ProcessProceduralTriangleFn g_origProcessProceduralTriangle = nullptr;
-
-int OnProcessProceduralTriangle(void* manager, void* triangle) {
-    // Package 72 is a one-build diagnostic: suppress the ProcObjectMan source
-    // rather than trying to identify its products after they have lost their
-    // entity/model identity. Installation restarts the process, so every local
-    // triangle is observed by this hook before its procedural objects exist.
-    // Immersive VR never installs this hook because coverage setup returns
-    // early unless Diorama is the selected startup mode.
-    if (tabletop::Enabled()) return 0;
-    return g_origProcessProceduralTriangle
-        ? g_origProcessProceduralTriangle(manager, triangle) : 0;
-}
 
 void OnTabletopPlantUpdate(const void* cameraPosition) {
     ScopedGameUpdateTiming timing(GameUpdateSubsystem::Plants);
@@ -27958,17 +27944,11 @@ void InstallTabletopPlantCoverage() {
         gameHandle, "_ZN9CPlantMgr6UpdateERK7CVector");
     void* const distances = dlsym(
         gameHandle, "_ZN14CGrassRenderer20SetCloseFarAlphaDistEff");
-    void* const processProceduralTriangle = dlsym(
-        gameHandle,
-        "_ZN15ProcObjectMan_c20ProcessTriangleAddedEP12CPlantLocTri");
     static constexpr std::uint32_t kUpdatePrologue[4] = {
         0x6dbc23e9u, 0xa9017bfdu, 0xf90013f5u, 0xa9034ff4u,
     };
     static constexpr std::uint32_t kDistancePrologue[4] = {
         0xb00026c8u, 0xb00026c9u, 0xf942f908u, 0xf942fd29u,
-    };
-    static constexpr std::uint32_t kProcessProceduralTrianglePrologue[4] = {
-        0xa9bc7bfdu, 0xf9000bf7u, 0xa90257f6u, 0xa9034ff4u,
     };
     const bool updateFingerprint = update &&
         reinterpret_cast<std::uintptr_t>(update) - g.LoadBase == 0x35f898u &&
@@ -27977,13 +27957,6 @@ void InstallTabletopPlantCoverage() {
         reinterpret_cast<std::uintptr_t>(distances) - g.LoadBase == 0x35e51cu &&
         std::memcmp(distances, kDistancePrologue,
                     sizeof(kDistancePrologue)) == 0;
-    const bool processProceduralTriangleFingerprint =
-        processProceduralTriangle &&
-        reinterpret_cast<std::uintptr_t>(processProceduralTriangle) -
-                g.LoadBase == 0x53e168u &&
-        std::memcmp(processProceduralTriangle,
-                    kProcessProceduralTrianglePrologue,
-                    sizeof(kProcessProceduralTrianglePrologue)) == 0;
     if (distanceFingerprint) {
         g_setGrassAlphaDistance =
             reinterpret_cast<SetGrassAlphaDistanceFn>(distances);
@@ -27993,19 +27966,11 @@ void InstallTabletopPlantCoverage() {
             InstallTrampoline(update,
                 reinterpret_cast<void*>(&OnTabletopPlantUpdate)));
     }
-    if (processProceduralTriangleFingerprint) {
-        g_origProcessProceduralTriangle =
-            reinterpret_cast<ProcessProceduralTriangleFn>(InstallTrampoline(
-                processProceduralTriangle,
-                reinterpret_cast<void*>(&OnProcessProceduralTriangle)));
-    }
-    LOGI("[tabletop.plants] update_hook=%d proc_source_test=%d update_fp=%d "
-         "distance_fp=%d proc_fp=%d radius=%.0fm",
+    LOGI("[tabletop.plants] update_hook=%d update_fp=%d distance_fp=%d "
+         "radius=%.0fm",
          g_origTabletopPlantUpdate ? 1 : 0,
-         g_origProcessProceduralTriangle ? 1 : 0,
          updateFingerprint ? 1 : 0,
          distanceFingerprint ? 1 : 0,
-         processProceduralTriangleFingerprint ? 1 : 0,
          static_cast<double>(tabletop::RadiusMeters()));
     dlclose(gameHandle);
 }

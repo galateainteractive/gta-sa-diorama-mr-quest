@@ -698,9 +698,8 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 68 plant experiment retired and Release telemetry remains quiet'
 
-# Package 72 removes both exhausted runtime isolators and suppresses the source
-# ProcObjectMan creation callback for one diagnostic build. This does not depend
-# on an entity wrapper, an RpAtomic model index or a controller timing window.
+# Package 73 retires every black-shrub diagnostic. Production keeps the proven
+# plant coverage update only; no render, model or ProcObject suppression remains.
 foreach ($retiredPattern in @(
         'PlantDiagnosticMode',
         'OnDiagnosticDrawTriPlants',
@@ -717,33 +716,29 @@ foreach ($retiredPattern in @(
         'CVisibilityPlugins_GetModelInfoIndex',
         '\[tabletop\.procedural_plant\]',
         'modelIsolatorAdvance',
-        'modelIsolatorReset')) {
+        'modelIsolatorReset',
+        'ProcessProceduralTriangleFn',
+        'OnProcessProceduralTriangle',
+        'ProcessTriangleAddedEP12CPlantLocTri',
+        'proc_source_test')) {
     if (($cameraSource + $mainSource) -match $retiredPattern) {
-        throw "Package 72 retired diagnostic remains: $retiredPattern"
+        throw "Package 73 retired shrub diagnostic remains: $retiredPattern"
     }
 }
 foreach ($sourcePattern in @(
-        'using ProcessProceduralTriangleFn = int \(\*\)\(void\*, void\*\)',
-        'int OnProcessProceduralTriangle\(void\* manager, void\* triangle\)',
-        'if \(tabletop::Enabled\(\)\) return 0;',
-        '_ZN15ProcObjectMan_c20ProcessTriangleAddedEP12CPlantLocTri',
-        'g\.LoadBase == 0x53e168u',
-        'kProcessProceduralTrianglePrologue',
-        'proc_source_test=%d')) {
+        'void OnTabletopPlantUpdate\(const void\* cameraPosition\)',
+        'g_origTabletopPlantUpdate\(effectivePosition\)',
+        '\[tabletop\.plants\] update_hook=%d update_fp=%d distance_fp=%d')) {
     if (($cameraSource + $mainSource) -notmatch $sourcePattern) {
-        throw "Package 72 ProcObject source suppression audit failed: $sourcePattern"
+        throw "Package 73 clean plant coverage audit failed: $sourcePattern"
     }
-}
-if (([regex]::Matches($cameraSource,
-        'InstallTrampoline\(\s*processProceduralTriangle,')).Count -ne 1) {
-    throw 'Package 72 must install exactly one ProcObject source hook'
 }
 foreach ($forbiddenPattern in @(
         'kPPTriPlantBlackThreshold',
         'g_tabletopPlantAmbientColor',
         'g_tabletopPlantRenderStateGet')) {
     if ($cameraSource -match $forbiddenPattern) {
-        throw "Package 72 reintroduced plant mutation: $forbiddenPattern"
+        throw "Package 73 reintroduced plant mutation: $forbiddenPattern"
     }
 }
-Write-Output 'PASS Package 72 direct ProcObject source suppression'
+Write-Output 'PASS Package 73 all black-shrub diagnostics retired'

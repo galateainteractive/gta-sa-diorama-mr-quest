@@ -1,5 +1,18 @@
 # Changelog
 
+## Package 73 retire black-shrub diagnostics
+
+- Remove the Package 72 `ProcObjectMan` source suppression after headset
+  testing showed that the crossed-card shrubs remained unchanged. Restore the
+  normal procedural-object generation path in Diorama MR.
+- Retire every controller selector, model/atomic filter and plant colour/blend
+  experiment from Packages 67 and 69-72. Production retains only the proven
+  player-centred plant coverage update; there is no shrub diagnostic work or
+  periodic telemetry left running.
+- Record the five eliminated renderer families in the technical notes. Any
+  future investigation must start with visual evidence that identifies the
+  exact texture/material or GPU submission, rather than another broad A/B.
+
 ## Package 72 direct ProcObject source suppression
 
 - Retire the Package 71 final-atomic selector after headset testing exposed

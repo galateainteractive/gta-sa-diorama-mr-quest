@@ -46,13 +46,23 @@ Runtime controls:
 - selecting the already equipped weapon simply closes the selector without
   changing CJ's inventory.
 
-Package 72 temporarily replaces the exhausted runtime isolators with one direct
-source test for the crossed-card shrubs. In Diorama MR, the fingerprint-guarded
-`ProcObjectMan_c::ProcessTriangleAdded` hook returns before retail procedural
-objects are generated. There is no controller sequence: install, relaunch and
-inspect the known shrubs. If they disappear, the final correction belongs in
-the ProcObject creation/material path; if they remain, that entire subsystem is
-excluded. Immersive VR does not install the hook and no periodic telemetry runs.
+### Deferred black-shrub investigation
+
+The crossed-card shrubs near the opening Grove Street houses can alternate
+between their normal colour and solid black. Packages 67 and 69-72 established
+that the visible cards are not controlled by any of the following paths:
+
+- `CGrassRenderer::DrawTriPlants` or its ambient/blend state;
+- the audited static vegetation model span 615-792;
+- ordinary nearby scenery through the opaque/alpha entity wrappers;
+- final RenderWare atomics in `procobj.ide` IDs 800-906, `grasshouse` (3261)
+  or `grassplant` (3409);
+- `ProcObjectMan_c::ProcessTriangleAdded` procedural-object generation.
+
+Package 73 removes every experiment and restores the original rendering path.
+Future work should begin from a headset screenshot/video frame and identify the
+exact texture/material or GPU submission; it must not repeat broad renderer or
+model-family suppression without that visual evidence.
 
 The physical miniature size is independent of the visible-world radius. Two
 grips may still resize the diorama freely without changing how many game-world
