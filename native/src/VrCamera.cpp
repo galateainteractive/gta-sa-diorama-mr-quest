@@ -5659,16 +5659,15 @@ bool ParachuteDeployChordActive() {
                        std::memory_order_acquire);
 }
 
-// Both grips + right trigger answers an incoming cell-phone call. The widget
-// is only polled while the phone is actually ringing, so the chord cannot
-// misfire in normal play; the VR menu keeps its own grips chord because the
-// menu consumes the triggers for value adjustment.
+// A answers an incoming cell-phone call. The widget is only polled while the
+// phone is actually ringing, so this contextual binding cannot misfire during
+// normal play. Do not use a both-grips chord here: Quest reserves simultaneous
+// squeeze gestures and can take focus away from the immersive app.
 bool PhoneAnswerChordActive() {
     if (g_inputBlocked.load(std::memory_order_relaxed)) return false;
     xr::InputState in{};
     xr::GetInput(in);
-    return in.grip[0] >= 0.75f && in.grip[1] >= 0.75f &&
-           in.triggers[1] >= 0.70f;
+    return in.a && in.grip[0] < 0.55f && in.grip[1] < 0.55f;
 }
 
 // A answers a world "press to start" prompt (basketball, gym gear, minigame
@@ -5970,10 +5969,10 @@ bool OnWidgetReleased(int widgetId, void* outTouchPos, int touchIndex) {
         g_parachuteCanopyOpen.store(true, std::memory_order_relaxed);
 
     // Incoming call: the phone widget is polled only while it rings, so a
-    // held chord simply answers on the next script poll.
+    // held A press simply answers on the next script poll.
     if (widgetId == kPhoneAnswerWidget && !original) {
         if (PhoneAnswerChordActive()) {
-            LOGI("[vr.touch] phone answered (grips + right trigger)");
+            LOGI("[vr.touch] phone answered (A)");
             return true;
         }
         // Nag guard: a story call left ringing (catch-up calls after the
@@ -27113,18 +27112,36 @@ bool InstallTutorialRenderAdapter() {
 using HudStatUpdateFn = void (*)(unsigned char increase,
                                  unsigned short statId,
                                  float value, float maxValue);
+using WidgetHelpAddMessageFn = void (*)(void* self, std::int16_t* message,
+                                        bool increase, unsigned short statId,
+                                        float value, float maxValue,
+                                        unsigned int condition);
 using TextGetFn = std::int16_t* (*)(void* text, const char* key);
 
 HudStatUpdateFn g_origHudStatUpdate = nullptr;
+WidgetHelpAddMessageFn g_origWidgetHelpAddMessage = nullptr;
 TextGetFn g_statTextGet = nullptr;
 void* g_statTheText = nullptr;
 
-void OnHudStatUpdate(unsigned char increase, unsigned short statId,
-                     float value, float maxValue) {
-    if (g_origHudStatUpdate)
-        g_origHudStatUpdate(increase, statId, value, maxValue);
-
+void PublishStatUpdate(unsigned short statId, bool increase, float value,
+                       float maxValue, const char* source) {
     if (!tabletop::Enabled() || !g_statTextGet || !g_statTheText) return;
+    // CHud's public wrapper calls CWidgetHelpText::AddMessageToQueue, so both
+    // hooks see the same retail notification. Keep the queue hook as the
+    // authoritative path while retaining CHud as a fallback for other builds.
+    static unsigned short lastStatId =
+        std::numeric_limits<unsigned short>::max();
+    static bool lastIncrease = false;
+    static double lastPublishMs = -1000.0;
+    const double nowMs = NowMs();
+    if (statId == lastStatId && increase == lastIncrease &&
+        nowMs - lastPublishMs < 100.0) {
+        return;
+    }
+    lastStatId = statId;
+    lastIncrease = increase;
+    lastPublishMs = nowMs;
+
     char key[9]{};
     std::snprintf(key, sizeof(key), "STAT%03u",
                   static_cast<unsigned>(statId));
@@ -27135,9 +27152,33 @@ void OnHudStatUpdate(unsigned char increase, unsigned short statId,
         return;
     }
     xr::PublishStatUpdateText(label, 128, increase != 0);
-    LOGI("[hud.stat] publish id=%u direction=%s value=%.2f max=%.2f",
+    LOGI("[hud.stat] publish source=%s id=%u direction=%s value=%.2f max=%.2f",
+         source,
          static_cast<unsigned>(statId), increase ? "up" : "down",
          static_cast<double>(value), static_cast<double>(maxValue));
+}
+
+void OnWidgetHelpAddMessage(void* self, std::int16_t* message, bool increase,
+                            unsigned short statId, float value,
+                            float maxValue, unsigned int condition) {
+    if (g_origWidgetHelpAddMessage) {
+        g_origWidgetHelpAddMessage(self, message, increase, statId, value,
+                                   maxValue, condition);
+    }
+    // The mobile stat renderer queues a one-character +/- marker and keeps the
+    // localized stat name in the numeric id. That renderer is discarded by the
+    // Diorama HUD, so reproduce only these stat entries in the fixed VR panel;
+    // ordinary queued help messages keep following the existing help path.
+    if (!message || (message[0] != u'+' && message[0] != u'-')) return;
+    PublishStatUpdate(statId, message[0] == u'+', value,
+                      maxValue, "widget-queue");
+}
+
+void OnHudStatUpdate(unsigned char increase, unsigned short statId,
+                     float value, float maxValue) {
+    if (g_origHudStatUpdate)
+        g_origHudStatUpdate(increase, statId, value, maxValue);
+    PublishStatUpdate(statId, increase != 0, value, maxValue, "hud-wrapper");
 }
 
 bool InstallStatUpdatePublisher() {
@@ -27148,6 +27189,8 @@ bool InstallStatUpdatePublisher() {
     void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
     void* target = handle ? dlsym(
         handle, "_ZN4CHud24SetHelpMessageStatUpdateEhtff") : nullptr;
+    void* const queueTarget = handle ? dlsym(
+        handle, "_ZN15CWidgetHelpText17AddMessageToQueueEPsbtffj") : nullptr;
     g_statTextGet = handle ? reinterpret_cast<TextGetFn>(
         dlsym(handle, "_ZN5CText3GetEPKc")) : nullptr;
     g_statTheText = handle ? dlsym(handle, "TheText") : nullptr;
@@ -27175,14 +27218,25 @@ bool InstallStatUpdatePublisher() {
             InstallTrampoline(target,
                               reinterpret_cast<void*>(&OnHudStatUpdate)));
     }
-    LOGI("[hud.stat] publisher active=%d fingerprint=%d target=%p "
-         "offset=0x%lx text_get=%p text=%p",
-         g_origHudStatUpdate ? 1 : 0, fingerprint ? 1 : 0, target,
+    // This exact exported C++ symbol is present in retail 2.11 and is the path
+    // used directly by several scripts, including the post-barber updates that
+    // bypass CHud::SetHelpMessageStatUpdate.
+    if (queueTarget && g_statTextGet && g_statTheText) {
+        g_origWidgetHelpAddMessage =
+            reinterpret_cast<WidgetHelpAddMessageFn>(InstallTrampoline(
+                queueTarget, reinterpret_cast<void*>(&OnWidgetHelpAddMessage)));
+    }
+    LOGI("[hud.stat] publisher active=%d queue=%d fingerprint=%d target=%p "
+         "offset=0x%lx queue_offset=0x%lx text_get=%p text=%p",
+         g_origHudStatUpdate ? 1 : 0,
+         g_origWidgetHelpAddMessage ? 1 : 0, fingerprint ? 1 : 0, target,
          target ? static_cast<unsigned long>(
              reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul,
+         queueTarget ? static_cast<unsigned long>(
+             reinterpret_cast<std::uintptr_t>(queueTarget) - g.LoadBase) : 0ul,
          reinterpret_cast<void*>(g_statTextGet), g_statTheText);
     if (handle) dlclose(handle);
-    return g_origHudStatUpdate != nullptr;
+    return g_origHudStatUpdate != nullptr || g_origWidgetHelpAddMessage != nullptr;
 }
 
 #ifdef SAVR_DEV

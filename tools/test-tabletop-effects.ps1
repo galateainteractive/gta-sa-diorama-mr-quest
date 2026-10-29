@@ -530,7 +530,7 @@ foreach ($sourcePattern in @(
         '~widget_enter_car~", u"Y"',
         '~widget_explicit_bicycle~", u"Y"',
         '~widget_explicit_next_weapon~", u"R3 WEAPON SELECTOR"',
-        '~widget_phone~", u"BOTH GRIPS \+ R2"',
+        '~widget_phone~", u"A"',
         'Hold R2 to pedal\.',
         'Left Stick up and down to shift your weight',
         'no partial "tap" rewriting is allowed',
