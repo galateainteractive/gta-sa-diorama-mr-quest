@@ -229,6 +229,8 @@ struct GameSymbols {
     void* CPad_GetTurretLeft;
     void* CPad_GetTurretRight;
     void* CPad_JumpJustDown;
+    void* CPad_GetBunnyHop;
+    void* CPad_GetBunnyHopDown;
 
     // Mobile HID input-mode query (0=touch, 1=joystick/gamepad). Patched, not
     // called: CPad::GetCarGunUpDown/LeftRight only read NewState right-stick

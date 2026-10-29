@@ -27141,17 +27141,35 @@ void OnHudStatUpdate(unsigned char increase, unsigned short statId,
 }
 
 bool InstallStatUpdatePublisher() {
-    if (!tabletop::Enabled() || !g.LoadBase) return true;
+    // Install unconditionally once libGame is available. Tabletop mode is
+    // loaded lazily and can still be at its startup value when hooks are
+    // created; the callback itself applies the live mode gate.
+    if (!g.LoadBase) return false;
     void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
-    void* const target = handle ? dlsym(
+    void* target = handle ? dlsym(
         handle, "_ZN4CHud24SetHelpMessageStatUpdateEhtff") : nullptr;
     g_statTextGet = handle ? reinterpret_cast<TextGetFn>(
         dlsym(handle, "_ZN5CText3GetEPKc")) : nullptr;
     g_statTheText = handle ? dlsym(handle, "TheText") : nullptr;
 
     constexpr std::uintptr_t kRetailOffset = 0x510b3cu;
-    const bool fingerprint = target &&
+    constexpr std::uintptr_t kTextGetOffset = 0x6a04ccu;
+    constexpr std::uintptr_t kTheTextOffset = 0xcd5cf8u;
+    if (!target) target = reinterpret_cast<void*>(g.LoadBase + kRetailOffset);
+    if (!g_statTextGet) g_statTextGet = reinterpret_cast<TextGetFn>(
+        g.LoadBase + kTextGetOffset);
+    if (!g_statTheText) g_statTheText = reinterpret_cast<void*>(
+        g.LoadBase + kTheTextOffset);
+    static constexpr std::uint32_t kRetailPrologue[4] = {
+        0x6dbc23e9u,0xa9017bfdu,0xa90257fcu,0xa9034ff4u};
+    bool fingerprint = target &&
         reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == kRetailOffset;
+    std::uint32_t observed[4]{};
+    if (fingerprint) {
+        std::memcpy(observed, target, sizeof(observed));
+        fingerprint = std::memcmp(observed, kRetailPrologue,
+                                  sizeof(observed)) == 0;
+    }
     if (fingerprint && g_statTextGet && g_statTheText) {
         g_origHudStatUpdate = reinterpret_cast<HudStatUpdateFn>(
             InstallTrampoline(target,

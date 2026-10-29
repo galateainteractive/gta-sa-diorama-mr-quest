@@ -2359,6 +2359,13 @@ int OnGetTurretRight(void* pad) {
 // edge is computed once per frame in UpdateInput so repeated per-frame polls
 // see one coherent "just down".
 TouchQueryFn g_origJumpJustDown = nullptr;
+TouchQueryFn g_origBunnyHop = nullptr;
+TouchQueryFn g_origBunnyHopDown = nullptr;
+
+bool VrBicycleInputActive() {
+    return VrGameplayInputAllowed() && HasPlayerVehicle() &&
+        IsBicycleModel(g_activeVehicleModel.load(std::memory_order_acquire));
+}
 
 int OnJumpJustDown(void* pad) {
     if (VrGameplayInputAllowed()) {
@@ -2373,6 +2380,64 @@ int OnJumpJustDown(void* pad) {
         if (g_jumpEdge.load(std::memory_order_acquire)) return 1;
     }
     return g_origJumpJustDown ? g_origJumpJustDown(pad) : 0;
+}
+
+int OnGetBunnyHop(void* pad) {
+    if (VrBicycleInputActive())
+        return g_bicycleJumpEdge.load(std::memory_order_acquire) ? 1 : 0;
+    return g_origBunnyHop ? g_origBunnyHop(pad) : 0;
+}
+
+int OnGetBunnyHopDown(void* pad) {
+    if (VrBicycleInputActive()) {
+        xr::InputState input{};
+        xr::GetInput(input);
+        return input.a ? 1 : 0;
+    }
+    return g_origBunnyHopDown ? g_origBunnyHopDown(pad) : 0;
+}
+
+void* InstallBunnyHopDownTrampoline(void* target, void* replacement) {
+    if (!target || !replacement) return nullptr;
+    constexpr std::uint32_t expected[4] = {
+        0x79422008u, // LDRH W8,[X0,#0x110]
+        0x35000068u, // CBNZ W8,+0x10 (zero return)
+        0x3944c808u, // LDRB W8,[X0,#0x132]
+        0x34000068u  // CBZ W8,+0x18 (real HID body)
+    };
+    std::uint32_t observed[4]{};
+    std::memcpy(observed, target, sizeof(observed));
+    if (std::memcmp(observed, expected, sizeof(observed)) != 0) {
+        LOGW("[driving] GetBunnyHopDown prologue mismatch "
+             "%08x %08x %08x %08x", observed[0], observed[1],
+             observed[2], observed[3]);
+        return nullptr;
+    }
+    const std::uintptr_t pageSize =
+        static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    void* trampoline = mmap(nullptr, pageSize,
+                            PROT_READ | PROT_WRITE | PROT_EXEC,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (trampoline == MAP_FAILED) return nullptr;
+    auto* t = reinterpret_cast<std::uint32_t*>(trampoline);
+    t[0] = 0x79422008u; // LDRH W8,[X0,#0x110]
+    t[1] = 0x350000A8u; // CBNZ W8,+20 (zero return)
+    t[2] = 0x3944C808u; // LDRB W8,[X0,#0x132]
+    t[3] = 0x35000068u; // CBNZ W8,+12 (zero return)
+    t[4] = 0x58000091u; // LDR X17,literal (+16)
+    t[5] = 0xD61F0220u; // BR X17
+    t[6] = 0x2A1F03E0u; // MOV W0,WZR
+    t[7] = 0xD65F03C0u; // RET
+    *reinterpret_cast<void**>(t + 8) = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) + 0x18);
+    __builtin___clear_cache(reinterpret_cast<char*>(t),
+                            reinterpret_cast<char*>(t) + 40);
+    if (!PatchAbsoluteJump(target, replacement)) {
+        munmap(trampoline, pageSize);
+        return nullptr;
+    }
+    LOGI("[driving] CPad::GetBunnyHopDown A-button hook installed");
+    return trampoline;
 }
 
 // CAutomobile::TankControl only reads GetCarGunLeftRight/UpDown when the
@@ -2509,6 +2574,17 @@ void InstallPadHooks() {
         InstallTouchQueryTrampoline(g.CPad_JumpJustDown,
             reinterpret_cast<void*>(&OnJumpJustDown),
             "Jump JumpJustDown"));
+    constexpr std::uint32_t bunnyHop[4]={
+        0xa9bf7bfdu,0x910003fdu,0x79422008u,0x350000c8u};
+    g_origBunnyHop=reinterpret_cast<TouchQueryFn>(
+        InstallVerifiedTrampoline(g.CPad_GetBunnyHop,
+            reinterpret_cast<void*>(&OnGetBunnyHop), bunnyHop,
+            "CPad::GetBunnyHop"));
+    g_origBunnyHopDown=reinterpret_cast<TouchQueryFn>(
+        InstallBunnyHopDownTrampoline(g.CPad_GetBunnyHopDown,
+            reinterpret_cast<void*>(&OnGetBunnyHopDown)));
+    LOGI("[driving] bicycle bunny-hop hooks pressed=%d held=%d",
+         g_origBunnyHop ? 1 : 0, g_origBunnyHopDown ? 1 : 0);
     g_origGroupForward=reinterpret_cast<GroupFwdFn>(
         InstallTouchQueryTrampoline(g.CPad_GetGroupControlForward,
             reinterpret_cast<void*>(&OnGetGroupControlForward),

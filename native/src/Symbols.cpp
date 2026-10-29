@@ -165,6 +165,8 @@ bool ResolveGameSymbols(void* handle) {
         {"_ZN4CPad13GetTurretLeftEv",                                            reinterpret_cast<void**>(&g.CPad_GetTurretLeft),                    false},
         {"_ZN4CPad14GetTurretRightEv",                                           reinterpret_cast<void**>(&g.CPad_GetTurretRight),                   false},
         {"_ZN4CPad12JumpJustDownEv",                                             reinterpret_cast<void**>(&g.CPad_JumpJustDown),                     false},
+        {"_ZN4CPad11GetBunnyHopEv",                                              reinterpret_cast<void**>(&g.CPad_GetBunnyHop),                      false},
+        {"_ZN4CPad15GetBunnyHopDownEv",                                          reinterpret_cast<void**>(&g.CPad_GetBunnyHopDown),                  false},
         {"_ZN11CWeaponInfo13GetWeaponInfoE11eWeaponTypea",                       reinterpret_cast<void**>(&g.CWeaponInfo_GetWeaponInfo),             false},
         {"_ZN10CModelInfo16ms_modelInfoPtrsE",                                   reinterpret_cast<void**>(&g.CModelInfo_ms_modelInfoPtrs),           false},
         {"_ZN10CModelInfo12IsTrainModelEi",                                      reinterpret_cast<void**>(&g.CModelInfo_IsTrainModel),               false},
