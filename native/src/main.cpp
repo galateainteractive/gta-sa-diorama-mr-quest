@@ -154,6 +154,10 @@ bool QueryPhysicalFireHand(int weaponType, int* firingHand) {
 // Set once the render loop is ours; from then on the Java loop is inert.
 volatile bool g_ownFrameLoop = false;
 
+// Menu/focus recovery is observed on several threads, but the engine's verified
+// timer/OpenAL resume one-shot must be written from GameThread.
+std::atomic<bool> g_pendingEngineResumeTick{false};
+
 // The engine's onSurfaceCreated arrives on the UI thread, where the engine does
 // its own eglMakeCurrent and so steals the shared context off our render thread
 // for good. It cannot simply be dropped — the engine needs it to keep rendering.
@@ -816,6 +820,7 @@ void OnPause(JNIEnv* env, jclass clazz) {
 
 void OnResume(JNIEnv* env, jclass clazz) {
     g.implOnResume(env, clazz);
+    g_pendingEngineResumeTick.store(true, std::memory_order_release);
     g_resetGameTiming.store(true, std::memory_order_release);
 }
 
@@ -990,6 +995,11 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
                 g.CTimer_EndUserPause();
                 LOGI("[pause.menu] user pause released after pause menu");
             }
+            // InitForPause consumes the same resume one-shot when opening the
+            // mobile frontend.  Request it again on the close edge: clearing
+            // CTimer's pause bit alone can leave OpenAL's attenuation/suspend
+            // state latched even though gameplay has visibly resumed.
+            g_pendingEngineResumeTick.store(true, std::memory_order_release);
             menuPauseApplied = false;
         }
     }
@@ -1852,7 +1862,26 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             if (userPause && g.CTimer_EndUserPause) g.CTimer_EndUserPause();
             if (g.CTimer_m_UserPause) *g.CTimer_m_UserPause = false;
             if (g.CTimer_m_CodePause) *g.CTimer_m_CodePause = false;
+            g_pendingEngineResumeTick.store(true, std::memory_order_release);
         }
+    }
+
+    // OS_ApplicationTick owns the stock timer/OpenAL resume sequence.  Drive
+    // its verified +1 one-shot only after every menu has closed and OpenXR is
+    // focused again, never on the Android/UI callback thread.  The exchange
+    // makes repeated focus/menu observations collapse into one GameThread tick.
+    if (xrFocused && inGameplay && !anyMenu && !vrcam::IsMobileMenuOpen() &&
+        g.SkipIntroCutscene &&
+        g_pendingEngineResumeTick.exchange(false, std::memory_order_acq_rel)) {
+        if (g.AndroidPaused && g.AndroidPaused() && g.SetAndroidPaused)
+            g.SetAndroidPaused(0);
+        if (g.CTimer_m_UserPause && *g.CTimer_m_UserPause &&
+            g.CTimer_EndUserPause)
+            g.CTimer_EndUserPause();
+        if (g.CTimer_m_UserPause) *g.CTimer_m_UserPause = false;
+        if (g.CTimer_m_CodePause) *g.CTimer_m_CodePause = false;
+        g.SkipIntroCutscene[1] = 1;
+        LOGI("[pause.audio] engine resume tick requested after menu/focus return");
     }
 
     // The left stick drives the menu, not the player, while a menu is up.
