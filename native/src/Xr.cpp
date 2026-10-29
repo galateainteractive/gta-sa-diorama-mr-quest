@@ -359,10 +359,6 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
              channel ? channel : "unknown", sourceHash, text.size(),
              preview.c_str());
     }
-    if (replacements > 0 &&
-        !ContainsAsciiNoCase(text, u"DIORAMA MR TIP")) {
-        text.insert(0, u"~p~DIORAMA MR TIP~w~: ");
-    }
     return text;
 }
 

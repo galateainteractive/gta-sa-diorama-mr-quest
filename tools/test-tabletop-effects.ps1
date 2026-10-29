@@ -623,13 +623,12 @@ Write-Output 'PASS production final-font adapter with old tutorial diagnostics r
 
 # Package 64 turns the validated global CFont boundary into a conservative
 # Diorama-only adapter. It must retain a fast content prefilter, a shell escape
-# hatch, an explicit branded prefix and mode-specific Controls navigation.
+# hatch and mode-specific Controls navigation.
 foreach ($sourcePattern in @(
         'LooksLikeDioramaTouchTutorial',
         'leaves them byte-for-byte unchanged',
         'debug\.savr\.diorama_tutorials',
         'AdaptDioramaTutorialForStockRender',
-        '~p~DIORAMA MR TIP~w~:',
         'mode=global-content-filter',
         'CUSTOMIZE CONTROLS',
         'A  CUSTOMIZE CONTROLS',
@@ -637,6 +636,9 @@ foreach ($sourcePattern in @(
     if (($xrSource + $cameraSource + $mainSource) -notmatch $sourcePattern) {
         throw "Package 64 final tutorial/control-discovery audit failed: $sourcePattern"
     }
+}
+if ($xrSource -match 'DIORAMA MR TIP') {
+    throw 'Tutorial cards still contain the retired repeated Diorama MR Tip prefix'
 }
 Write-Output 'PASS Package 64 filtered tutorials and guide-first Controls'
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## Package 74 concise Diorama tutorials
+
+- Remove the repeated `DIORAMA MR TIP` prefix from adapted gameplay tutorial
+  cards. The verified Quest-control translations and GTA colour markers remain
+  unchanged, while the messages now read like concise in-game instructions.
+- Keep the Welcome page, persistent Diorama menu reminder and all other
+  Galatea/Diorama branding unchanged. Immersive VR remains untouched.
+
 ## Package 73 retire black-shrub diagnostics
 
 - Remove the Package 72 `ProcObjectMan` source suppression after headset
