@@ -45,6 +45,7 @@ public final class SavrApplication extends Application {
 
     private static boolean nativeReady = false;
     private static final String[] DEFAULT_SETTINGS = {
+            "alsoft.conf",
             "vr_driving.ini",
             "vr_appearance.ini",
             "vr_basketball.ini",

@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BUILD = ROOT / "build"
 DEFAULT_SETTINGS_DIR = ROOT / "defaults" / "quest"
 DEFAULT_SETTING_NAMES = (
+    "alsoft.conf",
     "vr_driving.ini",
     "vr_appearance.ini",
     "vr_basketball.ini",

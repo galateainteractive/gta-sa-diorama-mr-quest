@@ -3477,6 +3477,91 @@ void OnAudioRelativePosition(V3* output, V3* worldPosition) {
     }
 }
 
+// OpenAL Soft exposes ALC_EXT_disconnect and ALC_SOFT_reopen_device in the
+// exact retail library shipped by GTA 2.11.  Quest can leave the Android
+// OpenSL player marked "started" while its EPS route has fallen out of the
+// master mixer.  Poll the real device connection from the same GameThread
+// that services CAudioEngine and reopen only after OpenAL itself reports a
+// disconnect; normal playback is never reset speculatively.
+using AlcGetCurrentContextFn = void* (*)();
+using AlcGetContextsDeviceFn = void* (*)(void*);
+using AlcGetIntegervFn = void (*)(void*, int, int, int*);
+using AlcReopenDeviceFn = unsigned char (*)(void*, const char*, const int*);
+
+struct OpenAlDeviceApi {
+    AlcGetCurrentContextFn getCurrentContext{};
+    AlcGetContextsDeviceFn getContextsDevice{};
+    AlcGetIntegervFn getIntegerv{};
+    AlcReopenDeviceFn reopenDevice{};
+};
+
+OpenAlDeviceApi g_openAlDeviceApi{};
+double g_openAlNextDeviceCheckMs = 0.0;
+bool g_openAlDeviceLogged = false;
+
+bool ResolveOpenAlDeviceApi() {
+    if (g_openAlDeviceApi.getCurrentContext &&
+        g_openAlDeviceApi.getContextsDevice &&
+        g_openAlDeviceApi.getIntegerv) {
+        return true;
+    }
+    void* const handle = dlopen("libopenal.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!handle) return false;
+    g_openAlDeviceApi.getCurrentContext =
+        reinterpret_cast<AlcGetCurrentContextFn>(
+            dlsym(handle, "alcGetCurrentContext"));
+    g_openAlDeviceApi.getContextsDevice =
+        reinterpret_cast<AlcGetContextsDeviceFn>(
+            dlsym(handle, "alcGetContextsDevice"));
+    g_openAlDeviceApi.getIntegerv = reinterpret_cast<AlcGetIntegervFn>(
+        dlsym(handle, "alcGetIntegerv"));
+    g_openAlDeviceApi.reopenDevice = reinterpret_cast<AlcReopenDeviceFn>(
+        dlsym(handle, "alcReopenDeviceSOFT"));
+    dlclose(handle);
+    const bool ready = g_openAlDeviceApi.getCurrentContext &&
+        g_openAlDeviceApi.getContextsDevice && g_openAlDeviceApi.getIntegerv;
+    if (ready) {
+        LOGI("[audio.device] watchdog ready reopen=%d",
+             g_openAlDeviceApi.reopenDevice ? 1 : 0);
+    }
+    return ready;
+}
+
+void ServiceOpenAlDeviceWatchdog() {
+    const double nowMs = NowMs();
+    if (nowMs < g_openAlNextDeviceCheckMs) return;
+    g_openAlNextDeviceCheckMs = nowMs + 1000.0;
+    if (!ResolveOpenAlDeviceApi()) return;
+
+    void* const context = g_openAlDeviceApi.getCurrentContext();
+    void* const device = context
+        ? g_openAlDeviceApi.getContextsDevice(context) : nullptr;
+    if (!device) return;
+
+    constexpr int kAlcFrequency = 0x1007;
+    constexpr int kAlcConnected = 0x313;
+    int connected = 1;
+    int frequency = 0;
+    g_openAlDeviceApi.getIntegerv(device, kAlcConnected, 1, &connected);
+    g_openAlDeviceApi.getIntegerv(device, kAlcFrequency, 1, &frequency);
+    if (!g_openAlDeviceLogged) {
+        LOGI("[audio.device] active connected=%d frequency=%dHz",
+             connected, frequency);
+        g_openAlDeviceLogged = true;
+    }
+    if (connected != 0) return;
+
+    const bool reopened = g_openAlDeviceApi.reopenDevice &&
+        g_openAlDeviceApi.reopenDevice(device, nullptr, nullptr) != 0;
+    int connectedAfter = 0;
+    g_openAlDeviceApi.getIntegerv(
+        device, kAlcConnected, 1, &connectedAfter);
+    LOGW("[audio.device] disconnected; reopen=%d connected_after=%d frequency=%dHz",
+         reopened ? 1 : 0, connectedAfter, frequency);
+    // Avoid hammering a route that the OS has not made available yet.
+    g_openAlNextDeviceCheckMs = nowMs + (reopened ? 1000.0 : 5000.0);
+}
+
 // The render-list scan is driven by GTA's monitor camera, while the player can
 // look independently with the headset. Cache one current HMD direction before
 // the scan: the 45 m population-safe circle remains unconditional, but the
@@ -5992,6 +6077,7 @@ bool OnWidgetReleased(int widgetId, void* outTouchPos, int touchIndex) {
 }
 
 void OnUpdatePads() {
+    ServiceOpenAlDeviceWatchdog();
     g_origUpdatePads();
 
     xr::InputState in{};

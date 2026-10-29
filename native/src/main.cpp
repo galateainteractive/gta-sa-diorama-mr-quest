@@ -2587,7 +2587,18 @@ extern "C" {
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     savr::g_vm = vm;
+    // libopenal.so is loaded later by libGame.  Point OpenAL Soft at a Quest-
+    // specific output configuration before that happens so its OpenSL player
+    // runs at the headset mixer's native 48 kHz instead of GTA's legacy
+    // 22.05 kHz request.  The Java Application seeds this file before the game
+    // activity (and therefore libGame) is created.
+    constexpr char kOpenAlConfig[] =
+        "/sdcard/Android/data/com.rockstargames.gtasa/files/alsoft.conf";
+    const int configResult = setenv("ALSOFT_CONF", kOpenAlConfig, 1);
+    const int logResult = setenv("ALSOFT_LOGLEVEL", "3", 1);
     LOGI("libsavr.so loaded, JavaVM %p", static_cast<void*>(vm));
+    LOGI("[audio.device] OpenAL config=%s set=%d loglevel_set=%d",
+         kOpenAlConfig, configResult == 0 ? 1 : 0, logResult == 0 ? 1 : 0);
     return JNI_VERSION_1_6;
 }
 
