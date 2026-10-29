@@ -65,6 +65,13 @@ void PublishHudText(const std::int16_t* brief, int briefCapacity,
                     int bigStyleCapacity,
                     const std::int16_t* help, int helpCapacity);
 
+// Localized GTA stat-update label captured from
+// CHud::SetHelpMessageStatUpdate. The compositor keeps it in the same fixed
+// in-front panel as HELP TEXT instead of relying on the discarded mobile
+// stat-bar draw.
+void PublishStatUpdateText(const std::int16_t* label, int labelCapacity,
+                           bool increase);
+
 // Formatted mission clock/counter lines (ASCII, '\n'-separated), read from
 // CUserDisplay::OnscnTimer each capture pass. Empty string clears the layer.
 // Rendered with the APK font as the TIMERS element.

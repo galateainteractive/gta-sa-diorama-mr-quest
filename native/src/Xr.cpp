@@ -80,10 +80,12 @@ jmethodID g_renderVrTextMethod{};
 struct HudTextState {
     std::u16string brief;
     std::u16string help;
+    std::u16string statUpdate;
     std::u16string big;
     std::u16string timers;
     std::u16string radio;
     std::u16string status;
+    std::uint64_t statUpdateUntilNs{};
     std::uint64_t statusUntilNs{};
     int bigStyle{};
     std::uint64_t revision{};
@@ -4774,6 +4776,13 @@ bool SetupHudTextRenderer(JavaVM* vm,jobject activity) {
 
 HudTextState SnapshotHudText() {
     std::lock_guard<std::mutex> lock(g_hudTextMutex);
+    if (!g_hudTextState.statUpdate.empty() &&
+        g_hudTextState.statUpdateUntilNs != 0 &&
+        MonotonicNowNs() >= g_hudTextState.statUpdateUntilNs) {
+        g_hudTextState.statUpdate.clear();
+        g_hudTextState.statUpdateUntilNs = 0;
+        ++g_hudTextState.revision;
+    }
     if (!g_hudTextState.status.empty() && g_hudTextState.statusUntilNs != 0 &&
         MonotonicNowNs() >= g_hudTextState.statusUntilNs) {
         g_hudTextState.status.clear();
@@ -4896,6 +4905,10 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     if (!textState.brief.empty()) {
         if (!smallText.empty()) smallText.append(u"\n\n");
         smallText.append(textState.brief);
+    }
+    if (!textState.statUpdate.empty()) {
+        if (!smallText.empty()) smallText.append(u"\n\n");
+        smallText.append(textState.statUpdate);
     }
     std::u16string bigText=textState.big;
     std::u16string timerText=textState.timers;
@@ -5881,6 +5894,37 @@ void PublishHudText(const std::int16_t* brief, int briefCapacity,
          static_cast<unsigned long long>(g_hudTextState.revision),
          g_hudTextState.brief.size(),g_hudTextState.help.size(),
          g_hudTextState.big.size(),g_hudTextState.bigStyle);
+}
+
+void PublishStatUpdateText(const std::int16_t* label, int labelCapacity,
+                           bool increase) {
+    std::u16string next;
+    if (label && labelCapacity > 0) {
+        next.reserve(static_cast<std::size_t>(
+            std::min(labelCapacity, 120)) + 2u);
+        for (int i = 0; i < labelCapacity && i < 120 && label[i] != 0; ++i) {
+            next.push_back(static_cast<char16_t>(
+                static_cast<std::uint16_t>(label[i])));
+        }
+    }
+    if (next.empty()) return;
+    while (!next.empty() &&
+           (next.back() == u' ' || next.back() == u'\t' ||
+            next.back() == u'\n' || next.back() == u'\r')) {
+        next.pop_back();
+    }
+    if (next.empty()) return;
+    next.append(increase ? u" +" : u" -");
+
+    constexpr std::uint64_t kStatUpdateDurationNs = 3500000000ull;
+    std::lock_guard<std::mutex> lock(g_hudTextMutex);
+    g_hudTextState.statUpdate = std::move(next);
+    g_hudTextState.statUpdateUntilNs =
+        MonotonicNowNs() + kStatUpdateDurationNs;
+    ++g_hudTextState.revision;
+    LOGI("[hud.text] stat update rev=%llu chars=%zu direction=%s",
+         static_cast<unsigned long long>(g_hudTextState.revision),
+         g_hudTextState.statUpdate.size(), increase ? "up" : "down");
 }
 
 void PublishMissionTimersText(const char* text) {

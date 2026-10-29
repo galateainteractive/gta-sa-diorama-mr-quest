@@ -27110,6 +27110,63 @@ bool InstallTutorialRenderAdapter() {
     return g_origFontPrintString != nullptr;
 }
 
+using HudStatUpdateFn = void (*)(unsigned char increase,
+                                 unsigned short statId,
+                                 float value, float maxValue);
+using TextGetFn = std::int16_t* (*)(void* text, const char* key);
+
+HudStatUpdateFn g_origHudStatUpdate = nullptr;
+TextGetFn g_statTextGet = nullptr;
+void* g_statTheText = nullptr;
+
+void OnHudStatUpdate(unsigned char increase, unsigned short statId,
+                     float value, float maxValue) {
+    if (g_origHudStatUpdate)
+        g_origHudStatUpdate(increase, statId, value, maxValue);
+
+    if (!tabletop::Enabled() || !g_statTextGet || !g_statTheText) return;
+    char key[9]{};
+    std::snprintf(key, sizeof(key), "STAT%03u",
+                  static_cast<unsigned>(statId));
+    const std::int16_t* label = g_statTextGet(g_statTheText, key);
+    if (!label || label[0] == 0) {
+        LOGW("[hud.stat] missing GXT label key=%s id=%u", key,
+             static_cast<unsigned>(statId));
+        return;
+    }
+    xr::PublishStatUpdateText(label, 128, increase != 0);
+    LOGI("[hud.stat] publish id=%u direction=%s value=%.2f max=%.2f",
+         static_cast<unsigned>(statId), increase ? "up" : "down",
+         static_cast<double>(value), static_cast<double>(maxValue));
+}
+
+bool InstallStatUpdatePublisher() {
+    if (!tabletop::Enabled() || !g.LoadBase) return true;
+    void* const handle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    void* const target = handle ? dlsym(
+        handle, "_ZN4CHud24SetHelpMessageStatUpdateEhtff") : nullptr;
+    g_statTextGet = handle ? reinterpret_cast<TextGetFn>(
+        dlsym(handle, "_ZN5CText3GetEPKc")) : nullptr;
+    g_statTheText = handle ? dlsym(handle, "TheText") : nullptr;
+
+    constexpr std::uintptr_t kRetailOffset = 0x510b3cu;
+    const bool fingerprint = target &&
+        reinterpret_cast<std::uintptr_t>(target) - g.LoadBase == kRetailOffset;
+    if (fingerprint && g_statTextGet && g_statTheText) {
+        g_origHudStatUpdate = reinterpret_cast<HudStatUpdateFn>(
+            InstallTrampoline(target,
+                              reinterpret_cast<void*>(&OnHudStatUpdate)));
+    }
+    LOGI("[hud.stat] publisher active=%d fingerprint=%d target=%p "
+         "offset=0x%lx text_get=%p text=%p",
+         g_origHudStatUpdate ? 1 : 0, fingerprint ? 1 : 0, target,
+         target ? static_cast<unsigned long>(
+             reinterpret_cast<std::uintptr_t>(target) - g.LoadBase) : 0ul,
+         reinterpret_cast<void*>(g_statTextGet), g_statTheText);
+    if (handle) dlclose(handle);
+    return g_origHudStatUpdate != nullptr;
+}
+
 #ifdef SAVR_DEV
 using GameUpdateVoidFn = void (*)();
 using GameUpdateBoolFn = void (*)(bool);
@@ -32603,6 +32660,10 @@ bool Install() {
     // The former queue/buffer diagnostics are retired from production; unknown
     // candidates are logged once by the adapter and otherwise remain untouched.
     InstallTutorialRenderAdapter();
+    // Stat changes use a special CHud help-message path whose text buffer only
+    // contains '+' or '-'. Publish its localized STATxxx label explicitly so
+    // every respect/skill/body update reaches the fixed Diorama help panel.
+    InstallStatUpdatePublisher();
 
     // Bind the user-facing shadow toggle to MobileSettings entry 5 and install
     // the fingerprinted eight-vehicle budget before the first gameplay frame.
