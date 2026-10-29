@@ -1949,6 +1949,12 @@ int OnGetHorn(void* pad,unsigned char arg) {
 int OnGetHandBrake(void* pad) {
     if (VrGameplayInputAllowed()&&HasPlayerVehicle()) {
         xr::InputState input{}; xr::GetInput(input);
+        // A is the dedicated bunny-hop button on pedal bicycles. Returning the
+        // handbrake too would brake the bike as the hop begins; motorcycles
+        // and every other vehicle retain the normal A handbrake.
+        if (IsBicycleModel(
+                g_activeVehicleModel.load(std::memory_order_acquire)))
+            return 0;
         return input.a?255:0;
     }
     return g_origHandBrake?g_origHandBrake(pad):0;
@@ -2264,6 +2270,7 @@ using TouchQueryFn = int (*)(void*);
 CarGunJustDownFn g_origCarGunJustDown = nullptr;
 // X pressed this frame and not the last, sampled once per frame on foot.
 std::atomic<bool> g_jumpEdge{false};
+std::atomic<bool> g_bicycleJumpEdge{false};
 
 int OnCarGunJustDown(void* pad) {
     if (VrGameplayInputAllowed() &&
@@ -2354,9 +2361,17 @@ int OnGetTurretRight(void* pad) {
 TouchQueryFn g_origJumpJustDown = nullptr;
 
 int OnJumpJustDown(void* pad) {
-    if (VrGameplayInputAllowed() &&
-        g_jumpEdge.load(std::memory_order_acquire))
-        return 1;
+    if (VrGameplayInputAllowed()) {
+        if (HasPlayerVehicle() && IsBicycleModel(
+                g_activeVehicleModel.load(std::memory_order_acquire))) {
+            // Retail mobile detects a double tap in the lower-right touch
+            // region. R2 also owns that region for pedalling, so falling
+            // through made normal acceleration trigger a bunny hop. The VR A
+            // edge is authoritative on bicycles and suppresses that touch path.
+            return g_bicycleJumpEdge.load(std::memory_order_acquire) ? 1 : 0;
+        }
+        if (g_jumpEdge.load(std::memory_order_acquire)) return 1;
+    }
     return g_origJumpJustDown ? g_origJumpJustDown(pad) : 0;
 }
 
@@ -3433,13 +3448,21 @@ void UpdateInput(const xr::InputState& input,bool gameplay,bool blocked) {
     {
         // One frame-coherent X edge for the JumpJustDown touch-query hook.
         static bool prevJumpButton=false;
+        static bool prevBicycleJumpButton=false;
         const bool jumpButton=locomotion::ActionHeld(
             locomotion::BIND_ACT_JUMP,
             input.a,input.b,input.x,input.y,input.l3,input.r3,true);
         g_jumpEdge.store(gameplay&&!blocked&&activeType==VEHICLE_NONE&&
                              jumpButton&&!prevJumpButton,
                          std::memory_order_release);
+        const bool bicycleJumpButton=input.a;
+        g_bicycleJumpEdge.store(
+            gameplay&&!blocked&&activeType==VEHICLE_BIKE&&
+                IsBicycleModel(activeModel)&&bicycleJumpButton&&
+                !prevBicycleJumpButton,
+            std::memory_order_release);
         prevJumpButton=jumpButton;
+        prevBicycleJumpButton=bicycleJumpButton;
     }
     int activeAccelerator=BIKE_ACCEL_HOLD_TRIGGER;
     if (activeType==VEHICLE_BIKE&&activeModel>=0) {
