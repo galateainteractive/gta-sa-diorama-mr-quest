@@ -156,6 +156,7 @@ volatile bool g_ownFrameLoop = false;
 
 // Menu/focus recovery is observed on several threads, but the engine's verified
 // timer/OpenAL resume one-shot must be written from GameThread.
+std::atomic<bool> g_appResumed{true};
 std::atomic<bool> g_pendingEngineResumeTick{false};
 
 // The engine's onSurfaceCreated arrives on the UI thread, where the engine does
@@ -815,6 +816,7 @@ void OnPause(JNIEnv* env, jclass clazz) {
     // so its pause/resume lifecycle is its own business — and swallowing the
     // resume half left the engine stuck paused, spinning without ever advancing
     // its boot. Let the engine manage its own state.
+    g_appResumed.store(false, std::memory_order_release);
     g.implOnPause(env, clazz);
 }
 
@@ -822,6 +824,7 @@ void OnResume(JNIEnv* env, jclass clazz) {
     g.implOnResume(env, clazz);
     g_pendingEngineResumeTick.store(true, std::memory_order_release);
     g_resetGameTiming.store(true, std::memory_order_release);
+    g_appResumed.store(true, std::memory_order_release);
 }
 
 void OnSurfaceDestroyed(JNIEnv* env, jclass clazz) {
@@ -2137,6 +2140,15 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
 }
 
 void OnDrawFrame(JNIEnv* env, jclass clazz, jfloat deltaTime) {
+    if (!g_appResumed.load(std::memory_order_acquire)) {
+        // Some Rockstar/GLSurfaceView paths keep invoking the callback after
+        // Activity.onPause.  Do not run game logic or spin an unpaced callback
+        // against a paused engine; OnResume releases this bounded wait.
+        timespec idle{0, 50 * 1000 * 1000};
+        nanosleep(&idle, nullptr);
+        return;
+    }
+
     // Let the engine render its frame on its own thread, into our SurfaceTexture.
     // Time it: this is the WHOLE game-frame work (logic + render) minus our pacing
     // sleep, so the profiler can split our stereo cost from the game's own cost.
@@ -2351,6 +2363,16 @@ void* RenderLoop(void*) {
     }
 
     while (g_ownFrameLoop) {
+        if (!g_appResumed.load(std::memory_order_acquire)) {
+            // Keep polling OpenXR lifecycle events, but skip updateTexImage on
+            // the frozen producer buffer.  RenderFrame has its own short idle
+            // wait when the XR session is stopped; this extra wait bounds the
+            // persistent consumer to roughly 20 lifecycle polls per second.
+            xr::RenderFrame(0.0, 0.0);
+            timespec idle{0, 45 * 1000 * 1000};
+            nanosleep(&idle, nullptr);
+            continue;
+        }
         const double updateT0 = perf::MonotonicMs();
         const double updateCpuT0 = perf::ThreadCpuMs();
         PublishGameFrame(env);   // updateTexImage — newest engine frame into our texture

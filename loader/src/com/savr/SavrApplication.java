@@ -347,7 +347,10 @@ public final class SavrApplication extends Application {
         // or nothing is reaching us at all. The buffer timestamp separates the
         // two: it only advances when a finished frame is actually queued.
         ++updateCount;
-        if (updateCount <= 5 || updateCount % 60 == 0) {
+        // Five boot samples are enough to prove the producer is connected.
+        // Thereafter keep one low-rate heartbeat instead of flooding logcat
+        // every second (or faster while the XR session is paused).
+        if (updateCount <= 5 || updateCount % 600 == 0) {
             android.util.Log.i(TAG, "game frames: " + updateCount
                     + ", buffer timestamp " + gameTexture.getTimestamp());
         }
