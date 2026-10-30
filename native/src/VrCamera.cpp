@@ -23396,15 +23396,17 @@ void OnRenderScene(bool underwater) {
         hud::GetElementSettings(hud::MESSAGES).enabled||
         hud::GetElementSettings(hud::HELP_TEXT).enabled||
         hud::GetElementSettings(hud::TIMERS).enabled;
-    // Stereo story and gameplay cutscenes own the whole view. The phone HUD
-    // raster also contains mission/help text, so merely disabling CLASSIC is
-    // insufficient: publish no HUD source for these frames. The short scripted
-    // scene debounce above prevents a one-frame HUD flash between camera shots.
-    const bool cutsceneHudSuppressed = FormalCutsceneRunning() ||
+    // Story and gameplay cutscenes must suppress the phone/classic HUD, but the
+    // direct text compositor still needs this pass to publish subtitles, help
+    // and stat notices. Keep recording the private source whenever direct text
+    // is enabled; the ring's cutscene bit prevents classic/wrist crops from
+    // sampling it. The scripted-scene debounce prevents one-frame mode flashes
+    // between camera shots.
+    const bool cutsceneFrame = FormalCutsceneRunning() ||
         ScriptedCutsceneRunning();
-    const bool hudNeeded=!cutsceneHudSuppressed&&(
-        hud::ShouldRenderClassicHud()||hud::ShouldRenderWristHud()||
-        directTextEnabled||xr::HudCalibrationActive());
+    const bool hudNeeded=directTextEnabled||xr::HudCalibrationActive()||
+        (!cutsceneFrame&&(
+            hud::ShouldRenderClassicHud()||hud::ShouldRenderWristHud()));
     // First-time HUD raster creation records RenderQueue resource commands.
     // Keep that rare lifecycle transition behind the completed retail token;
     // the steady already-materialised HUD ring remains overlap-safe.
@@ -24194,7 +24196,8 @@ void OnRenderScene(bool underwater) {
     xr::SetTabletopMaskState(tabletopMask);
     xr::SetStereoEyeTextures(&tex[0][0], &depth[0][0], hudTex,
                              renderedNear, renderedFar,
-                             g_recordCounter, g_eyeRasterW, g_eyeRasterH);
+                             g_recordCounter, g_eyeRasterW, g_eyeRasterH,
+                             cutsceneFrame);
     xr::NotifyGameFrame();                                    // for the on-screen FPS readout
     traffic_census::Viewpoint trafficView{};
     const TrafficInterestBasis trafficInterest =
@@ -32707,8 +32710,10 @@ bool RecruitGestureActive() {
 
 void RefreshStereoGate() {
     const bool mobileMenuOpen = MobileMenuOpen();
-    const bool cutsceneRunning = g.CCutsceneMgr_ms_running &&
+    const bool formalCutsceneRunning = g.CCutsceneMgr_ms_running &&
         *g.CCutsceneMgr_ms_running;
+    const bool cutsceneRunning = formalCutsceneRunning ||
+        ScriptedCutsceneRunning();
     const bool playerExists = g.FindPlayerPed && g.FindPlayerPed(-1);
     const bool fullyFaded = g.CCamera_GetScreenFadeStatus && g.TheCamera &&
         g.CCamera_GetScreenFadeStatus(g.TheCamera) == 2;

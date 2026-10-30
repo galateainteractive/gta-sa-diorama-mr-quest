@@ -668,6 +668,7 @@ std::atomic<unsigned int> g_stereoEyeDepth[kStereoSets][2] = {};
 // reuse the same numeric GL name.
 std::atomic<unsigned int> g_eyeFoveationAttemptedTex[kStereoSets][2] = {};
 std::atomic<unsigned int> g_stereoHudTex[kStereoSets] = {};
+std::atomic<bool>         g_stereoCutsceneFrame[kStereoSets] = {};
 std::atomic<float>        g_stereoEyeNear[kStereoSets][2] = {};
 std::atomic<float>        g_stereoEyeFar[kStereoSets][2] = {};
 std::atomic<float>        g_stereoUnderWaterness[kStereoSets] = {};
@@ -6509,6 +6510,7 @@ void ResetStereoEyeTextures() {
         g_eyeFoveationAttemptedTex[set][1].store(
             0, std::memory_order_relaxed);
         g_stereoHudTex[set].store(0, std::memory_order_relaxed);
+        g_stereoCutsceneFrame[set].store(false, std::memory_order_relaxed);
         g_stereoUnderWaterness[set].store(0.0f, std::memory_order_relaxed);
         g_stereoWaterDepth[set].store(0.0f, std::memory_order_relaxed);
         clearMobileColor[set] = true;
@@ -7138,7 +7140,8 @@ bool WaitStereoProducerFenceForCandidate(int set, int generation) {
 void SetStereoEyeTextures(const unsigned int* tex, const unsigned int* depth,
                           const unsigned int* hudTex,
                           const float* nearZ, const float* farZ,
-                          int seq, int width, int height) {
+                          int seq, int width, int height,
+                          bool cutsceneFrame) {
     // `tex` points at a [kStereoSets][2] row-major table of GL texture ids. The
     // ids are stable once the RenderQueue thread has created the rasters, so the
     // per-frame cost here is trivial; only `seq` actually advances. Publish the
@@ -7169,6 +7172,8 @@ void SetStereoEyeTextures(const unsigned int* tex, const unsigned int* depth,
         depth ? depth[ws * 2 + 1] : 0, std::memory_order_relaxed);
     g_stereoHudTex[ws].store(hudTex ? hudTex[ws] : 0,
                               std::memory_order_relaxed);
+    g_stereoCutsceneFrame[ws].store(cutsceneFrame,
+                                     std::memory_order_relaxed);
     g_stereoEyeNear[ws][0].store(nearZ ? nearZ[0] : 0.05f, std::memory_order_relaxed);
     g_stereoEyeNear[ws][1].store(nearZ ? nearZ[1] : 0.05f, std::memory_order_relaxed);
     g_stereoEyeFar[ws][0].store(farZ ? farZ[0] : 1000.0f, std::memory_order_relaxed);
@@ -10068,6 +10073,7 @@ GLuint g_tabletopMaskDepthTex = 0, g_tabletopMaskDepthFbo = 0;
 int    g_tabletopMaskDepthW = 0, g_tabletopMaskDepthH = 0;
 GLint  g_tabletopMaskDepthFormat = 0;
 GLint  g_tabletopAlphaDepthLoc = -1, g_tabletopAlphaUseDepthLoc = -1;
+GLint  g_tabletopAlphaDepthOnlyLoc = -1;
 GLint  g_tabletopAlphaNearFarLoc = -1, g_tabletopAlphaTanLoc = -1;
 GLint  g_tabletopAlphaEyeLoc = -1, g_tabletopAlphaRightLoc = -1;
 GLint  g_tabletopAlphaUpLoc = -1, g_tabletopAlphaForwardLoc = -1;
@@ -12306,7 +12312,7 @@ bool EnsureTabletopAlphaProgram() {
                      "precision highp float; in vec2 vUv; out vec4 o;\n"
                      // Float precision does not set sampler precision. Depth
                      // values near 1 need all available bits before inversion.
-                     "uniform highp sampler2D uDepth; uniform int uUseDepth;\n"
+                     "uniform highp sampler2D uDepth; uniform int uUseDepth,uDepthOnly;\n"
                      "uniform vec2 uNearFar; uniform vec2 uTan;\n"
                      "uniform vec3 uEye,uRight,uUp,uForward;\n"
                      "uniform vec3 uPlayer,uViewer,uAxisX,uAxisY;\n"
@@ -12322,12 +12328,12 @@ bool EnsureTabletopAlphaProgram() {
                      " float vz=((2.0*n*f)/max(1e-5,f+n-z*(f-n)))*uDepthScale;\n"
                      " vec2 ndc=vUv*2.0-1.0;\n"
                      " vec3 ray=uRight*(ndc.x*uTan.x)+uUp*(ndc.y*uTan.y)+uForward;\n"
-                     " vec3 p=uEye+ray*vz; float a=coverage(p);\n"
+                     " vec3 p=uEye+ray*vz; float a=uDepthOnly!=0?1.0:coverage(p);\n"
                      // Only replace a seabed-derived boundary decision. The
                      // depth fragment must be materially below the confirmed
                      // water plane and the ray must cross that plane before it
                      // reaches the fragment. Clear-depth sky remains discarded.
-                     " if(uWaterActive!=0){float den=dot(ray,uWaterNormal);float below=dot(uWaterPoint-p,uWaterNormal);if(abs(den)>1e-5&&below>max(0.002,uDepthScale*0.5)){float t=dot(uWaterPoint-uEye,uWaterNormal)/den;if(t>0.0&&t<vz)a=max(a,coverage(uEye+ray*t));}}\n"
+                     " if(uDepthOnly==0&&uWaterActive!=0){float den=dot(ray,uWaterNormal);float below=dot(uWaterPoint-p,uWaterNormal);if(abs(den)>1e-5&&below>max(0.002,uDepthScale*0.5)){float t=dot(uWaterPoint-uEye,uWaterNormal)/den;if(t>0.0&&t<vz)a=max(a,coverage(uEye+ray*t));}}\n"
                      " o=vec4(0,0,0,a);\n"
                      "}\n";
     const GLuint vertex = CompileHandShader(GL_VERTEX_SHADER, vs);
@@ -12351,6 +12357,8 @@ bool EnsureTabletopAlphaProgram() {
     glGenVertexArrays(1, &g_tabletopAlphaVao);
     g_tabletopAlphaDepthLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uDepth");
     g_tabletopAlphaUseDepthLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uUseDepth");
+    g_tabletopAlphaDepthOnlyLoc = glGetUniformLocation(
+        g_tabletopAlphaProgram, "uDepthOnly");
     g_tabletopAlphaNearFarLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uNearFar");
     g_tabletopAlphaTanLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uTan");
     g_tabletopAlphaEyeLoc = glGetUniformLocation(g_tabletopAlphaProgram, "uEye");
@@ -12556,12 +12564,21 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
                                        int targetW, int targetH,
                                        const XrPosef& renderPose, int eye,
                                        float nearZ, float farZ,
-                                       const TabletopMaskState& mask) {
+                                       const TabletopMaskState& mask,
+                                       bool cutsceneDepthOnly) {
     const bool liveActive = vrcam::IsTabletopActive();
     const bool passthroughActive =
         g_passthroughActive.load(std::memory_order_acquire);
-    const auto decision = tabletop_flicker::DecideMask(
-        mask.active, liveActive, passthroughActive);
+    // A scripted director camera no longer shares the miniature's world-space
+    // transform. Its safe mixed-reality representation is therefore depth-only:
+    // real GTA fragments remain opaque while untouched clear-depth background
+    // becomes passthrough. Ordinary Diorama frames retain the radial mask.
+    const bool depthOnly = cutsceneDepthOnly && tabletop::PassthroughEnabled();
+    const auto decision = depthOnly
+        ? (passthroughActive ? tabletop_flicker::MaskDecision::ApplySnapshot
+                             : tabletop_flicker::MaskDecision::Skip)
+        : tabletop_flicker::DecideMask(
+              mask.active, liveActive, passthroughActive);
     if (decision == tabletop_flicker::MaskDecision::Skip) return false;
 #if defined(SAVR_DEV)
     ObserveTabletopMaskInputs(mask, renderPose, eye, nearZ, farZ);
@@ -12575,11 +12592,14 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     // immutable frame with the live GameThread camera flag: it is intentionally
     // false for a small interval during every camera rebuild. P34 measured 22
     // skipped pairs in 13 seconds from exactly this cross-thread race.
-    if (!liveActive) {
+    if (!liveActive && !depthOnly) {
         g_tabletopMaskSnapshotAuthority.fetch_add(1,
                                                   std::memory_order_relaxed);
     }
-    if (!ValidTabletopMaskInputs(mask, renderPose, nearZ, farZ)) {
+    if ((!depthOnly && !ValidTabletopMaskInputs(
+                           mask, renderPose, nearZ, farZ)) ||
+        !std::isfinite(nearZ) || !std::isfinite(farZ) ||
+        nearZ <= 0.0f || farZ <= nearZ) {
         ClearTabletopWorldAlpha(targetW, targetH);
         RecordTabletopMaskFallback(TabletopMaskFallbackReason::InvalidState, eye);
         return false;
@@ -12684,6 +12704,7 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
     glDepthMask(GL_FALSE);
     glUseProgram(g_tabletopAlphaProgram);
     glUniform1i(g_tabletopAlphaUseDepthLoc, useWorldFade ? 1 : 0);
+    glUniform1i(g_tabletopAlphaDepthOnlyLoc, depthOnly ? 1 : 0);
     GLint savedDepthSampler = 0;
     if (useWorldFade) {
         const float saneNear = std::max(0.001f, nearZ);
@@ -12725,7 +12746,8 @@ bool ApplyTabletopPassthroughAlphaMask(unsigned int gameDepthRbo,
         glUniform4f(g_tabletopAlphaRadiiLoc, mask.playerRadiusM,
                     mask.viewerRadiusM, mask.bridgeRadiusM, mask.featherM);
         glUniform1f(g_tabletopAlphaDepthScaleLoc,
-                    std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
+                    depthOnly ? 1.0f :
+                        std::clamp(mask.depthScaleMPerGameUnit, 0.001f, 1.0f));
         glUniform1i(g_tabletopAlphaModeLoc, mask.coverageMode);
         glUniform1i(g_tabletopAlphaBridgeLoc, mask.bridgeEnabled ? 1 : 0);
         glUniform3fv(g_tabletopAlphaWaterPointLoc, 1,
@@ -13401,6 +13423,8 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     const float tanY = g_stereoTanY.load(std::memory_order_relaxed);
     const GLuint hudSource=g_stereoHudTex[set].load(
         std::memory_order_relaxed);
+    const bool cutsceneFrame=g_stereoCutsceneFrame[set].load(
+        std::memory_order_relaxed);
     bool ok = true;
     bool tabletopMaskApplied[2]{};
     for (int e = 0; e < 2 && ok; ++e) {
@@ -13484,7 +13508,7 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
             ew, eh, chain.width, chain.height, rp, e,
             g_stereoEyeNear[set][e].load(std::memory_order_relaxed),
             g_stereoEyeFar[set][e].load(std::memory_order_relaxed),
-            tabletopMask);
+            tabletopMask, cutsceneFrame);
         EndXrGpuStage(maskGpuTimer);
         if (profileMask) {
             RecordXrCpuStage(e, XrCpuStage::TabletopMaskSubmit,
@@ -13499,7 +13523,8 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         if (hudSource)
             DrawHudComposite(hudSource,chain.width,chain.height,
                              hud::ShouldRenderClassicHud() &&
-                                 !vrcam::IsTabletopActive(),
+                                 !vrcam::IsTabletopActive() &&
+                                 !cutsceneFrame,
                              e);
         DrawHandsForEye(
             rp, e, chain.width, chain.height,
@@ -13511,7 +13536,8 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
             liveTracers, liveTracerCount,
             liveObjectiveMarkers, liveObjectiveMarkerCount,
             bakedScope, drivingWheel,
-            throwableTrajectory, bakedHands, bakedTwoHand, hudSource,
+            throwableTrajectory, bakedHands, bakedTwoHand,
+            cutsceneFrame ? 0u : hudSource,
             tabletopMask);
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         // The second eye above is the final consumer of this ring slot's colour,
@@ -13684,7 +13710,9 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
     layer.viewCount = 2;
     layer.views     = views;
     submittedSequence = expectedGeneration;
-    submittedTabletop = tabletopMask.active;
+    submittedTabletop = cutsceneFrame
+        ? (tabletopMaskApplied[0] && tabletopMaskApplied[1])
+        : tabletopMask.active;
     outcome = perf::StereoProjectionOutcome::Submitted;
     return true;
 }

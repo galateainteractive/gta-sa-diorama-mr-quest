@@ -252,7 +252,8 @@ inline bool ShouldThrottleStereoProducer(int) { return false; }
 void SetStereoEyeTextures(const unsigned int* tex, const unsigned int* depth,
                           const unsigned int* hudTex,
                           const float* nearZ, const float* farZ,
-                          int seq, int width, int height);
+                          int seq, int width, int height,
+                          bool cutsceneFrame);
 
 // RenderQueue command 46 normally presents the hidden Android surface through
 // eglSwapBuffers.  Once a direct stereo generation is pending, the RenderQueue

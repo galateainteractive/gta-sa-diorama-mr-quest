@@ -59,9 +59,10 @@ bool IsMobileMenuOpen();
 // camera/frontend state from the presentation thread.
 bool IsLoadingScreenActive();
 
-// GameThread-published retail story-cutscene state. Theater cutscenes use it
-// to submit passthrough behind the finite video quad without exposing GTA
-// frontend memory to the XR presentation thread.
+// GameThread-published story or in-world scripted cutscene state. Theater
+// cutscenes use it to submit passthrough behind the finite video quad, while
+// stereo cutscenes use the matching ring metadata for their depth alpha mask.
+// The XR presentation thread never reads GTA camera/frontend memory directly.
 bool IsCutsceneActive();
 // True during freefall before the deploy widget confirms the canopy. Physical
 // weapon/throwable grabs are blocked while the deploy ring owns both hands.

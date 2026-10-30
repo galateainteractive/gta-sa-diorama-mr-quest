@@ -854,3 +854,31 @@ foreach ($xrPattern in @(
     }
 }
 Write-Output 'PASS Package 76 wide 0.5x elevated help/subtitle layer at 2.5m'
+
+# Package 77 keeps direct subtitles/help alive in stereo cutscenes while the
+# phone/classic HUD remains hidden. Story and scripted theater scenes share one
+# GameThread snapshot, and stereo cutscenes expose only real depth fragments to
+# passthrough instead of submitting an opaque black projection.
+foreach ($sourcePattern in @(
+        'const bool cutsceneFrame = FormalCutsceneRunning\(\) \|\|',
+        'const bool hudNeeded=directTextEnabled\|\|xr::HudCalibrationActive\(\)\|\|',
+        'SetStereoEyeTextures\([\s\S]*?cutsceneFrame\)',
+        'formalCutsceneRunning \|\|\s*ScriptedCutsceneRunning\(\)',
+        'g_cutsceneRunningSnapshot\.store\(cutsceneRunning')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 77 cutscene text/snapshot audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'g_stereoCutsceneFrame',
+        'uniform int uUseDepth,uDepthOnly',
+        'uDepthOnly!=0\?1\.0:coverage\(p\)',
+        'const bool depthOnly = cutsceneDepthOnly && tabletop::PassthroughEnabled\(\)',
+        '!vrcam::IsTabletopActive\(\) &&\s*!cutsceneFrame',
+        'cutsceneFrame \? 0u : hudSource',
+        'submittedTabletop = cutsceneFrame\s*\? \(tabletopMaskApplied\[0\] && tabletopMaskApplied\[1\]\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 77 cutscene compositor audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 77 cutscene text isolation and depth-safe passthrough'
