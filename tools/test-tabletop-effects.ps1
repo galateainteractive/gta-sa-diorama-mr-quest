@@ -882,3 +882,30 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 77 cutscene text isolation and depth-safe passthrough'
+
+# Package 78 covers the flat THEATER path used by barber/shop animations and
+# cinema-mode story scenes. It classifies live gameplay theater frames even
+# when GTA raises neither widescreen nor CCutsceneMgr, publishes text without a
+# GL pass, draws only direct text over the finite screen and submits passthrough
+# behind it exactly like the frontend menu.
+foreach ($sourcePattern in @(
+        'g_gameplayTheaterSnapshot',
+        'const bool gameplayTheater = playerExists && !mobileMenuOpen &&',
+        '!stereo&&\(gameplayTheater\|\|cutsceneRunning\)',
+        'PublishGameplayHudTextState\(\)',
+        'bool IsGameplayTheaterActive\(\)')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 78 theater text classification audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'const bool stereoEye=eye==0\|\|eye==1',
+        'DrawHudComposite\(0,s\.theater\.width,s\.theater\.height,false,-1\)',
+        'IsGameplayTheaterActive\(\) \|\| vrcam::IsCutsceneActive\(\)',
+        'IsCutsceneActive\(\) \|\|\s*vrcam::IsGameplayTheaterActive\(\)',
+        'glBlendEquationSeparate')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 78 theater compositor audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 78 gameplay-theater subtitles and menu-style passthrough'

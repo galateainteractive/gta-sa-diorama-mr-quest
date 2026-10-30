@@ -64,6 +64,10 @@ bool IsLoadingScreenActive();
 // stereo cutscenes use the matching ring metadata for their depth alpha mask.
 // The XR presentation thread never reads GTA camera/frontend memory directly.
 bool IsCutsceneActive();
+
+// True when a live gameplay state (shops, scripted animations or a cinema-mode
+// cutscene) is intentionally presented through the flat theater surface.
+bool IsGameplayTheaterActive();
 // True during freefall before the deploy widget confirms the canopy. Physical
 // weapon/throwable grabs are blocked while the deploy ring owns both hands.
 bool ParachuteWeaponInteractionBlocked();

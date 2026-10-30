@@ -5085,7 +5085,7 @@ constexpr float kHelpTextPlaneDistanceMetres = 2.5f;
 
 bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
                       bool drawClassicElements,int eye) {
-    if (!sourceTexture||!BuildHudCompositeProgram()) return false;
+    if (!BuildHudCompositeProgram()) return false;
     const HudTextState textState=SnapshotHudText();
     const int selected=hud::CalibrationElement();
     const bool calibrating=g_hudActive.load(std::memory_order_relaxed);
@@ -5132,8 +5132,13 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     // text fuse at that depth instead of at infinity behind the world.
     const float tanXForDepth=std::max(
         0.2f,g_stereoTanX.load(std::memory_order_relaxed));
-    const float hudDepthShiftUv=((eye==0)?1.0f:-1.0f)*kStereoHalfIpd/
-        (2.0f*kHudPlaneDistanceMetres*tanXForDepth);
+    // Theater text is already carried by one finite binocular quad, so it
+    // needs no baked per-eye disparity. Projection eyes retain their explicit
+    // convergence shift.
+    const bool stereoEye=eye==0||eye==1;
+    const float hudDepthShiftUv=stereoEye?
+        ((eye==0)?1.0f:-1.0f)*kStereoHalfIpd/
+            (2.0f*kHudPlaneDistanceMetres*tanXForDepth):0.0f;
     glViewport(0,0,targetWidth,targetHeight);
     glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     glDisable(GL_DEPTH_TEST);
@@ -5157,6 +5162,7 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         // rectangle even if the master classic HUD switch/preset is off. This
         // makes source X/Y/size editable instead of presenting an empty box.
         if (!drawClassicElements&&!selectedCalibrationCrop) continue;
+        if (!sourceTexture) continue;
         hud::ElementSettings settings=hud::GetElementSettings(element);
         const std::uint64_t scanStart=g_hudScanStartNs.load(
             std::memory_order_acquire);
@@ -5223,8 +5229,8 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         const float scaledW=baseW*scale;
         const float scaledH=baseH*scale;
         const float textDepthShiftUv = element == hud::HELP_TEXT
-            ? ((eye==0)?1.0f:-1.0f)*kStereoHalfIpd /
-                (2.0f*kHelpTextPlaneDistanceMetres*tanXForDepth)
+            ? (stereoEye?((eye==0)?1.0f:-1.0f)*kStereoHalfIpd /
+                (2.0f*kHelpTextPlaneDistanceMetres*tanXForDepth):0.0f)
             : hudDepthShiftUv;
         glBindTexture(GL_TEXTURE_2D,text.texture);
         glUniform4f(s.hudCompositeSourceRectUniform,0.0f,0.0f,1.0f,1.0f);
@@ -5268,7 +5274,7 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     static bool logged=false;
     if (!logged) {
         logged=true;
-        LOGI("[hud] full stock surface composited into both stereo eyes");
+        LOGI("[hud] direct/classic compositor active");
     }
     return true;
 }
@@ -5639,12 +5645,21 @@ bool RenderTheaterQuad(XrSpace space, XrCompositionLayerQuad& quad,
     }
 
     GLint prevFbo = 0, prevVp[4]{}, prevProg = 0, prevVao = 0, prevTex = 0, prevActive = 0;
+    GLint prevBlendSrcRgb = 0, prevBlendDstRgb = 0;
+    GLint prevBlendSrcAlpha = 0, prevBlendDstAlpha = 0;
+    GLint prevBlendEquationRgb = 0, prevBlendEquationAlpha = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
     glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &prevBlendSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &prevBlendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prevBlendSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &prevBlendDstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &prevBlendEquationRgb);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &prevBlendEquationAlpha);
     const GLboolean depth = glIsEnabled(GL_DEPTH_TEST), blend = glIsEnabled(GL_BLEND),
                     cull = glIsEnabled(GL_CULL_FACE), scissor = glIsEnabled(GL_SCISSOR_TEST),
                     framebufferSrgb = g_swapchainSrgb
@@ -5663,6 +5678,15 @@ bool RenderTheaterQuad(XrSpace space, XrCompositionLayerQuad& quad,
     } else {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+    }
+
+    // Theater-only gameplay has no stereo HUD raster, but its GameThread still
+    // publishes the same subtitle/help strings. Draw only those direct layers
+    // into the finite screen; sourceTexture=0 is intentional and prevents any
+    // classic phone-HUD crop from leaking into shops or cutscenes.
+    if (source == TheaterFrameSource::GameSurface &&
+        (vrcam::IsGameplayTheaterActive() || vrcam::IsCutsceneActive())) {
+        DrawHudComposite(0,s.theater.width,s.theater.height,false,-1);
     }
 
     // Late GL colours use the same legacy/display-referred byte space as the
@@ -5721,8 +5745,14 @@ bool RenderTheaterQuad(XrSpace space, XrCompositionLayerQuad& quad,
     if (blend) glEnable(GL_BLEND);
     if (cull) glEnable(GL_CULL_FACE);
     if (scissor) glEnable(GL_SCISSOR_TEST);
-    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
     glActiveTexture(static_cast<GLenum>(prevActive));
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
+    glBlendFuncSeparate(static_cast<GLenum>(prevBlendSrcRgb),
+                        static_cast<GLenum>(prevBlendDstRgb),
+                        static_cast<GLenum>(prevBlendSrcAlpha),
+                        static_cast<GLenum>(prevBlendDstAlpha));
+    glBlendEquationSeparate(static_cast<GLenum>(prevBlendEquationRgb),
+                            static_cast<GLenum>(prevBlendEquationAlpha));
     glBindVertexArray(static_cast<GLuint>(prevVao));
     glUseProgram(static_cast<GLuint>(prevProg));
     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
@@ -14250,10 +14280,10 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         tabletop_flicker::ShouldSubmitPassthrough(
             projectionTabletop, passthroughBackendActive,
             tabletop::PassthroughEnabled());
-    // The retail frontend, pause/map screen and story video already live on a
-    // finite opaque theater quad. Submit passthrough behind that quad when the
-    // GameThread identifies a menu or cutscene. Shops and black stereo-recovery
-    // fallbacks deliberately remain unchanged.
+    // The retail frontend, pause/map screen, story video and scripted shop/
+    // animation frames already live on a finite opaque theater quad. Submit
+    // passthrough behind that quad; black stereo-recovery fallbacks remain
+    // deliberately opaque.
     const bool submitMenuPassthrough =
         frameState.shouldRender == XR_TRUE && s.theaterMode &&
         vrcam::IsMobileMenuOpen() &&
@@ -14261,7 +14291,8 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
         passthroughBackendActive && tabletop::PassthroughEnabled();
     const bool submitCutscenePassthrough =
         frameState.shouldRender == XR_TRUE && s.theaterMode &&
-        vrcam::IsCutsceneActive() &&
+        (vrcam::IsCutsceneActive() ||
+         vrcam::IsGameplayTheaterActive()) &&
         stereoFallbackSource == perf::StereoFallbackSource::GameSurface &&
         passthroughBackendActive && tabletop::PassthroughEnabled();
     const bool submitLoadingPassthrough = loadingPassthroughOnly;

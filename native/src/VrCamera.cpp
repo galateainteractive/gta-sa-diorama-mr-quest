@@ -3425,6 +3425,7 @@ std::atomic<bool> g_tabletopActive{false};
 std::atomic<bool> g_mobileMenuOpenSnapshot{false};
 std::atomic<bool> g_loadingScreenSnapshot{true};
 std::atomic<bool> g_cutsceneRunningSnapshot{false};
+std::atomic<bool> g_gameplayTheaterSnapshot{false};
 
 // GTA already excludes frontend/radio streams before asking this helper for a
 // world-relative position. Redirect only those positional effects through the
@@ -22799,6 +22800,71 @@ private:
     bool alphaActive_{};
 };
 
+// CMessages::Display only expands the active GXT entries into CHud's public
+// strings; it does not issue RenderWare draws. Keep this publication separate
+// from the offscreen HUD raster so theater-only gameplay frames can feed the
+// same direct OpenXR text layer without touching a GL context on GameThread.
+void PublishGameplayHudTextState() {
+    if (g.CMessages_Display) g.CMessages_Display(1);
+    if (g.CMessages_Display) g.CMessages_Display(0);
+
+    const std::int16_t* helpText=nullptr;
+    if (g.CWidgetHelpText_m_pInstance&&*g.CWidgetHelpText_m_pInstance) {
+        const auto* widget=static_cast<const std::uint8_t*>(
+            *g.CWidgetHelpText_m_pInstance);
+        // Ten retail help queue entries, each 0x334 bytes. The first 800 bytes
+        // of an entry are GxtChar[400]. Publish the first occupied entry.
+        for (int slot=0;slot<10;++slot) {
+            const auto* candidate=reinterpret_cast<const std::int16_t*>(
+                widget+0xcc+slot*0x334);
+            if (candidate[0]!=0&&!helpText) helpText=candidate;
+        }
+    }
+    static bool sourcesLogged=false;
+    if (!sourcesLogged) {
+        sourcesLogged=true;
+        LOGI("[hud.text] sources brief=%p big=%p helpGlobal=%p helpText=%p",
+             static_cast<void*>(g.CHud_m_Message),
+             static_cast<void*>(g.CHud_m_BigMessage),
+             static_cast<void*>(g.CWidgetHelpText_m_pInstance),
+             static_cast<const void*>(helpText));
+    }
+    xr::PublishHudText(g.CHud_m_Message,400,g.CHud_m_BigMessage,7,128,
+                       helpText,400);
+
+    // Mission clock/counters are already formatted by the stock flat pass.
+    char timersText[224];
+    int timersLength=0;
+    if (g.CUserDisplay_OnscnTimer) {
+        const auto* timer=static_cast<const std::uint8_t*>(
+            static_cast<const void*>(g.CUserDisplay_OnscnTimer));
+        const bool display=timer[0x150]!=0;
+        const auto appendEntry=[&](const char* text,bool enabled) {
+            if (!enabled||text[0]=='\0') return;
+            for (int i=0;i<42&&text[i]!='\0';++i) {
+                if (timersLength>=static_cast<int>(sizeof(timersText))-2)
+                    return;
+                const char c=text[i];
+                if (c>=0x20&&c<0x7f) timersText[timersLength++]=c;
+            }
+            if (timersLength<static_cast<int>(sizeof(timersText))-1)
+                timersText[timersLength++]='\n';
+        };
+        if (display) {
+            appendEntry(reinterpret_cast<const char*>(timer+0x0e),
+                        timer[0x38]!=0);
+            for (int counter=0;counter<4;++counter) {
+                const std::uint8_t* entry=timer+0x40+counter*0x44;
+                appendEntry(reinterpret_cast<const char*>(entry+0x18),
+                            entry[0x42]!=0);
+            }
+        }
+    }
+    while (timersLength>0&&timersText[timersLength-1]=='\n') --timersLength;
+    timersText[timersLength]='\0';
+    xr::PublishMissionTimersText(timersText);
+}
+
 void RenderGameplayHudPass() {
     if (g.RwRenderStateSet) {
         g.RwRenderStateSet(6,  reinterpret_cast<void*>(0)); // ZTEST OFF
@@ -22866,85 +22932,12 @@ void RenderGameplayHudPass() {
     // Flush ONLY the player-info widget's digits (money/ammo/health text) into
     // the raster; everything queued by CHud::Draw was discarded above.
     if (g.CFont_RenderFontBuffer) g.CFont_RenderFontBuffer();
-    // SA's CMessages::Display draws nothing itself — it expands numbers and
-    // copies the final GXT text into CHud::m_Message / m_BigMessage. Both
-    // calls stay purely as the publish source for the VR text layers.
-    if (g.CMessages_Display) g.CMessages_Display(1);
-    if (g.CMessages_Display) g.CMessages_Display(0);
     // CHud::DrawAfterFade is deliberately NOT recorded into this capture: it
     // paints script text, subtitles, zone/vehicle names and mission titles —
     // the strings that used to mix into the health crop. The stock 2D pass
     // still runs it on the flat Android surface every frame, so its fade
     // state machines keep advancing normally.
-
-    // CMessages::Display has now expanded numbers, inserted strings and copied
-    // the final GXT text into CHud. Publish those characters directly instead
-    // of asking the OpenXR compositor to discover them in a screenshot crop.
-    const std::int16_t* helpText=nullptr;
-    if (g.CWidgetHelpText_m_pInstance&&*g.CWidgetHelpText_m_pInstance) {
-        const auto* widget=static_cast<const std::uint8_t*>(
-            *g.CWidgetHelpText_m_pInstance);
-        // Ten retail help queue entries, each 0x334 bytes. The first 800 bytes
-        // of an entry are GxtChar[400]. Publish the first occupied entry.
-        for (int slot=0;slot<10;++slot) {
-            const auto* candidate=reinterpret_cast<const std::int16_t*>(
-                widget+0xcc+slot*0x334);
-            if (candidate[0]!=0) {
-                if (!helpText) helpText=candidate;
-            }
-        }
-    }
-    static bool sourcesLogged=false;
-    if (!sourcesLogged) {
-        sourcesLogged=true;
-        LOGI("[hud.text] sources brief=%p big=%p helpGlobal=%p helpText=%p",
-             static_cast<void*>(g.CHud_m_Message),
-             static_cast<void*>(g.CHud_m_BigMessage),
-             static_cast<void*>(g.CWidgetHelpText_m_pInstance),
-             static_cast<const void*>(helpText));
-    }
-    xr::PublishHudText(g.CHud_m_Message,400,g.CHud_m_BigMessage,7,128,
-                       helpText,400);
-
-    // Mission clock/counters. The stock flat pass keeps running
-    // CHud::DrawMissionTimers -> COnscreenTimer::ProcessForDisplay, so the
-    // formatted ASCII strings in CUserDisplay::OnscnTimer stay fresh; read
-    // them here and publish for the APK-font TIMERS layer. Layout matches
-    // the PC headers and the Android DrawMissionTimers disasm (m_bDisplay at
-    // +0x150): clock entry 0x40 bytes (text +0x0e, enabled +0x38), then four
-    // 0x44-byte counters (text +0x18, enabled +0x42).
-    char timersText[224];
-    int timersLength=0;
-    if (g.CUserDisplay_OnscnTimer) {
-        const auto* timer=static_cast<const std::uint8_t*>(
-            static_cast<const void*>(g.CUserDisplay_OnscnTimer));
-        const bool display=timer[0x150]!=0;
-        const auto appendEntry=[&](const char* text,bool enabled) {
-            if (!enabled||text[0]=='\0') return;
-            for (int i=0;i<42&&text[i]!='\0';++i) {
-                if (timersLength>=static_cast<int>(sizeof(timersText))-2)
-                    return;
-                const char c=text[i];
-                // The displayed strings are plain ASCII digits/labels; drop
-                // anything outside the printable range defensively.
-                if (c>=0x20&&c<0x7f) timersText[timersLength++]=c;
-            }
-            if (timersLength<static_cast<int>(sizeof(timersText))-1)
-                timersText[timersLength++]='\n';
-        };
-        if (display) {
-            appendEntry(reinterpret_cast<const char*>(timer+0x0e),
-                        timer[0x38]!=0);
-            for (int counter=0;counter<4;++counter) {
-                const std::uint8_t* entry=timer+0x40+counter*0x44;
-                appendEntry(reinterpret_cast<const char*>(entry+0x18),
-                            entry[0x42]!=0);
-            }
-        }
-    }
-    while (timersLength>0&&timersText[timersLength-1]=='\n') --timersLength;
-    timersText[timersLength]='\0';
-    xr::PublishMissionTimersText(timersText);
+    PublishGameplayHudTextState();
     if (g.DefinedState) g.DefinedState();
 }
 
@@ -32728,6 +32721,16 @@ void RefreshStereoGate() {
     g_cutsceneRunningSnapshot.store(cutsceneRunning,
                                     std::memory_order_release);
     const bool stereo = ShouldRunStereo();
+    // Shops and some short scripted animations disable controls without
+    // widescreen or CCutsceneMgr. They still have a live player and a valid
+    // flat GameSurface, so classify the presentation path itself rather than
+    // relying only on GTA's incomplete cutscene flags.
+    const bool gameplayTheater = playerExists && !mobileMenuOpen &&
+        !loadingScreen && !stereo;
+    g_gameplayTheaterSnapshot.store(gameplayTheater,
+                                    std::memory_order_release);
+    if (!stereo&&(gameplayTheater||cutsceneRunning))
+        PublishGameplayHudTextState();
     g_stereoActive.store(stereo, std::memory_order_relaxed);
     if (!stereo) g_tabletopActive.store(false, std::memory_order_release);
 }
@@ -32742,6 +32745,10 @@ bool IsLoadingScreenActive() {
 
 bool IsCutsceneActive() {
     return g_cutsceneRunningSnapshot.load(std::memory_order_acquire);
+}
+
+bool IsGameplayTheaterActive() {
+    return g_gameplayTheaterSnapshot.load(std::memory_order_acquire);
 }
 
 bool ParachuteWeaponInteractionBlocked() {
