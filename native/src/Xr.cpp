@@ -87,6 +87,7 @@ struct HudTextState {
     std::u16string status;
     std::uint64_t statUpdateUntilNs{};
     std::uint64_t statusUntilNs{};
+    bool statUpdateIncrease{true};
     int bigStyle{};
     std::uint64_t revision{};
 };
@@ -103,6 +104,8 @@ struct HudTextTexture {
 };
 
 HudTextTexture g_briefTextTexture;
+HudTextTexture g_helpTextTexture;
+HudTextTexture g_statTextTexture;
 HudTextTexture g_bigTextTexture;
 HudTextTexture g_timerTextTexture;
 
@@ -2581,6 +2584,7 @@ struct State {
     GLint  hudCompositeSourceRectUniform{-1};
     GLint  hudCompositeDestinationRectUniform{-1};
     GLint  hudCompositeHighlightUniform{-1};
+    GLint  hudCompositeTintUniform{-1};
 
     // Controller input.
     XrActionSet actionSet{XR_NULL_HANDLE};
@@ -4537,6 +4541,7 @@ uniform sampler2D uTexture;
 uniform vec4 uSourceRect;
 uniform vec4 uDestinationRect;
 uniform float uHighlight;
+uniform vec3 uTint;
 out vec4 outColor;
 
 void main() {
@@ -4570,7 +4575,7 @@ void main() {
     // so no later crop can cover the calibration rectangle.
     if (uHighlight > 1.5)
         discard;
-    outColor = vec4(colour.rgb, colour.a * keyedAlpha);
+    outColor = vec4(colour.rgb * uTint, colour.a * keyedAlpha);
 }
 )";
 
@@ -4905,12 +4910,15 @@ bool BuildHudCompositeProgram() {
         s.hudCompositeProgram,"uDestinationRect");
     s.hudCompositeHighlightUniform=glGetUniformLocation(
         s.hudCompositeProgram,"uHighlight");
+    s.hudCompositeTintUniform=glGetUniformLocation(
+        s.hudCompositeProgram,"uTint");
     glGenVertexArrays(1,&s.hudCompositeVertexArray);
     glGenSamplers(1,&s.hudCompositeSampler);
     if (s.hudCompositeTextureUniform<0||
         s.hudCompositeSourceRectUniform<0||
         s.hudCompositeDestinationRectUniform<0||
         s.hudCompositeHighlightUniform<0||
+        s.hudCompositeTintUniform<0||
         !s.hudCompositeVertexArray||!s.hudCompositeSampler) {
         LOGE("[hud] in-eye composite resources invalid");
         return false;
@@ -5078,8 +5086,8 @@ bool UpdateHudTextTexture(HudTextTexture& target,
 // rivalled them and the text read as "behind the 3D world". A small opposite
 // horizontal shift per eye gives the overlay a real, comfortable depth.
 constexpr float kHudPlaneDistanceMetres = 1.8f;
-// Help, subtitles and stat notices share one direct-text layer. Give only that
-// layer a calmer, farther convergence plane; moving the global HUD plane would
+// Help, subtitles and stat notices share one calibrated area. Give only those
+// layers a calmer, farther convergence plane; moving the global HUD plane would
 // also push radar, health, big messages and timers away from their calibration.
 constexpr float kHelpTextPlaneDistanceMetres = 2.5f;
 // On the finite theater screen the approved world-space layout landed around
@@ -5087,21 +5095,24 @@ constexpr float kHelpTextPlaneDistanceMetres = 2.5f;
 // conventional lower-third band; the 0.5 scale turns this into ~72.5%-81.5%.
 constexpr float kTheaterHelpTextScreenY = 0.68f;
 
+// Android rasterises direct text in white. Tinting in the compositor preserves
+// the approved font and shadow while distinguishing simultaneous message types.
+constexpr std::array<float,3> kSubtitleTint{1.0f,0.92f,0.66f};
+constexpr std::array<float,3> kHelpTint{0.48f,0.84f,1.0f};
+constexpr std::array<float,3> kStatIncreaseTint{0.50f,1.0f,0.62f};
+constexpr std::array<float,3> kStatDecreaseTint{1.0f,0.48f,0.48f};
+constexpr std::array<float,3> kWhiteTint{1.0f,1.0f,1.0f};
+
 bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
                       bool drawClassicElements,int eye) {
     if (!BuildHudCompositeProgram()) return false;
     const HudTextState textState=SnapshotHudText();
     const int selected=hud::CalibrationElement();
     const bool calibrating=g_hudActive.load(std::memory_order_relaxed);
-    std::u16string smallText=textState.help;
-    if (!textState.brief.empty()) {
-        if (!smallText.empty()) smallText.append(u"\n\n");
-        smallText.append(textState.brief);
-    }
-    if (!textState.statUpdate.empty()) {
-        if (!smallText.empty()) smallText.append(u"\n\n");
-        smallText.append(textState.statUpdate);
-    }
+    std::u16string subtitleText=textState.brief;
+    std::u16string helpText=textState.help;
+    std::u16string statText=textState.statUpdate;
+    bool statIncrease=textState.statUpdateIncrease;
     std::u16string bigText=textState.big;
     std::u16string timerText=textState.timers;
     if (!textState.radio.empty()) {
@@ -5118,9 +5129,12 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     // below already includes the calibration state, so entering/leaving the
     // menu re-rasterises and the samples never leak into gameplay.
     if (calibrating) {
-        if (smallText.empty())
-            smallText=u"HELP TEXT SAMPLE\nSECOND LINE OF THE TUTORIAL BOX\n"
-                      u"POSITION AND SCALE ME IN THIS MENU";
+        if (subtitleText.empty()&&helpText.empty()&&statText.empty()) {
+            subtitleText=u"SUBTITLE SAMPLE";
+            helpText=u"TUTORIAL TIP SAMPLE";
+            statText=u"ATTRIBUTE +";
+            statIncrease=true;
+        }
         if (bigText.empty())
             bigText=u"BIG MESSAGE SAMPLE";
         if (timerText.empty())
@@ -5128,7 +5142,9 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     }
     const std::uint64_t textureRevision=(textState.revision<<4)|
         (calibrating?static_cast<std::uint64_t>(selected+1):0u);
-    UpdateHudTextTexture(g_briefTextTexture,smallText,0,textureRevision);
+    UpdateHudTextTexture(g_briefTextTexture,subtitleText,0,textureRevision);
+    UpdateHudTextTexture(g_helpTextTexture,helpText,0,textureRevision);
+    UpdateHudTextTexture(g_statTextTexture,statText,0,textureRevision);
     UpdateHudTextTexture(g_bigTextTexture,bigText,1,textureRevision);
     UpdateHudTextTexture(g_timerTextTexture,timerText,0,textureRevision);
     // Per-eye convergence: shift every destination rect toward the nose by
@@ -5215,10 +5231,13 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
             baseY+(baseH-scaledH)*0.5f,
             scaledW,scaledH);
         glUniform1f(s.hudCompositeHighlightUniform,0.0f);
+        glUniform3fv(s.hudCompositeTintUniform,1,kWhiteTint.data());
         glDrawArrays(GL_TRIANGLES,0,3);
     }
 
-    const auto drawDirectText=[&](int element,const HudTextTexture& text) {
+    const auto drawDirectText=[&](int element,const HudTextTexture& text,
+                                  const std::array<float,3>& tint,
+                                  int stackLevel) {
         if (!text.visible||!text.texture) return;
         // The flat GameSurface already contains GTA's mission/title cards.
         // Re-drawing the direct BIG MESSAGE texture in theater duplicated that
@@ -5246,14 +5265,30 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         glUniform4f(s.hudCompositeSourceRectUniform,0.0f,0.0f,1.0f,1.0f);
         glUniform4f(s.hudCompositeDestinationRectUniform,
                     baseX+(baseW-scaledW)*0.5f+textDepthShiftUv,
-                    baseY+(baseH-scaledH)*0.5f,
+                    baseY+(baseH-scaledH)*0.5f-
+                        static_cast<float>(stackLevel)*scaledH,
                     scaledW,scaledH);
         glUniform1f(s.hudCompositeHighlightUniform,0.0f);
+        glUniform3fv(s.hudCompositeTintUniform,1,tint.data());
         glDrawArrays(GL_TRIANGLES,0,3);
     };
-    drawDirectText(hud::MESSAGES,g_bigTextTexture);
-    drawDirectText(hud::HELP_TEXT,g_briefTextTexture);
-    drawDirectText(hud::TIMERS,g_timerTextTexture);
+    drawDirectText(hud::MESSAGES,g_bigTextTexture,kWhiteTint,0);
+    int smallTextStackLevel=0;
+    if (g_briefTextTexture.visible) {
+        drawDirectText(hud::HELP_TEXT,g_briefTextTexture,kSubtitleTint,
+                       smallTextStackLevel++);
+    }
+    if (g_statTextTexture.visible) {
+        drawDirectText(hud::HELP_TEXT,g_statTextTexture,
+                       statIncrease
+                           ? kStatIncreaseTint : kStatDecreaseTint,
+                       smallTextStackLevel++);
+    }
+    if (g_helpTextTexture.visible) {
+        drawDirectText(hud::HELP_TEXT,g_helpTextTexture,kHelpTint,
+                       smallTextStackLevel);
+    }
+    drawDirectText(hud::TIMERS,g_timerTextTexture,kWhiteTint,0);
 
 
     if (calibrating) {
@@ -5274,6 +5309,7 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
                     scaledW,scaledH);
         // Draw only a calibration outline over the element's real destination.
         glUniform1f(s.hudCompositeHighlightUniform,3.0f);
+        glUniform3fv(s.hudCompositeTintUniform,1,kWhiteTint.data());
         glDrawArrays(GL_TRIANGLES,0,3);
     }
     glBindSampler(0,0);
@@ -6151,6 +6187,7 @@ void PublishStatUpdateText(const std::int16_t* label, int labelCapacity,
     constexpr std::uint64_t kStatUpdateDurationNs = 3500000000ull;
     std::lock_guard<std::mutex> lock(g_hudTextMutex);
     g_hudTextState.statUpdate = std::move(next);
+    g_hudTextState.statUpdateIncrease = increase;
     g_hudTextState.statUpdateUntilNs =
         MonotonicNowNs() + kStatUpdateDurationNs;
     ++g_hudTextState.revision;
