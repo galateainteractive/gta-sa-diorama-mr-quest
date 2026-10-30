@@ -317,8 +317,8 @@ foreach ($sourcePattern in @(
 }
 Write-Output 'PASS Package 48 depth-safe tabletop water-surface mask'
 
-# Package 49 promotes the headset-proven production profile: 60 m around the
-# live player/vehicle, no normal coverage/radius cycling, and plain R3 camera
+# Package 49 promotes the headset-proven startup profile: 60 m around the live
+# player/vehicle, no gameplay-chord coverage/radius cycling, and plain R3 camera
 # cycling with a short compositor status line. Physical two-grip scale remains.
 foreach ($sourcePattern in @(
         'constexpr int kOfficialRadiusPreset = 1',
@@ -350,7 +350,7 @@ foreach ($sourcePattern in @(
         throw "Package 49 status-text audit failed: $sourcePattern"
     }
 }
-Write-Output 'PASS Package 49 fixed 60m coverage, R3 cameras and transient status text'
+Write-Output 'PASS Package 49 60m startup coverage, R3 cameras and transient status text'
 
 # Package 50 reassigns plain R3 to a radial owned-weapon selector, moves the
 # production camera cycle to L3+R3, and mirrors Meta's system recenter only
@@ -651,16 +651,52 @@ foreach ($sourcePattern in @(
         'Walk into the red marker to continue\. Hold B to sprint\.',
         'Press R3 to open the weapon selector\.',
         'Press X to perform a melee attack\.',
-        '~widget_camera~", u"L3 \+ R3"',
+        '~widget_camera~", u"R3"',
         '~widget_reply_yes~", u"R2"',
         '~widget_reply_no~", u"L2"',
+        '~widget_radar~", u"MENU"',
         'Normalise Android''s touch verb only in that proven case',
-        '"tap ", "swipe ", "weapon icon"')) {
+        '"tap ", "swipe "',
+        '"finger flick", "placing your thumb"')) {
     if (($xrSource + $cameraSource + $mainSource) -notmatch $sourcePattern) {
         throw "Package 65 opening-tutorial/reminder audit failed: $sourcePattern"
     }
 }
 Write-Output 'PASS Package 65 exact opening tutorials'
+
+# The complete Diorama pass binds the retail 2.11 widget ids contextually,
+# keeps dangerous live regions out of the allowlist, restores classic vehicle
+# and parachute paths, and keeps every displayed label aligned with the bridge.
+foreach ($sourcePattern in @(
+        'enum class TabletopWidgetControl',
+        'UpdateTabletopWidgetInputSnapshot',
+        'ControlForTabletopWidget',
+        'case 54: return TabletopWidgetControl::A',
+        'case 87: return TabletopWidgetControl::R2',
+        'case 93: return TabletopWidgetControl::A',
+        'case 164: return TabletopWidgetControl::LeftStickAny',
+        'contextualR3',
+        '~widget_black_jack_hit~", u"A"',
+        '~widget_arcade_joystick~", u"LEFT STICK"',
+        'Hold L2 and use the Right Stick to aim\. Press R2 to shoot\.',
+        'Press Menu to view the map\.',
+        'Point at the screen and press A or R2 to continue\.',
+        '!tabletop::Enabled\(\) &&\s*locomotion::ParachuteControlImmersive')) {
+    if (($xrSource + $cameraSource + $drivingSource) -notmatch $sourcePattern) {
+        throw "Diorama contextual-control audit failed: $sourcePattern"
+    }
+}
+foreach ($drivingPattern in @(
+        'vrcam::IsTabletopActive\(\) && input\.r3',
+        'if \(vrcam::IsTabletopActive\(\)\) return false;')) {
+    if ($drivingSource -notmatch $drivingPattern) {
+        throw "Diorama classic vehicle fallback audit failed: $drivingPattern"
+    }
+}
+if ($cameraSource -match 'case\s+(161|167|175)\s*:') {
+    throw 'Dangerous live touch region entered the contextual widget allowlist'
+}
+Write-Output 'PASS complete Diorama contextual controls and classic fallbacks'
 
 # Package 66 replaces the unreliable transient HUD notice with one persistent,
 # cached and transparent banner over every GTA frontend/pause menu.
@@ -744,3 +780,40 @@ foreach ($forbiddenPattern in @(
     }
 }
 Write-Output 'PASS Package 73 all black-shrub diagnostics retired'
+
+# Package 74 promotes the headset-proven distant-traffic LOD path to Diorama
+# production. Coverage remains fixed at the proven 60 m profile; near traffic,
+# boats and aircraft retain their stock detail.
+foreach ($sourcePattern in @(
+        'kTabletopTrafficFullDetailRadiusM = 30\.0f',
+        'bool ShouldUseTabletopTrafficLowLod\(void\* entity\)',
+        'appearance != 1 && appearance != 2',
+        'ScopedTabletopTrafficLowLod trafficLowLodScope',
+        'CVisibilityPlugins_ms_vehicleLod0RenderMultiPassDist')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Package 74 traffic LOD audit failed: $sourcePattern"
+    }
+}
+foreach ($sourcePattern in @(
+        'constexpr float kRadiusPresets\[\]\{30\.0f, 60\.0f, 75\.0f, 120\.0f\}',
+        'constexpr int kOfficialRadiusPreset = 1',
+        'loaded\.radiusPreset = kOfficialRadiusPreset')) {
+    if ($tabletopSource -notmatch $sourcePattern) {
+        throw "Package 74 Diorama range audit failed: $sourcePattern"
+    }
+}
+if (($cameraSource + $mainSource + $xrSource) -match
+        'VehicleRenderDiagnostic|vehicle\.render42|TEST: VEHICLES|kVehicleRenderDiagnosticFarLod|"FAR LOD"|DIORAMA RANGE|AdjustRadiusPreset') {
+    throw 'Package 74 still exposes a retired vehicle/radius experiment'
+}
+Write-Output 'PASS Package 74 production traffic LOD with fixed 60m coverage'
+
+# Package 75 keeps vehicle R3 context for horn/hydraulics while explicitly
+# giving the two-stick Diorama view chord priority over that continuous poll.
+if ($cameraSource -notmatch
+        'if \(!blocked && !selectorActive && viewChordHeld &&\s*\(l3Edge \|\| r3Edge\)\)' -or
+    $cameraSource -notmatch
+        'else if \(!blocked && !contextualR3 && r3Edge && gripsFree && !input\.l3\)') {
+    throw 'Package 75 vehicle Diorama view-chord priority audit failed'
+}
+Write-Output 'PASS Package 75 vehicle L3+R3 view chord outranks contextual R3'

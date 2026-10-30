@@ -178,10 +178,16 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         std::u16string_view label;
     };
     static constexpr WidgetLabel kWidgetLabels[] = {
+        // Conventional Diorama gameplay. These labels mirror the actual
+        // CPad/touch bridges in VrCamera.cpp and Driving.cpp.
         {u"~widget_enter_targeting~", u"L2"},
         {u"~widget_attack~", u"X / R2 WHILE AIMING"},
         {u"~widget_explicit_alt_attack~", u"X"},
         {u"~widget_explicit_punch~", u"X"},
+        {u"~widget_explicit_shoot~", u"R2"},
+        {u"~widget_explicit_throw~", u"R2"},
+        {u"~widget_explicit_detonator~", u"R2"},
+        {u"~widget_explicit_NVG~", u"R2"},
         {u"~widget_explicit_crouch~", u"L3"},
         {u"~widget_explicit_jump~", u"A"},
         {u"~widget_sprint~", u"B"},
@@ -196,13 +202,31 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         {u"~widget_minigame_cancel~", u"BOTH GRIPS + B"},
         {u"~widget_basketball_shoot~", u"R2"},
         {u"~widget_player_info~", u"R2"},
+        // Text-only label: the plain Menu button already opens GTA's stock
+        // pause/map frontend. Widget id 161 itself remains forbidden in the
+        // generic touch bridge because forcing it can open pause unexpectedly.
+        {u"~widget_radar~", u"MENU"},
         {u"~widget_explicit_bicycle~", u"Y"},
         {u"~widget_explicit_bunny_hop~", u"A"},
+        {u"~widget_explicit_accept~", u"A"},
+        {u"~widget_explicit_look_x~", u"RIGHT STICK"},
+        {u"~widget_explicit_move_x~", u"LEFT STICK"},
+        {u"~widget_explicit_take_cover_left~", u"L3"},
+        {u"~widget_explicit_take_cover_right~", u"L3"},
         {u"~widget_button_swim~", u"B"},
+        {u"~widget_button_dive~", u"X"},
         {u"~widget_accelerate~", u"R2"},
         {u"~widget_brake~", u"L2"},
+        {u"~widget_handbrake~", u"A"},
+        {u"~widget_horn~", u"R3"},
+        {u"~widget_nitro~", u"B"},
+        {u"~widget_vehicle_bomb~", u"R3"},
         {u"~widget_vehicle_steer_left~", u"LEFT STICK LEFT"},
         {u"~widget_vehicle_steer_right~", u"LEFT STICK RIGHT"},
+        {u"~widget_vehicle_turret_left~", u"RIGHT STICK LEFT"},
+        {u"~widget_vehicle_turret_right~", u"RIGHT STICK RIGHT"},
+        {u"~widget_vehicle_shoot_left~", u"LEFT GRIP + B"},
+        {u"~widget_vehicle_shoot_right~", u"RIGHT GRIP + B"},
         {u"~widget_ped_move_left~", u"LEFT STICK LEFT"},
         {u"~widget_ped_move_right~", u"LEFT STICK RIGHT"},
         {u"~widget_ped_move_up~", u"LEFT STICK UP"},
@@ -212,12 +236,78 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         {u"~widget_rocket~", u"B"},
         {u"~widget_explicit_flight_primary_attack~", u"B"},
         {u"~widget_explicit_flight_secondary_attack~", u"B"},
-        {u"~widget_explicit_throw~", u"R2"},
+        {u"~widget_explicit_flight_ascend~", u"R2"},
+        {u"~widget_explicit_flight_descend~", u"L2"},
+        {u"~widget_explicit_camera_zoom_in~", u"RIGHT STICK UP"},
+        {u"~widget_explicit_camera_zoom_out~", u"RIGHT STICK DOWN"},
         {u"~widget_explicit_extinguisher~", u"L2 + R2"},
-        {u"~widget_camera~", u"L3 + R3"},
+        {u"~widget_camera~", u"R3"},
         {u"~widget_vc_shoot~", u"R2"},
         {u"~widget_reply_yes~", u"R2"},
         {u"~widget_reply_no~", u"L2"},
+        {u"~widget_gang_recruit~", u"R2"},
+        {u"~widget_gang_follow~", u"R2"},
+        {u"~widget_gang_hold~", u"L2"},
+        {u"~widget_gift~", u"A"},
+        {u"~widget_kiss~", u"A"},
+
+        // Contextual prompts. The same physical controls are reused only
+        // while the corresponding mobile widget is being polled by the game.
+        {u"~widget_mission_start_vigilante~", u"A"},
+        {u"~widget_mission_cancel_vigilante~", u"BOTH GRIPS + B"},
+        {u"~widget_skip_cutscene~", u"A"},
+        {u"~widget_purchase~", u"A"},
+        {u"~widget_store_accept~", u"A"},
+        {u"~widget_store_cancel~", u"B"},
+        {u"~widget_store_back~", u"B"},
+        {u"~widget_store_buy~", u"R2"},
+        {u"~widget_gambling_continue~", u"A"},
+        {u"~widget_gambling_quit~", u"B"},
+        {u"~widget_place_bet~", u"R2"},
+        {u"~widget_remove_bet~", u"L2"},
+        {u"~widget_roulette_up~", u"LEFT STICK UP"},
+        {u"~widget_roulette_down~", u"LEFT STICK DOWN"},
+        {u"~widget_roulette_left~", u"LEFT STICK LEFT"},
+        {u"~widget_roulette_right~", u"LEFT STICK RIGHT"},
+        {u"~widget_black_jack_hit~", u"A"},
+        {u"~widget_black_jack_stand~", u"B"},
+        {u"~widget_black_jack_double~", u"X"},
+        {u"~widget_black_jack_split~", u"Y"},
+        {u"~widget_gym_easier~", u"L2"},
+        {u"~widget_gym_harder~", u"R2"},
+        {u"~widget_tap_meter_button~", u"A"},
+        {u"~widget_rhythm_exit~", u"B"},
+        {u"~widget_school_left~", u"LEFT STICK LEFT"},
+        {u"~widget_school_right~", u"LEFT STICK RIGHT"},
+        {u"~widget_school_continue~", u"A"},
+        {u"~widget_school_exit~", u"B"},
+        {u"~widget_itb_exit~", u"B"},
+        {u"~widget_video_poker_exit~", u"B"},
+        {u"~widget_race_left~", u"LEFT STICK LEFT"},
+        {u"~widget_race_right~", u"LEFT STICK RIGHT"},
+        {u"~widget_arcade_button~", u"A"},
+        {u"~widget_arcade_power_off~", u"B"},
+        {u"~widget_arcade_reset~", u"Y"},
+        {u"~widget_arcade_joystick~", u"LEFT STICK"},
+
+        // Vehicle/mission machinery.
+        {u"~widget_crane_up~", u"R2"},
+        {u"~widget_crane_down~", u"L2"},
+        {u"~widget_helicopter_magnet_up~", u"R2"},
+        {u"~widget_helicopter_magnet_down~", u"L2"},
+        {u"~widget_drop_crane~", u"R3"},
+        {u"~widget_magnet~", u"R3"},
+        {u"~widget_grab~", u"X"},
+        {u"~widget_drop_item~", u"X"},
+        {u"~widget_stinger~", u"R3"},
+        {u"~widget_hydraulics~", u"R3"},
+        {u"~widget_auto_hydraulics~", u"R3"},
+        {u"~widget_train_next_station~", u"R3"},
+        {u"~widget_zoom_in~", u"RIGHT STICK UP"},
+        {u"~widget_zoom_out~", u"RIGHT STICK DOWN"},
+        {u"~widget_swipe_radio_up~", u"X"},
+        {u"~widget_swipe_radio_down~", u"LEFT GRIP + X"},
+        {u"~widget_thumb_circle~", u"ROTATE LEFT STICK"},
     };
 
     const std::uint32_t sourceHash = TutorialTextHash(text);
@@ -303,6 +393,68 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         {u"Double tap the lower right corner of the screen to jump and climb out of the water.",
          u"Press A to jump and climb out of the water."},
         {u"Crouch ~A~", u"Crouch L3"},
+        {u"Press and hold the lower right corner of the screen to sprint.",
+         u"Hold B to sprint."},
+        {u"Press and hold the lower right corner of the screen to swim faster.",
+         u"Hold B to swim faster."},
+        {u"Hold down the right side of the screen to swim faster.",
+         u"Hold B to swim faster."},
+        {u"Press and hold the lower right corner of the screen to swim around underwater.",
+         u"Hold B and use the Left Stick to swim underwater."},
+        {u"Hold down the right side of the screen to swim around underwater.",
+         u"Hold B and use the Left Stick to swim underwater."},
+        {u"Double tap the bottom left corner of the screen to dive underwater.",
+         u"Press X to dive underwater."},
+        {u"Stand in front of the fence and double tap the lower right corner of the screen to climb the fence.",
+         u"Stand in front of the fence and press A to climb it."},
+        {u"Stand in front of the wall and double tap the lower right corner of the screen to climb.",
+         u"Stand in front of the wall and press A to climb."},
+        {u"Use low walls and objects for cover. Double tap the lower left corner of the screen to crouch.",
+         u"Use low walls and objects for cover. Press L3 to crouch."},
+        {u"You can increase your accuracy by crouching. Double tap the lower left corner of the screen to crouch.",
+         u"You can increase your accuracy by crouching. Press L3 to crouch."},
+        {u"Swipe the bottom left corner of the screen to change radio stations.",
+         u"Press X for the next radio station or Left Grip + X for the previous station."},
+        {u"Use quick finger flicks in the lower left corner of the screen to control a vehicle.",
+         u"Use the Left Stick to control the vehicle."},
+        {u"Placing your thumb on the lower left corner of the screen will show an analog stick. Sensitivity can be set in the Redefine Controls Menu.",
+         u"Use the Left Stick to move. Stick settings are available in the Diorama Controls menu."},
+        {u"Tap the screen to lock on to a target. Tap ~m~~widget_attack~ to fire.",
+         u"Hold L2 to aim at a target. Press R2 to fire."},
+        {u"To look around swipe across the center of the screen. To fire tap ~m~~widget_vc_shoot~.",
+         u"Use the Right Stick to look around. Press R2 to fire."},
+        {u"To manually aim, touch the middle of the screen and move to the left and right whilst shooting.",
+         u"Hold L2 and use the Right Stick to aim. Press R2 to shoot."},
+        {u"Press and hold the bottom right side of the screen to begin.",
+         u"Hold R2 to begin."},
+        {u"Press and hold the lower right corner of the screen to increase the rotor speed of the helicopter. This will propel it upwards.",
+         u"Hold R2 to increase rotor speed and ascend."},
+        {u"Press and hold the lower right corner of your screen to increase thrust - this will make you ascend.",
+         u"Hold R2 to increase thrust and ascend."},
+        {u"Press and hold the right side of the screen to accelerate along the runway.",
+         u"Hold R2 to accelerate along the runway."},
+        {u"Press and hold the right side of the screen to accelerate upward.",
+         u"Hold R2 to accelerate upward."},
+        {u"Press and hold the right side of the screen to go forward and head for the ~y~corona.",
+         u"Hold R2 to go forward and head for the ~y~corona."},
+        {u"Press and hold the lower right corner of the screen to maintain your forward speed.",
+         u"Hold R2 to maintain your forward speed."},
+        {u"Press and hold the lower right corner of the screen to maintain your height. Keep the plane level and head for the first ~y~corona.",
+         u"Hold R2 to maintain your height. Keep the plane level and head for the first ~y~corona."},
+        {u"Release the right side of the screen to stop rising and level off.",
+         u"Release R2 to stop rising and level off."},
+        {u"Press and hold the bottom left corner of the screen to lean.",
+         u"Hold the Left Stick in the required direction to lean."},
+        {u"While freefalling, press and hold the bottom left side of the screen upward to dive forward.",
+         u"While freefalling, hold R2 to dive forward."},
+        {u"Do a Wheelie along the coned section. Accelerate to top speed, then press and hold downward on the bottom left corner of the screen.",
+         u"Do a wheelie along the coned section. Accelerate to top speed, then hold the Left Stick down."},
+        {u"Tap - Sprint faster", u"Press B to sprint faster."},
+        {u"Tap Map to View", u"Press Menu to view the map."},
+        {u"Tap the Radar to access the Options.",
+         u"Press Menu to access the Options."},
+        {u"Tap to Continue",
+         u"Point at the screen and press A or R2 to continue."},
     };
     for (const ExactHelpText& mapping : kExactHelpTexts) {
         if (text == mapping.mobile) {
@@ -349,11 +501,19 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
     }
     const bool mobileWording =
         ContainsAsciiNoCase(text, u"lower right corner") ||
+        ContainsAsciiNoCase(text, u"lower left corner") ||
+        ContainsAsciiNoCase(text, u"bottom right") ||
+        ContainsAsciiNoCase(text, u"bottom left") ||
+        ContainsAsciiNoCase(text, u"right side of the screen") ||
         ContainsAsciiNoCase(text, u"left side of the screen") ||
+        ContainsAsciiNoCase(text, u"center of the screen") ||
+        ContainsAsciiNoCase(text, u"middle of the screen") ||
         ContainsAsciiNoCase(text, u"double tapping") ||
         ContainsAsciiNoCase(text, u"touch the screen") ||
         ContainsAsciiNoCase(text, u"tap ") ||
         ContainsAsciiNoCase(text, u"swipe ") ||
+        ContainsAsciiNoCase(text, u"finger flick") ||
+        ContainsAsciiNoCase(text, u"placing your thumb") ||
         ContainsAsciiNoCase(text, u"weapon icon");
     if (firstOccurrence && replacements == 0 && mobileWording) {
         const std::string preview = TutorialTextPreview(text);
@@ -2917,6 +3077,8 @@ enum class XrGpuStage : std::uint8_t {
     OverlayLeft,
     CopyRight,
     OverlayRight,
+    TabletopMaskLeft,
+    TabletopMaskRight,
     Count,
 };
 
@@ -2926,6 +3088,7 @@ enum class XrCpuStage : std::uint8_t {
     CopySubmit,
     OverlaySubmit,
     Release,
+    TabletopMaskSubmit,
     Count,
 };
 
@@ -2993,7 +3156,10 @@ bool XrStageGpuTimerRequested() {
             else if (std::strcmp(text, "1") == 0) value = true;
             else LOGW("[xr.gpu.stage] ignoring invalid property value=%s", text);
         }
-        LOGI("[xr.gpu.stage] requested=%d", value ? 1 : 0);
+        // This opt-in diagnostic must also be usable in player builds, where
+        // LOGI is compiled out. Keep the default path silent.
+        if (value) __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                                      "[xr.gpu.stage] requested=1 mask_stages=1");
         return value;
     }();
     return requested;
@@ -3047,7 +3213,8 @@ void InitializeXrStageProfiler() {
     const XrGpuTimerApi& api = GetXrGpuTimerApi();
     if (!api.Available() ||
         !XrGlExtensionPresent(extensions, "GL_EXT_disjoint_timer_query")) {
-        LOGW("[xr.gpu.stage] GL_EXT_disjoint_timer_query unavailable");
+        __android_log_print(ANDROID_LOG_WARN, SAVR_TAG,
+                           "[xr.gpu.stage] GL_EXT_disjoint_timer_query unavailable");
         return;
     }
 
@@ -3058,7 +3225,8 @@ void InitializeXrStageProfiler() {
     }
     profiler.supported = std::all_of(
         ids.begin(), ids.end(), [](GLuint id) { return id != 0u; });
-    LOGI("[xr.gpu.stage] supported=%d queries=%zu",
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+         "[xr.gpu.stage] supported=%d queries=%zu",
          profiler.supported ? 1 : 0, ids.size());
 }
 
@@ -3163,7 +3331,8 @@ void BeginXrStageProfilerFrame() {
     const auto& gl = profiler.gpu;
     const auto& l = profiler.cpu[0];
     const auto& r = profiler.cpu[1];
-    LOGI("[xr.gpu.stage] gpu copyL/overL/copyR/overR avg="
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+         "[xr.gpu.stage] gpu copyL/overL/copyR/overR avg="
          "%.3f/%.3f/%.3f/%.3f max=%.3f/%.3f/%.3f/%.3f "
          "n=%llu/%llu/%llu/%llu disjoint/drop=%llu/%llu",
          XrStageAverage(gl[0]), XrStageAverage(gl[1]),
@@ -3175,7 +3344,8 @@ void BeginXrStageProfilerFrame() {
          static_cast<unsigned long long>(gl[3].samples),
          static_cast<unsigned long long>(profiler.disjoint),
          static_cast<unsigned long long>(profiler.drops));
-    LOGI("[xr.cpu.stage] left acq/wait/copy/over/rel="
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+         "[xr.cpu.stage] left acq/wait/copy/over/rel="
          "%.3f/%.3f/%.3f/%.3f/%.3f blocked_max="
          "%.3f/%.3f/%.3f/%.3f/%.3f right="
          "%.3f/%.3f/%.3f/%.3f/%.3f blocked_max="
@@ -3186,6 +3356,19 @@ void BeginXrStageProfilerFrame() {
          XrStageAverage(r[0]), XrStageAverage(r[1]),
          XrStageAverage(r[2]), XrStageAverage(r[3]), XrStageAverage(r[4]),
          r[0].maxMs, r[1].maxMs, r[2].maxMs, r[3].maxMs, r[4].maxMs);
+    // The depth blit and alpha-mask draw used to fall between Copy and Overlay,
+    // leaving the diorama-only presentation work completely unmeasured.
+    const auto& maskL = gl[static_cast<std::size_t>(XrGpuStage::TabletopMaskLeft)];
+    const auto& maskR = gl[static_cast<std::size_t>(XrGpuStage::TabletopMaskRight)];
+    const auto maskCpu = static_cast<std::size_t>(XrCpuStage::TabletopMaskSubmit);
+    __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+         "[xr.tabletop.mask] gpu_ms L/R=%.3f/%.3f max=%.3f/%.3f "
+         "n=%llu/%llu cpu_submit_ms L/R=%.3f/%.3f blocked_max=%.3f/%.3f",
+         XrStageAverage(maskL), XrStageAverage(maskR), maskL.maxMs, maskR.maxMs,
+         static_cast<unsigned long long>(maskL.samples),
+         static_cast<unsigned long long>(maskR.samples),
+         XrStageAverage(l[maskCpu]), XrStageAverage(r[maskCpu]),
+         l[maskCpu].maxMs, r[maskCpu].maxMs);
     profiler.gpu = {};
     profiler.cpu = {};
     profiler.disjoint = 0;
@@ -13280,12 +13463,25 @@ bool RenderStereoEyeProjection(XrCompositionLayerProjection& layer,
         EndXrGpuStage(copyGpuTimer);
         RecordXrCpuStage(e, XrCpuStage::CopySubmit, copyWallStartMs,
                          copyCpuStartMs);
+        // No timing calls or GPU queries are added to the normal player path.
+        // Sample this pass independently: it includes the depth copy as well
+        // as the full-eye alpha mask, and must not overlap Copy/Overlay queries.
+        const bool profileMask = XrStageGpuTimerRequested();
+        const double maskWallStartMs = profileMask ? XrStageNowMs() : 0.0;
+        const double maskCpuStartMs = profileMask ? perf::ThreadCpuMs() : 0.0;
+        const bool maskGpuTimer = profileMask && BeginXrGpuStage(
+            e == 0 ? XrGpuStage::TabletopMaskLeft : XrGpuStage::TabletopMaskRight);
         tabletopMaskApplied[e] = ApplyTabletopPassthroughAlphaMask(
             g_stereoEyeDepth[set][e].load(std::memory_order_relaxed),
             ew, eh, chain.width, chain.height, rp, e,
             g_stereoEyeNear[set][e].load(std::memory_order_relaxed),
             g_stereoEyeFar[set][e].load(std::memory_order_relaxed),
             tabletopMask);
+        EndXrGpuStage(maskGpuTimer);
+        if (profileMask) {
+            RecordXrCpuStage(e, XrCpuStage::TabletopMaskSubmit,
+                            maskWallStartMs, maskCpuStartMs);
+        }
         const double overlayWallStartMs = XrStageNowMs();
         const double overlayCpuStartMs = perf::ThreadCpuMs();
         const bool overlayGpuTimer = BeginXrGpuStage(

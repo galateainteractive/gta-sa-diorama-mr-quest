@@ -33,6 +33,14 @@ Runtime controls:
   right stick and press `R3` again to equip it and close the selector;
 - `L3 + R3`: cycle the `TRACK`, `FOLLOW` and `FIXED` views; a short English
   status line confirms the selected camera;
+- contextual Android prompts reuse these same controls only while GTA polls
+  the matching widget (stores, casino, gym, schools, arcade, machinery and
+  mission actions are included); a contextual `R3` action temporarily outranks
+  the weapon selector;
+- in vehicles, `R3` sounds the horn, `X`/Left Grip + `X` changes radio station,
+  and vehicle weapons use the conventional button/stick path;
+- in freefall, `R2` dives and `A` deploys the canopy; the Left Stick controls
+  the open canopy. Tracked risers remain exclusive to Immersive VR;
 - hold Meta's system button: the Quest performs its normal recenter, and the
   resulting OpenXR `LOCAL` reference-space change recenters the diorama on the
   live player/vehicle after the new origin becomes effective;
@@ -45,6 +53,9 @@ Runtime controls:
   connected and two-island experiments remain source-level prototypes;
 - selecting the already equipped weapon simply closes the selector without
   changing CJ's inventory.
+
+The complete audited text/widget/action map, its dangerous exclusions and the
+future extension checklist live in [DIORAMA_CONTROLS.md](DIORAMA_CONTROLS.md).
 
 ### Deferred black-shrub investigation
 

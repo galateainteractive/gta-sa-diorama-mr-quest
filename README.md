@@ -13,8 +13,9 @@ game's missions, physics, traffic, pedestrians, vehicles and saves.
 
 This is a development preview based on upstream Version `0.1.3 alpha`. The
 first public Diorama MR release version has not been assigned yet. See the
-[changelog](CHANGELOG.md), the [Diorama MR technical notes](TABLETOP_PROTOTYPE.md)
-and the exact [upstream provenance](UPSTREAM_PROVENANCE.md).
+[changelog](CHANGELOG.md), the [Diorama MR technical notes](TABLETOP_PROTOTYPE.md),
+the audited [controls/tutorial map](DIORAMA_CONTROLS.md) and the exact
+[upstream provenance](UPSTREAM_PROVENANCE.md).
 
 This repository contains source code and personal build/install tools only. It
 does **not** contain GTA San Andreas, Rockstar assets, the sound mod, a prebuilt
@@ -93,7 +94,8 @@ configuration and debugging compatibility.
 - Hold `L2` to target and press `R2` to fire.
 
 See [Diorama MR technical notes](TABLETOP_PROTOTYPE.md) for implementation
-details and [CHANGELOG.md](CHANGELOG.md) for the complete package history.
+details, [DIORAMA_CONTROLS.md](DIORAMA_CONTROLS.md) for the exact input/tutorial
+map and [CHANGELOG.md](CHANGELOG.md) for the complete package history.
 
 ## Galatea Windows installer
 

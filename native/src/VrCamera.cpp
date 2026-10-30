@@ -2597,6 +2597,10 @@ struct TabletopTransformState {
 
 TabletopTransformState g_tabletopTransform{};
 std::atomic<bool> g_tabletopWeaponSelectorActive{false};
+// Refreshed whenever the retail touch/script path polls a contextual widget
+// bound to R3. Script opcodes can run after UpdatePads, so a short freshness
+// window (rather than a same-call flag) lets that action outrank the selector.
+std::atomic<double> g_tabletopWidgetR3LastPollMs{0.0};
 int g_tabletopWeaponSelectorSlot = 0;
 std::atomic<bool> g_tabletopClassicAttackHeld{false};
 std::atomic<std::uint32_t> g_tabletopClassicAttackPressFrame{
@@ -2831,11 +2835,18 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     // Both stick clicks now own the three production camera views. Meta keeps
     // its system button, while the reference-space event from its long-press
     // recenters the Diorama separately below on the GameThread.
+    const double contextualR3LastPoll = g_tabletopWidgetR3LastPollMs.load(
+        std::memory_order_relaxed);
+    const bool contextualR3 = contextualR3LastPoll > 0.0 &&
+        NowMs() - contextualR3LastPoll <= 400.0;
+    // The explicit two-stick chord outranks a contextual R3 poll. Vehicles
+    // continuously poll R3 for horn/hydraulics, but that must suppress only
+    // the plain-R3 weapon selector, not the Diorama view control.
     if (!blocked && !selectorActive && viewChordHeld &&
         (l3Edge || r3Edge)) {
         CycleTabletopView();
         suppressL3UntilRelease = true;
-    } else if (!blocked && r3Edge && gripsFree && !input.l3) {
+    } else if (!blocked && !contextualR3 && r3Edge && gripsFree && !input.l3) {
         if (selectorActive) {
             int types[kSelectorSlotCount]{};
             int ammo[kSelectorSlotCount]{};
@@ -5789,6 +5800,178 @@ bool PromptAnswerableWidget(int widgetId) {
     return widgetId == 160 || widgetId == 156;
 }
 
+// Retail 2.11 DrawHelpIcon name -> id map, recovered from libGame.so. These
+// are deliberately context-sensitive: a physical control is exposed only
+// while the stock mobile script polls the matching widget. Never add broad
+// ranges here; 161 is pause/radar, 167 is the movement region and 175 is a
+// live look/sprint region in different script paths.
+enum class TabletopWidgetControl {
+    None,
+    A, B, X, Y, L2, R2, R3,
+    LeftStickLeft, LeftStickRight, LeftStickUp, LeftStickDown,
+    RightStickLeft, RightStickRight, RightStickUp, RightStickDown,
+    LeftGripB, RightGripB, BothGripsB, LeftStickAny,
+};
+
+struct TabletopWidgetInputSnapshot {
+    xr::InputState current{};
+    xr::InputState previous{};
+    bool valid{};
+};
+
+TabletopWidgetInputSnapshot g_tabletopWidgetInput{};
+
+TabletopWidgetControl ControlForTabletopWidget(int widgetId) {
+    switch (widgetId) {
+        case 0: return TabletopWidgetControl::Y;               // enter car
+        case 2: return TabletopWidgetControl::R2;              // accelerate
+        case 3: return TabletopWidgetControl::L2;              // brake
+        case 4: return TabletopWidgetControl::A;               // handbrake
+        case 5: return TabletopWidgetControl::LeftStickLeft;
+        case 6: return TabletopWidgetControl::LeftStickRight;
+        case 7: return TabletopWidgetControl::R3;              // horn
+        case 9: case 10: return TabletopWidgetControl::A;      // gift/kiss
+        case 12: case 13: return TabletopWidgetControl::R3;    // hydraulics
+        case 14: return TabletopWidgetControl::R3;             // drop crane
+        case 15: return TabletopWidgetControl::X;              // drop item
+        case 16: return TabletopWidgetControl::LeftGripB;
+        case 17: return TabletopWidgetControl::RightGripB;
+        case 18: return TabletopWidgetControl::R3;             // camera
+        case 21: return TabletopWidgetControl::R2;             // vehicle shoot
+        case 23: case 24: return TabletopWidgetControl::B;     // air gun/rocket
+        case 25: return TabletopWidgetControl::R3;             // vehicle bomb
+        case 26: return TabletopWidgetControl::RightStickLeft;
+        case 27: return TabletopWidgetControl::RightStickRight;
+        case 28: return TabletopWidgetControl::A;              // purchase
+        case 30: return TabletopWidgetControl::B;              // nitro
+        case 31: return TabletopWidgetControl::B;              // sprint
+        case 33: return TabletopWidgetControl::X;              // dive
+        case 34: return TabletopWidgetControl::B;              // swim
+        case 37: return TabletopWidgetControl::A;              // arcade button
+        case 38: return TabletopWidgetControl::B;              // arcade off
+        case 39: return TabletopWidgetControl::Y;              // arcade reset
+        case 40: return TabletopWidgetControl::LeftStickAny;
+        case 41: return TabletopWidgetControl::A;              // skip cutscene
+        case 42: return TabletopWidgetControl::R3;             // next station
+        case 43: return TabletopWidgetControl::A;              // meter tap
+        case 44: case 46: return TabletopWidgetControl::R2;    // crane/magnet up
+        case 45: case 47: return TabletopWidgetControl::L2;    // crane/magnet down
+        case 48: return TabletopWidgetControl::L2;             // gym easier
+        case 49: return TabletopWidgetControl::R2;             // gym harder
+        case 50: return TabletopWidgetControl::RightStickUp;   // zoom in
+        case 51: return TabletopWidgetControl::RightStickDown; // zoom out
+        case 52: return TabletopWidgetControl::LeftStickLeft;
+        case 53: return TabletopWidgetControl::LeftStickRight;
+        case 54: return TabletopWidgetControl::A;              // store accept
+        case 55: case 56: return TabletopWidgetControl::B;     // cancel/back
+        case 57: return TabletopWidgetControl::R2;             // store buy
+        case 58: return TabletopWidgetControl::LeftStickUp;
+        case 59: return TabletopWidgetControl::LeftStickDown;
+        case 60: return TabletopWidgetControl::LeftStickLeft;
+        case 61: return TabletopWidgetControl::LeftStickRight;
+        case 62: return TabletopWidgetControl::R2;             // place bet
+        case 63: return TabletopWidgetControl::L2;             // remove bet
+        case 66: return TabletopWidgetControl::X;              // grab
+        case 67: case 68: return TabletopWidgetControl::R3;    // magnet/stinger
+        case 69: case 70: case 73: return TabletopWidgetControl::A;
+        case 71: case 72: case 74: return TabletopWidgetControl::BothGripsB;
+        case 75: return TabletopWidgetControl::B;              // school exit
+        case 76: return TabletopWidgetControl::LeftStickLeft;
+        case 77: return TabletopWidgetControl::LeftStickRight;
+        case 79: return TabletopWidgetControl::A;              // school continue
+        case 87: return TabletopWidgetControl::R2;             // basketball
+        case 89: return TabletopWidgetControl::B;              // gambling quit
+        case 90: return TabletopWidgetControl::A;              // continue
+        case 91: return TabletopWidgetControl::Y;              // split
+        case 92: return TabletopWidgetControl::X;              // double
+        case 93: return TabletopWidgetControl::A;              // hit
+        case 94: return TabletopWidgetControl::B;              // stand
+        case 102: return TabletopWidgetControl::B;             // rhythm exit
+        case 106: case 108: case 110: return TabletopWidgetControl::R2;
+        case 109: case 111: return TabletopWidgetControl::L2;
+        case 134: case 149: return TabletopWidgetControl::B;   // minigame exit
+        case 164: return TabletopWidgetControl::LeftStickAny;  // thumb circle
+        default: return TabletopWidgetControl::None;
+    }
+}
+
+bool TabletopWidgetControlHeld(TabletopWidgetControl control,
+                               const xr::InputState& in) {
+    constexpr float trigger = 0.55f;
+    constexpr float axis = 0.55f;
+    constexpr float grip = 0.75f;
+    switch (control) {
+        case TabletopWidgetControl::A: return in.a;
+        case TabletopWidgetControl::B: return in.b;
+        case TabletopWidgetControl::X: return in.x;
+        case TabletopWidgetControl::Y: return in.y;
+        case TabletopWidgetControl::L2: return in.triggers[0] >= trigger;
+        case TabletopWidgetControl::R2: return in.triggers[1] >= trigger;
+        case TabletopWidgetControl::R3: return in.r3;
+        case TabletopWidgetControl::LeftStickLeft: return in.leftStick[0] <= -axis;
+        case TabletopWidgetControl::LeftStickRight: return in.leftStick[0] >= axis;
+        case TabletopWidgetControl::LeftStickUp: return in.leftStick[1] >= axis;
+        case TabletopWidgetControl::LeftStickDown: return in.leftStick[1] <= -axis;
+        case TabletopWidgetControl::RightStickLeft: return in.rightStick[0] <= -axis;
+        case TabletopWidgetControl::RightStickRight: return in.rightStick[0] >= axis;
+        case TabletopWidgetControl::RightStickUp: return in.rightStick[1] >= axis;
+        case TabletopWidgetControl::RightStickDown: return in.rightStick[1] <= -axis;
+        case TabletopWidgetControl::LeftGripB: return in.b && in.grip[0] >= grip;
+        case TabletopWidgetControl::RightGripB: return in.b && in.grip[1] >= grip;
+        case TabletopWidgetControl::BothGripsB:
+            return in.b && in.grip[0] >= grip && in.grip[1] >= grip;
+        case TabletopWidgetControl::LeftStickAny:
+            return in.leftStick[0] * in.leftStick[0] +
+                   in.leftStick[1] * in.leftStick[1] >= 0.16f;
+        case TabletopWidgetControl::None: return false;
+    }
+    return false;
+}
+
+void UpdateTabletopWidgetInputSnapshot() {
+    xr::InputState next{};
+    xr::GetInput(next);
+    if (!g_tabletopWidgetInput.valid) {
+        g_tabletopWidgetInput.current = next;
+        g_tabletopWidgetInput.previous = next;
+        g_tabletopWidgetInput.valid = true;
+        return;
+    }
+    g_tabletopWidgetInput.previous = g_tabletopWidgetInput.current;
+    g_tabletopWidgetInput.current = next;
+}
+
+TabletopWidgetControl PolledTabletopWidgetControl(int widgetId) {
+    if (!tabletop::Enabled() ||
+        g_inputBlocked.load(std::memory_order_relaxed)) {
+        return TabletopWidgetControl::None;
+    }
+    const TabletopWidgetControl control = ControlForTabletopWidget(widgetId);
+    if (control == TabletopWidgetControl::R3)
+        g_tabletopWidgetR3LastPollMs.store(NowMs(), std::memory_order_relaxed);
+    return control;
+}
+
+bool TabletopWidgetHeld(int widgetId) {
+    const auto control = PolledTabletopWidgetControl(widgetId);
+    return control != TabletopWidgetControl::None &&
+        TabletopWidgetControlHeld(control, g_tabletopWidgetInput.current);
+}
+
+bool TabletopWidgetPressed(int widgetId) {
+    const auto control = PolledTabletopWidgetControl(widgetId);
+    return control != TabletopWidgetControl::None &&
+        TabletopWidgetControlHeld(control, g_tabletopWidgetInput.current) &&
+        !TabletopWidgetControlHeld(control, g_tabletopWidgetInput.previous);
+}
+
+bool TabletopWidgetReleased(int widgetId) {
+    const auto control = PolledTabletopWidgetControl(widgetId);
+    return control != TabletopWidgetControl::None &&
+        !TabletopWidgetControlHeld(control, g_tabletopWidgetInput.current) &&
+        TabletopWidgetControlHeld(control, g_tabletopWidgetInput.previous);
+}
+
 int OnWidgetHeldDown(int widgetId, int touchIndex) {
     const int original = g_origWidgetHeldDown
         ? g_origWidgetHeldDown(widgetId, touchIndex) : 0;
@@ -5812,6 +5995,7 @@ int OnWidgetHeldDown(int widgetId, int touchIndex) {
         }
         return 1;
     }
+    if (!original && TabletopWidgetHeld(widgetId)) return 1;
     return original;
 }
 
@@ -5832,6 +6016,21 @@ void FillTouchPos(void* outTouchPos) {
     auto* pos = static_cast<float*>(outTouchPos);
     pos[0] = 512.0f;
     pos[1] = 288.0f;
+}
+
+void FillTabletopWidgetTouchPos(int widgetId, void* outTouchPos) {
+    if (!outTouchPos) return;
+    if (widgetId != 40 && widgetId != 164) {
+        FillTouchPos(outTouchPos);
+        return;
+    }
+    auto* pos = static_cast<float*>(outTouchPos);
+    pos[0] = std::clamp(
+        512.0f + g_tabletopWidgetInput.current.leftStick[0] * 384.0f,
+        0.0f, 1024.0f);
+    pos[1] = std::clamp(
+        288.0f - g_tabletopWidgetInput.current.leftStick[1] * 216.0f,
+        0.0f, 576.0f);
 }
 
 int OnWidgetJustPressed(int widgetId, void* outTouchPos, int touchIndex) {
@@ -5864,6 +6063,10 @@ int OnWidgetJustPressed(int widgetId, void* outTouchPos, int touchIndex) {
         g_promptPressUntilMs.store(0.0, std::memory_order_relaxed);
         LOGI("[vr.touch] justpressed ANSWER widget=%d", widgetId);
         FillTouchPos(outTouchPos);
+        return 1;
+    }
+    if (!original && TabletopWidgetPressed(widgetId)) {
+        FillTabletopWidgetTouchPos(widgetId, outTouchPos);
         return 1;
     }
     return original;
@@ -5915,6 +6118,10 @@ int OnWidgetTouchedQuery(int widgetId, void* outTouchPos, int touchIndex) {
         FillTouchPos(outTouchPos);
         return 1;
     }
+    if (!original && TabletopWidgetHeld(widgetId)) {
+        FillTabletopWidgetTouchPos(widgetId, outTouchPos);
+        return 1;
+    }
     return original;
 }
 
@@ -5922,6 +6129,7 @@ int OnWidgetDoubleTapped(int widgetId, int quick, int touchIndex) {
     const int original = g_origWidgetDoubleTapped
         ? g_origWidgetDoubleTapped(widgetId, quick, touchIndex) : 0;
     LogWidgetPoll("doubletap", widgetId);
+    if (!original && TabletopWidgetPressed(widgetId)) return 1;
     return original;
 }
 
@@ -6011,6 +6219,18 @@ bool OnWidgetReleased(int widgetId, void* outTouchPos, int touchIndex) {
         return true;
     }
 
+    // Known contextual controls use a real release edge from the same snapshot
+    // that served the other touch-query forms this frame. Keep flowing into the
+    // established pair detector when no contextual edge fired: some retail
+    // yes/no scripts reuse otherwise ordinary widget ids (notably 31).
+    if (ControlForTabletopWidget(widgetId) != TabletopWidgetControl::None) {
+        if (!original && TabletopWidgetReleased(widgetId)) {
+            FillTabletopWidgetTouchPos(widgetId, outTouchPos);
+            return true;
+        }
+        PolledTabletopWidgetControl(widgetId); // temporary R3 ownership
+    }
+
     if (widgetId != 161 && widgetId != kParachuteDeployWidget &&
         widgetId != 175 && widgetId != kPhoneAnswerWidget &&
         widgetId != kMissionStartWidget && widgetId != kMissionCancelWidget &&
@@ -6077,6 +6297,7 @@ bool OnWidgetReleased(int widgetId, void* outTouchPos, int touchIndex) {
 
 void OnUpdatePads() {
     ServiceOpenAlDeviceWatchdog();
+    UpdateTabletopWidgetInputSnapshot();
     g_origUpdatePads();
 
     xr::InputState in{};
@@ -6737,7 +6958,10 @@ void OnUpdatePads() {
     bool chuteTogglesVisible = false;
     bool chuteRingVisible = false;
     const bool parachuteAir = vehicle == nullptr && ParachuteStateActive();
-    const bool chuteImmersive = locomotion::ParachuteControlImmersive();
+    // Diorama keeps the stock/button parachute path. Physical risers remain
+    // exclusive to full immersive VR, where their hand motion is meaningful.
+    const bool chuteImmersive = !tabletop::Enabled() &&
+        locomotion::ParachuteControlImmersive();
     g_parachuteAirState.store(parachuteAir, std::memory_order_relaxed);
     g_hideWeaponsForChuteDeploy.store(
         parachuteAir && !g_parachuteCanopyOpen.load(std::memory_order_relaxed),
@@ -10811,6 +11035,19 @@ bool ReadEntityWorldPosition(const void* entity, V3* out) {
            std::isfinite(out->z);
 }
 
+// Ordinary traffic farther than this does not benefit from full vehicle
+// geometry in the miniature view. The stock low-LOD renderer preserves the
+// complete silhouette while keeping the battery-powered Quest GPU inside its
+// sustained budget. Player/near vehicles, boats and aircraft remain untouched.
+constexpr float kTabletopTrafficFullDetailRadiusM = 30.0f;
+constexpr float kTabletopTrafficForcedLod0M = 1.0f;
+
+bool IsVehicleRenderEntity(const void* entity) {
+    if (!entity) return false;
+    const auto* bytes = static_cast<const std::uint8_t*>(entity);
+    return (bytes[0x5a] & 0x7u) == 2u;
+}
+
 bool IsTargetedPopulationPropModel(int modelId) {
     return IsLargeVegetationModel(modelId) ||
         IsRoadsideVisibilityModel(modelId) || IsTallPoleModel(modelId) ||
@@ -10995,6 +11232,69 @@ public:
 private:
     float* value_{};
     float saved_{};
+};
+
+bool ShouldUseTabletopTrafficLowLod(void* entity) {
+    if (!g_tabletopActive.load(std::memory_order_acquire) ||
+        (g_renderingStereoEyeIndex != 0 && g_renderingStereoEyeIndex != 1) ||
+        !IsVehicleRenderEntity(entity) || !g_tabletopRadiusCenterValid ||
+        !g.CVehicle_GetVehicleAppearance) {
+        return false;
+    }
+
+    // Keep aircraft and boats on their audited paths. Automobile and bike
+    // appearances are the ordinary road traffic this production path targets.
+    const int appearance = g.CVehicle_GetVehicleAppearance(entity);
+    if (appearance != 1 && appearance != 2) return false;
+
+    V3 world{};
+    if (!ReadEntityWorldPosition(entity, &world)) return false;
+    const float dx = world.x - g_tabletopRadiusCenter.x;
+    const float dy = world.y - g_tabletopRadiusCenter.y;
+    const float distanceSq = dx * dx + dy * dy;
+    return std::isfinite(distanceSq) &&
+        distanceSq > kTabletopTrafficFullDetailRadiusM *
+            kTabletopTrafficFullDetailRadiusM;
+}
+
+class ScopedTabletopTrafficLowLod {
+public:
+    explicit ScopedTabletopTrafficLowLod(bool active) {
+        if (!active) return;
+        Apply(g.CVisibilityPlugins_ms_vehicleLod0RenderMultiPassDist);
+        Apply(g.CVisibilityPlugins_ms_vehicleLod0Dist);
+        Apply(g.CVisibilityPlugins_ms_bigVehicleLod0Dist);
+    }
+
+    ~ScopedTabletopTrafficLowLod() {
+        while (count_ > 0) {
+            --count_;
+            *values_[count_] = saved_[count_];
+        }
+    }
+
+    ScopedTabletopTrafficLowLod(const ScopedTabletopTrafficLowLod&) = delete;
+    ScopedTabletopTrafficLowLod& operator=(
+        const ScopedTabletopTrafficLowLod&) = delete;
+
+private:
+    void Apply(float* value) {
+        if (!value || count_ >= values_.size() || !std::isfinite(*value) ||
+            *value <= 0.0f) {
+            return;
+        }
+        values_[count_] = value;
+        saved_[count_] = *value;
+        ++count_;
+        const float forcedSquared =
+            kTabletopTrafficForcedLod0M *
+            kTabletopTrafficForcedLod0M;
+        *value = std::min(*value, forcedSquared);
+    }
+
+    std::array<float*, 3> values_{};
+    std::array<float, 3> saved_{};
+    std::size_t count_{};
 };
 
 class ScopedPedRenderDistanceOverride {
@@ -16001,6 +16301,7 @@ void OnRenderOneNonRoad(void* entity) {
     // distant objects to alternate between eyes/frames.
     if (!g_tabletopActive.load(std::memory_order_acquire) &&
         !StereoDispatchVisibleForCurrentEye(entity)) return;
+    const bool useTrafficLowLod = ShouldUseTabletopTrafficLowLod(entity);
     MarkAircraftOrdinaryRenderDispatch(entity, false);
     const traffic_census::AtomicRenderProbe atomicProbe =
         MarkTrafficVehicleRendered(entity);
@@ -16015,7 +16316,10 @@ void OnRenderOneNonRoad(void* entity) {
     g_visibilityCurrentRenderEntity = entity;
     g_visibilityCurrentRenderPath = "opaque";
     g_trafficAtomicRenderScope = &trafficScope;
-    g_origRenderOneNonRoad(entity);
+    {
+        ScopedTabletopTrafficLowLod trafficLowLodScope(useTrafficLowLod);
+        g_origRenderOneNonRoad(entity);
+    }
     g_trafficAtomicRenderScope = savedTrafficScope;
     g_visibilityCurrentRenderEntity = savedEntity;
     g_visibilityCurrentRenderPath = savedPath;
@@ -16047,6 +16351,7 @@ void OnRenderAlphaEntity(void* entity, float distance) {
     }
     if (!g_tabletopActive.load(std::memory_order_acquire) &&
         !StereoDispatchVisibleForCurrentEye(entity)) return;
+    const bool useTrafficLowLod = ShouldUseTabletopTrafficLowLod(entity);
     MarkAircraftOrdinaryRenderDispatch(entity, true);
     if (VisibilityWitnessEnabled()) TraceEntityRender(entity, "alpha");
     if (!g_origRenderAlphaEntity) return;
@@ -16293,7 +16598,10 @@ void OnRenderAlphaEntity(void* entity, float distance) {
     const char* const savedPath = g_visibilityCurrentRenderPath;
     g_visibilityCurrentRenderEntity = entity;
     g_visibilityCurrentRenderPath = "alpha";
-    g_origRenderAlphaEntity(entity, distance);
+    {
+        ScopedTabletopTrafficLowLod trafficLowLodScope(useTrafficLowLod);
+        g_origRenderAlphaEntity(entity, distance);
+    }
     g_visibilityCurrentRenderEntity = savedEntity;
     g_visibilityCurrentRenderPath = savedPath;
     bigBuildingScope.Restore();
@@ -22595,7 +22903,7 @@ void RenderGameplayHudPass() {
              static_cast<void*>(g.CWidgetHelpText_m_pInstance),
              static_cast<const void*>(helpText));
     }
-    xr::PublishHudText(g.CHud_m_Message,400,g.CHud_m_BigMessage,8,128,
+    xr::PublishHudText(g.CHud_m_Message,400,g.CHud_m_BigMessage,7,128,
                        helpText,400);
 
     // Mission clock/counters. The stock flat pass keeps running
@@ -27027,9 +27335,12 @@ bool LooksLikeDioramaTouchTutorial(const std::int16_t* text, int capacity) {
     // AdaptDioramaTutorialText still leaves them byte-for-byte unchanged.
     static constexpr const char* kSignals[] = {
         "~widget_", "lower right corner", "lower left corner",
-        "left side of the screen", "double tap the center",
+        "bottom right", "bottom left", "right side of the screen",
+        "left side of the screen", "center of the screen",
+        "middle of the screen", "double tap the center",
         "touch the screen", "climb out of the water", "crouch ~a~",
-        "tap ", "swipe ", "weapon icon",
+        "tap ", "swipe ", "finger flick", "placing your thumb",
+        "weapon icon",
     };
     if (!text || capacity <= 0) return false;
     char ascii[401]{};
@@ -32360,6 +32671,7 @@ void ResetGraphicsDefaults() {
     g_worldEffectsEnabled.store(true, std::memory_order_release);
     g_neonSignsEnabled.store(true, std::memory_order_release);
     g_colorGradingEnabled.store(true, std::memory_order_release);
+    tabletop::ResetRadiusPreset();
     g_dynamicShadowMode.store(kDefaultShadowMode, std::memory_order_release);
     ApplyDynamicShadowPreference();
     g_hdWeaponsEnabled.store(false, std::memory_order_release);

@@ -1942,8 +1942,13 @@ int OnGetGroupControlForward(void* pad,unsigned char b1,unsigned char b2) {
 using HornFn=int(*)(void*,unsigned char);
 HornFn g_origHorn=nullptr;
 int OnGetHorn(void* pad,unsigned char arg) {
-    if (VrGameplayInputAllowed()&&HasPlayerVehicle()&&
-        g_hornPressed.load(std::memory_order_acquire)) return 1;
+    if (VrGameplayInputAllowed()&&HasPlayerVehicle()) {
+        xr::InputState input{}; xr::GetInput(input);
+        // Diorama has no physical steering-wheel hub to press. R3 is the
+        // conventional fallback and matches the tutorial/widget adapter.
+        if ((vrcam::IsTabletopActive() && input.r3) ||
+            g_hornPressed.load(std::memory_order_acquire)) return 1;
+    }
     return g_origHorn?g_origHorn(pad,arg):0;
 }
 int OnGetHandBrake(void* pad) {
@@ -2355,9 +2360,9 @@ int OnGetTurretRight(void* pad) {
 
 // On-foot jump. CPad::JumpJustDown on 2.11 is IsDoubleTapped(widget 168) ||
 // IsDoubleTapped(widget 31) - again pure touch, so the earlier NewState write
-// never made CJ jump. The Vice City mapping (X button) answers instead; the
-// edge is computed once per frame in UpdateInput so repeated per-frame polls
-// see one coherent "just down".
+// never made CJ jump. The configured VR jump button answers instead; the edge
+// is computed once per frame in UpdateInput so repeated per-frame polls see one
+// coherent "just down".
 TouchQueryFn g_origJumpJustDown = nullptr;
 TouchQueryFn g_origBunnyHop = nullptr;
 TouchQueryFn g_origBunnyHopDown = nullptr;
@@ -2377,7 +2382,11 @@ int OnJumpJustDown(void* pad) {
             // edge is authoritative on bicycles and suppresses that touch path.
             return g_bicycleJumpEdge.load(std::memory_order_acquire) ? 1 : 0;
         }
-        if (g_jumpEdge.load(std::memory_order_acquire)) return 1;
+        // On foot the mapped VR edge is authoritative. Falling through to the
+        // retail widget-31 double-tap path makes the B sprint press look like a
+        // jump in Diorama's contextual mobile-widget bridge.
+        if (!HasPlayerVehicle())
+            return g_jumpEdge.load(std::memory_order_acquire) ? 1 : 0;
     }
     return g_origJumpJustDown ? g_origJumpJustDown(pad) : 0;
 }
@@ -3314,6 +3323,9 @@ void ToggleDrivebyAimImmersive() {
 }
 bool VehicleWeaponsImmersive() {
     EnsureInit();
+    // Diorama deliberately restores the original game's button/stick path;
+    // tracked manual vehicle weapons are reserved for full immersive mode.
+    if (vrcam::IsTabletopActive()) return false;
     return GetMode()==MODE_IMMERSIVE ||
            g_drivebyImmersive.load(std::memory_order_acquire);
 }

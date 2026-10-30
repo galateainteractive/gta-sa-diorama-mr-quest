@@ -32,11 +32,13 @@ struct ElementDefaults {
 };
 
 // Calibrated on-device on 2026-08-24. Radar and Health are the two authoritative
-// real-image crops; Health contains the complete top-right status block.
+// real-image crops; Health contains the complete top-right status block. Direct
+// BIG MESSAGES use one fixed, head-locked 4:1 box in front of the player; every
+// stock big-message style shares this placement.
 constexpr ElementDefaults kElementDefaults[ELEMENT_COUNT] = {
     {1,   0, 104, 284, 284,  25, 47, 28, 34,  2}, // radar
     {1, 776,  16, 244,  84,  53, 42,  8,  3, 14}, // complete top-right status
-    {0, 348, 308, 676, 264,  40, 40, 23,  5, 10}, // large mission messages
+    {1, 348, 308, 676, 264,  25, 40, 50, 13, 10}, // all large game messages
     {1, 200,   0, 624, 240,  36, 34, 24, 15, 10}, // help/tutorial/brief text
     {1,   0,   0,  64,  64,  62, 26, 24,  8, 10}, // mission timers/counters
 };
@@ -257,12 +259,38 @@ void Load() {
         }
         std::fclose(file);
     }
-    // Old crop-based message calibration often needed a 0.1x scale because the
-    // source window contained a huge slice of the phone HUD. Direct font layers
-    // have no such source slice; migrate only that obsolete scale so the first
-    // real string is readable while preserving the user's screen position/box.
-    if (g_element[MESSAGES][ELEMENT_SCALE].load(std::memory_order_relaxed)<5)
-        g_element[MESSAGES][ELEMENT_SCALE].store(10,std::memory_order_relaxed);
+    // The two previously shipped message layouts were inherited from the old
+    // screenshot-crop HUD. They reduce the direct-font layer to an effectively
+    // invisible strip. Migrate only those exact known geometries so a custom
+    // player calibration remains untouched. Visibility is also preserved.
+    const int messageX =
+        g_element[MESSAGES][SCREEN_X].load(std::memory_order_relaxed);
+    const int messageY =
+        g_element[MESSAGES][SCREEN_Y].load(std::memory_order_relaxed);
+    const int messageWidth =
+        g_element[MESSAGES][SCREEN_WIDTH].load(std::memory_order_relaxed);
+    const int messageHeight =
+        g_element[MESSAGES][SCREEN_HEIGHT].load(std::memory_order_relaxed);
+    const int messageScale =
+        g_element[MESSAGES][ELEMENT_SCALE].load(std::memory_order_relaxed);
+    const bool legacyShippingLayout = messageX == 40 && messageY == 56 &&
+        messageWidth == 23 && messageHeight == 5 && messageScale == 5;
+    const bool legacyEmbeddedLayout = messageX == 40 && messageY == 40 &&
+        messageWidth == 23 && messageHeight == 5 && messageScale == 10;
+    if (legacyShippingLayout || legacyEmbeddedLayout) {
+        g_element[MESSAGES][SCREEN_X].store(
+            kElementDefaults[MESSAGES].screenX, std::memory_order_relaxed);
+        g_element[MESSAGES][SCREEN_Y].store(
+            kElementDefaults[MESSAGES].screenY, std::memory_order_relaxed);
+        g_element[MESSAGES][SCREEN_WIDTH].store(
+            kElementDefaults[MESSAGES].screenWidth, std::memory_order_relaxed);
+        g_element[MESSAGES][SCREEN_HEIGHT].store(
+            kElementDefaults[MESSAGES].screenHeight, std::memory_order_relaxed);
+        g_element[MESSAGES][ELEMENT_SCALE].store(
+            kElementDefaults[MESSAGES].scaleTenths,
+            std::memory_order_relaxed);
+        LOGI("hud settings: migrated legacy BIG MESSAGES layout");
+    }
     g_preset.store(preset, std::memory_order_release);
     g_enabled.store(enabled != 0, std::memory_order_release);
     g_gazeAutoHide.store(gazeAutoHide != 0, std::memory_order_release);

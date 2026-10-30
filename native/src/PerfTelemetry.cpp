@@ -14,12 +14,38 @@
 #include <limits>
 #include <mutex>
 #include <sys/stat.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 
 namespace savr::perf {
 namespace {
 
 constexpr int kMaxWindowSamples = 256;
+
+bool DetailedRenderTraceRequested() {
+#ifdef SAVR_DEV
+    return true;
+#else
+    // Reuse the explicit XR profiling switch so a normal player build remains
+    // silent. The value is sampled once at process start; set it before launch.
+    static const bool requested = [] {
+        char value[PROP_VALUE_MAX]{};
+        const int length = __system_property_get(
+            "debug.savr.xr_gpu_timer", value);
+        const bool enabled = length > 0 &&
+            (std::strcmp(value, "1") == 0 ||
+             std::strcmp(value, "true") == 0 ||
+             std::strcmp(value, "on") == 0);
+        if (enabled) {
+            __android_log_print(ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.render42.init] detailed_game_trace=1");
+        }
+        return enabled;
+    }();
+    return requested;
+#endif
+}
+
 #ifdef SAVR_DEV
 constexpr const char* kGameCsvPath =
     "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_game_perf_v2.csv";
@@ -1368,6 +1394,42 @@ void EmitGameWindow(double endMs) {
         w.pedAmbientBlocked.Average(), std::memory_order_relaxed);
     g_debugStats.gameValid.store(true, std::memory_order_relaxed);
     g_debugStats.revision.fetch_add(1, std::memory_order_release);
+    }
+
+    // Compact player-build correlation line. Runtime GPU/presentation data is
+    // emitted independently as tabletop.perf42; matching timestamps now show
+    // whether a slow XR window coincides with world recording, render-queue
+    // blocking, excess alpha/shadow work, visibility, or streaming pressure.
+    if (DetailedRenderTraceRequested()) {
+        const double renderBlocked = std::max(
+            0.0, w.renderWall.Average() - w.renderCpu.Average());
+        __android_log_print(
+            ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.render42] game=%.1fHz renderW/C/B=%.2f/%.2f/%.2fms "
+            "phaseW=%.2f/%.2f/%.2f/%.2f/%.2fms "
+            "eyesW/C=%.2f+%.2f/%.2f+%.2fms "
+            "rqW finish/flush/drain=%.2f/%.2f/%.2fms "
+            "scene E/L/S/A/Sh=%0.f/%0.f/%0.f/%0.f/%d "
+            "stream Q/P/M=%.0f/%.0f/%.1fMiB view=%.1fdeg/%.0fm",
+            renderedHz,
+            w.renderWall.Average(), w.renderCpu.Average(), renderBlocked,
+            w.enginePreWall.Average(), w.stereoPrepareWall.Average(),
+            w.recordWall.Average(), w.stereoTailWall.Average(),
+            w.enginePostWall.Average(),
+            w.sceneLeft.Average(), w.sceneRight.Average(),
+            w.sceneLeftCpu.Average(), w.sceneRightCpu.Average(),
+            w.renderQueueFinishWall.Average(),
+            w.renderQueueFlushWall.Average(),
+            w.renderQueueFinishDrainWall.Average(),
+            w.visibleEntities.Average(), w.visibleLods.Average(),
+            w.visibleSuperLods.Average(),
+            std::max(w.alphaNodesAfterLeft.Average(),
+                     w.alphaNodesAfterRight.Average()),
+            w.shadowUpdateCalls,
+            w.streamingRequests.Average(),
+            w.streamingPriorityRequests.Average(),
+            w.streamingMemoryUsedMiB.Average(),
+            w.cameraFov.Average(), w.farClip.Average());
     }
 
     LOGI("[perf.game] v2 win=%.2fs calls=%d(%.1fHz) rendered=%d(%.1fHz) "
@@ -3204,7 +3266,8 @@ void SubmitGameFrame(const GameFrameSample& sample) {
     static int hitchTraceWindowLogs = 0;
     bool hitchTraceRequested = false;
     bool hitchTraceDetailed = false;
-    if (rendered && std::isfinite(sample.implWallMs) &&
+    if (DetailedRenderTraceRequested() && rendered &&
+        std::isfinite(sample.implWallMs) &&
         sample.implWallMs >= kHitchTraceThresholdMs) {
         if (hitchTraceWindowStartMs <= 0.0 ||
             sample.monoMs - hitchTraceWindowStartMs >= 1000.0) {
@@ -3571,7 +3634,9 @@ void SubmitGameFrame(const GameFrameSample& sample) {
                     const double flushBlocked = std::max(
                         0.0, g_latestStereo.renderQueueFlushWallMs -
                                  g_latestStereo.renderQueueFlushCpuMs);
-                    LOGI("[perf.hitch] frame=%u seq=%d period=%.3f "
+                    __android_log_print(
+                         ANDROID_LOG_INFO, SAVR_TAG,
+                         "[perf.hitch] frame=%u seq=%d period=%.3f "
                          "impl W/CPU/block=%.3f/%.3f/%.3f core=%d>%d "
                          "phase W=%.3f/%.3f/%.3f/%.3f/%.3f "
                          "CPU=%.3f/%.3f/%.3f/%.3f/%.3f "
@@ -4044,7 +4109,9 @@ void SubmitGameFrame(const GameFrameSample& sample) {
     }
 
     if (hitchTraceRequested && !hitchTraceDetailed) {
-        LOGI("[perf.hitch] frame=%u seq=%d period=%.3f "
+        __android_log_print(
+             ANDROID_LOG_INFO, SAVR_TAG,
+             "[perf.hitch] frame=%u seq=%d period=%.3f "
              "impl W/CPU/block=%.3f/%.3f/%.3f core=%d>%d "
              "phase=unavailable fresh=%d stereo=%d render_calls=%d",
              sample.gameFrameCounter, currentSequence,

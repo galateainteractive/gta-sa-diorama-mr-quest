@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — complete Diorama contextual controls
+
+- Recover the retail 2.11 touch-widget name/id map and bridge verified mobile
+  mission, store, casino, gym, school, arcade and vehicle/machinery actions to
+  the existing Quest controls only while GTA polls their widget.
+- Keep press, hold and release semantics frame-coherent, give a live contextual
+  `R3` action temporary priority over the plain-R3 weapon selector, and keep
+  pause/radar (`161`), movement (`167`) and look/sprint (`175`) regions outside
+  the allowlist. The explicit `L3 + R3` Diorama view chord remains available in
+  vehicles even while GTA continuously polls `R3` for the horn.
+- Expand verified mobile tutorial translations for swimming, climbing, aiming,
+  radio, vehicles, aircraft, wheelies and freefall. Displayed labels now match
+  the implemented contextual action.
+- Force conventional vehicle weapons, `R3` horn and stick/button parachute
+  control in Diorama even when an Immersive preference was saved. Immersive VR
+  keeps its tracked/manual interactions.
+- Add `DIORAMA_CONTROLS.md` as the consolidated history, control map, safety
+  rules and future-review checklist.
+- Keep Diorama coverage fixed at the proven 60 m radius and render ordinary
+  road traffic beyond 30 m through GTA's intact low-LOD vehicle path. Nearby
+  traffic, the player vehicle, boats and aircraft retain full detail; this
+  removes the battery-power GPU collapse without relying on a USB connection.
+
 ## Package 74 concise Diorama tutorials
 
 - Remove the repeated `DIORAMA MR TIP` prefix from adapted gameplay tutorial
