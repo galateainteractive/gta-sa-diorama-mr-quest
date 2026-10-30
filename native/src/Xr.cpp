@@ -5082,6 +5082,10 @@ constexpr float kHudPlaneDistanceMetres = 1.8f;
 // layer a calmer, farther convergence plane; moving the global HUD plane would
 // also push radar, health, big messages and timers away from their calibration.
 constexpr float kHelpTextPlaneDistanceMetres = 2.5f;
+// On the finite theater screen the approved world-space layout landed around
+// mid-picture. Keep gameplay untouched and move only theater subtitles into a
+// conventional lower-third band; the 0.5 scale turns this into ~72.5%-81.5%.
+constexpr float kTheaterHelpTextScreenY = 0.68f;
 
 bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
                       bool drawClassicElements,int eye) {
@@ -5216,13 +5220,19 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
 
     const auto drawDirectText=[&](int element,const HudTextTexture& text) {
         if (!text.visible||!text.texture) return;
+        // The flat GameSurface already contains GTA's mission/title cards.
+        // Re-drawing the direct BIG MESSAGE texture in theater duplicated that
+        // title over the subtitle. Projection gameplay still needs this layer.
+        if (!stereoEye&&element==hud::MESSAGES) return;
         const hud::ElementSettings settings=hud::GetElementSettings(element);
         // Visibility remains a gameplay option, but the selected element must
         // always be visible while calibrating or it would be impossible to
         // position again after disabling it.
         if (!settings.enabled&&!(calibrating&&element==selected)) return;
         const float baseX=static_cast<float>(settings.screenX)/100.0f;
-        const float baseY=static_cast<float>(settings.screenY)/100.0f;
+        const float baseY=!stereoEye&&element==hud::HELP_TEXT
+            ? kTheaterHelpTextScreenY
+            : static_cast<float>(settings.screenY)/100.0f;
         const float baseW=static_cast<float>(settings.screenWidth)/100.0f;
         const float baseH=static_cast<float>(settings.screenHeight)/100.0f;
         const float scale=static_cast<float>(settings.scaleTenths)/10.0f;

@@ -909,3 +909,18 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 78 gameplay-theater subtitles and menu-style passthrough'
+
+# Package 79 keeps the headset-approved gameplay layout untouched while moving
+# only flat-theater subtitles into the lower third. GTA's GameSurface already
+# owns mission/title cards there, so the direct BIG MESSAGE copy stays disabled
+# only for the monoscopic theater compositor.
+foreach ($sourcePattern in @(
+        'kTheaterHelpTextScreenY = 0\.68f',
+        '!stereoEye&&element==hud::MESSAGES',
+        '!stereoEye&&element==hud::HELP_TEXT\s*\? kTheaterHelpTextScreenY',
+        'drawDirectText\(hud::HELP_TEXT,g_briefTextTexture\)')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 79 theater subtitle placement audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 79 lower theater subtitles without duplicate mission title'
