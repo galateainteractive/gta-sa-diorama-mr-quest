@@ -5091,8 +5091,8 @@ constexpr float kHudPlaneDistanceMetres = 1.8f;
 // also push radar, health, big messages and timers away from their calibration.
 constexpr float kHelpTextPlaneDistanceMetres = 2.5f;
 // On the finite theater screen the approved world-space layout landed around
-// mid-picture. Keep gameplay untouched and move only theater subtitles into a
-// conventional lower-third band; the 0.5 scale turns this into ~72.5%-81.5%.
+// mid-picture. Keep gameplay untouched and move theater help/stat notices into
+// a conventional lower-third band; the 0.5 scale turns this into ~72.5%-81.5%.
 constexpr float kTheaterHelpTextScreenY = 0.68f;
 
 // Android rasterises direct text in white. Tinting in the compositor preserves
@@ -5274,7 +5274,11 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     };
     drawDirectText(hud::MESSAGES,g_bigTextTexture,kWhiteTint,0);
     int smallTextStackLevel=0;
-    if (g_briefTextTexture.visible) {
+    // Theater GameSurface already carries the stock white subtitle in its
+    // correct lower position. Drawing our yellow copy there produced the
+    // duplicate reported in cutscenes. Projection gameplay still needs the
+    // direct subtitle because the stock HUD is not dependable in that path.
+    if (stereoEye&&g_briefTextTexture.visible) {
         drawDirectText(hud::HELP_TEXT,g_briefTextTexture,kSubtitleTint,
                        smallTextStackLevel++);
     }
