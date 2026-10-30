@@ -22800,13 +22800,46 @@ private:
     bool alphaActive_{};
 };
 
+using MessagesDisplayFn = void (*)(unsigned char beforeFade);
+MessagesDisplayFn g_origMessagesDisplay = nullptr;
+thread_local bool g_publishingDirectHudText = false;
+void* InstallTrampoline(void* target, void* replacement);
+
+void OnMessagesDisplay(unsigned char beforeFade) {
+    if (!g_origMessagesDisplay) return;
+    g_origMessagesDisplay(beforeFade);
+    if (g_publishingDirectHudText || !g.CHud_m_Message) return;
+
+    // The finite theater receives the same subtitle through the direct OpenXR
+    // text compositor. Let the stock pass keep titles, zone names and every
+    // other after-fade element, but prevent CMessages' duplicate brief string
+    // from being queued into the flat GameSurface.
+    const bool theater =
+        g_gameplayTheaterSnapshot.load(std::memory_order_acquire) ||
+        g_cutsceneRunningSnapshot.load(std::memory_order_acquire);
+    if (theater) g.CHud_m_Message[0] = 0;
+}
+
+bool InstallTheaterSubtitleDeduplication() {
+    if (!g.CMessages_Display) return false;
+    g_origMessagesDisplay = reinterpret_cast<MessagesDisplayFn>(
+        InstallTrampoline(reinterpret_cast<void*>(g.CMessages_Display),
+                          reinterpret_cast<void*>(&OnMessagesDisplay)));
+    LOGI("[hud.text] theater stock subtitle suppression=%d",
+         g_origMessagesDisplay ? 1 : 0);
+    return g_origMessagesDisplay != nullptr;
+}
+
 // CMessages::Display only expands the active GXT entries into CHud's public
 // strings; it does not issue RenderWare draws. Keep this publication separate
 // from the offscreen HUD raster so theater-only gameplay frames can feed the
 // same direct OpenXR text layer without touching a GL context on GameThread.
 void PublishGameplayHudTextState() {
+    const bool previousPublication = g_publishingDirectHudText;
+    g_publishingDirectHudText = true;
     if (g.CMessages_Display) g.CMessages_Display(1);
     if (g.CMessages_Display) g.CMessages_Display(0);
+    g_publishingDirectHudText = previousPublication;
 
     const std::int16_t* helpText=nullptr;
     if (g.CWidgetHelpText_m_pInstance&&*g.CWidgetHelpText_m_pInstance) {
@@ -33060,6 +33093,10 @@ bool Install() {
     // contains '+' or '-'. Publish its localized STATxxx label explicitly so
     // every respect/skill/body update reaches the fixed Diorama help panel.
     InstallStatUpdatePublisher();
+    // Theater uses the direct text layer for a consistent lower-third subtitle.
+    // Remove only the stock CMessages brief from the flat GameSurface so the
+    // same sentence is not shown a second time in white.
+    InstallTheaterSubtitleDeduplication();
 
     // Bind the user-facing shadow toggle to MobileSettings entry 5 and install
     // the fingerprinted eight-vehicle budget before the first gameplay frame.
