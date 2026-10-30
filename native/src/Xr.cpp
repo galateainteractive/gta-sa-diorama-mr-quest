@@ -5077,6 +5077,10 @@ bool UpdateHudTextTexture(HudTextTexture& target,
 // rivalled them and the text read as "behind the 3D world". A small opposite
 // horizontal shift per eye gives the overlay a real, comfortable depth.
 constexpr float kHudPlaneDistanceMetres = 1.8f;
+// Help, subtitles and stat notices share one direct-text layer. Give only that
+// layer a calmer, farther convergence plane; moving the global HUD plane would
+// also push radar, health, big messages and timers away from their calibration.
+constexpr float kHelpTextPlaneDistanceMetres = 2.5f;
 
 bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
                       bool drawClassicElements,int eye) {
@@ -5217,10 +5221,14 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         const float scale=static_cast<float>(settings.scaleTenths)/10.0f;
         const float scaledW=baseW*scale;
         const float scaledH=baseH*scale;
+        const float textDepthShiftUv = element == hud::HELP_TEXT
+            ? ((eye==0)?1.0f:-1.0f)*kStereoHalfIpd /
+                (2.0f*kHelpTextPlaneDistanceMetres*tanXForDepth)
+            : hudDepthShiftUv;
         glBindTexture(GL_TEXTURE_2D,text.texture);
         glUniform4f(s.hudCompositeSourceRectUniform,0.0f,0.0f,1.0f,1.0f);
         glUniform4f(s.hudCompositeDestinationRectUniform,
-                    baseX+(baseW-scaledW)*0.5f+hudDepthShiftUv,
+                    baseX+(baseW-scaledW)*0.5f+textDepthShiftUv,
                     baseY+(baseH-scaledH)*0.5f,
                     scaledW,scaledH);
         glUniform1f(s.hudCompositeHighlightUniform,0.0f);

@@ -39,7 +39,7 @@ constexpr ElementDefaults kElementDefaults[ELEMENT_COUNT] = {
     {1,   0, 104, 284, 284,  25, 47, 28, 34,  2}, // radar
     {1, 776,  16, 244,  84,  53, 42,  8,  3, 14}, // complete top-right status
     {1, 348, 308, 676, 264,  25, 40, 50, 13, 10}, // all large game messages
-    {1, 200,   0, 624, 240,  36, 34, 24, 15, 10}, // help/tutorial/brief text
+    {1, 200,   0, 624, 240,  15, 37, 70, 18,  5}, // help/tutorial/brief text
     {1,   0,   0,  64,  64,  62, 26, 24,  8, 10}, // mission timers/counters
 };
 
@@ -290,6 +290,48 @@ void Load() {
             kElementDefaults[MESSAGES].scaleTenths,
             std::memory_order_relaxed);
         LOGI("hud settings: migrated legacy BIG MESSAGES layout");
+    }
+
+    // The original direct-text help layer was a narrow, nearly square box in
+    // the centre of the eye even though its 2048x512 raster is 4:1. Migrate
+    // only exact known layouts to the approved wide elevated box; any custom
+    // player calibration remains untouched.
+    const int helpX =
+        g_element[HELP_TEXT][SCREEN_X].load(std::memory_order_relaxed);
+    const int helpY =
+        g_element[HELP_TEXT][SCREEN_Y].load(std::memory_order_relaxed);
+    const int helpWidth =
+        g_element[HELP_TEXT][SCREEN_WIDTH].load(std::memory_order_relaxed);
+    const int helpHeight =
+        g_element[HELP_TEXT][SCREEN_HEIGHT].load(std::memory_order_relaxed);
+    const int helpScale =
+        g_element[HELP_TEXT][ELEMENT_SCALE].load(std::memory_order_relaxed);
+    const bool legacyShippingHelp = helpX == 39 && helpY == 55 &&
+        helpWidth == 24 && helpHeight == 15 && helpScale == 7;
+    const bool legacyEmbeddedHelp = helpX == 36 && helpY == 34 &&
+        helpWidth == 24 && helpHeight == 15 && helpScale == 10;
+    const bool lowerThirdTestHelp = helpX == 15 && helpY == 68 &&
+        helpWidth == 70 && helpHeight == 18 && helpScale == 10;
+    const bool elevatedTestHelp = helpX == 15 && helpY == 48 &&
+        helpWidth == 70 && helpHeight == 18 && helpScale == 10;
+    const bool smallerElevatedTestHelp = helpX == 15 && helpY == 43 &&
+        helpWidth == 70 && helpHeight == 18 && helpScale == 7;
+    if (legacyShippingHelp || legacyEmbeddedHelp || lowerThirdTestHelp ||
+        elevatedTestHelp || smallerElevatedTestHelp) {
+        g_element[HELP_TEXT][SCREEN_X].store(
+            kElementDefaults[HELP_TEXT].screenX, std::memory_order_relaxed);
+        g_element[HELP_TEXT][SCREEN_Y].store(
+            kElementDefaults[HELP_TEXT].screenY, std::memory_order_relaxed);
+        g_element[HELP_TEXT][SCREEN_WIDTH].store(
+            kElementDefaults[HELP_TEXT].screenWidth,
+            std::memory_order_relaxed);
+        g_element[HELP_TEXT][SCREEN_HEIGHT].store(
+            kElementDefaults[HELP_TEXT].screenHeight,
+            std::memory_order_relaxed);
+        g_element[HELP_TEXT][ELEMENT_SCALE].store(
+            kElementDefaults[HELP_TEXT].scaleTenths,
+            std::memory_order_relaxed);
+        LOGI("hud settings: migrated legacy HELP TEXT layout");
     }
     g_preset.store(preset, std::memory_order_release);
     g_enabled.store(enabled != 0, std::memory_order_release);

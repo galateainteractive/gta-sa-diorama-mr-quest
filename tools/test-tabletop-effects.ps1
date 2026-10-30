@@ -817,3 +817,40 @@ if ($cameraSource -notmatch
     throw 'Package 75 vehicle Diorama view-chord priority audit failed'
 }
 Write-Output 'PASS Package 75 vehicle L3+R3 view chord outranks contextual R3'
+
+# Package 76 moves the combined help/subtitle layer into a wide elevated box,
+# uses a compact 0.5x type scale and converges only this layer at 2.5 m.
+# Known layouts migrate; custom player calibration stays intact.
+$hudSettingsSource = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'native\src\HudSettings.cpp')
+$hudDefaults = Get-Content -Raw -LiteralPath (
+    Join-Path $projectRoot 'defaults\quest\vr_hud.ini')
+foreach ($sourcePattern in @(
+        '\{1, 200,\s+0, 624, 240,\s+15, 37, 70, 18,\s+5\}',
+        'legacyShippingHelp = helpX == 39 && helpY == 55',
+        'legacyEmbeddedHelp = helpX == 36 && helpY == 34',
+        'lowerThirdTestHelp = helpX == 15 && helpY == 68',
+        'elevatedTestHelp = helpX == 15 && helpY == 48',
+        'smallerElevatedTestHelp = helpX == 15 && helpY == 43',
+        'migrated legacy HELP TEXT layout')) {
+    if ($hudSettingsSource -notmatch $sourcePattern) {
+        throw "Package 76 lower help-text layout audit failed: $sourcePattern"
+    }
+}
+foreach ($setting in @(
+        'Hud.Help.ScreenX=15', 'Hud.Help.ScreenY=37',
+        'Hud.Help.ScreenWidth=70', 'Hud.Help.ScreenHeight=18',
+        'Hud.Help.ScaleTenths=5')) {
+    if ($hudDefaults -notmatch [regex]::Escape($setting)) {
+        throw "Package 76 headset default missing: $setting"
+    }
+}
+foreach ($xrPattern in @(
+        'kHelpTextPlaneDistanceMetres = 2\.5f',
+        'element == hud::HELP_TEXT',
+        '2\.0f\*kHelpTextPlaneDistanceMetres\*tanXForDepth')) {
+    if ($xrSource -notmatch $xrPattern) {
+        throw "Package 76 help-text depth audit failed: $xrPattern"
+    }
+}
+Write-Output 'PASS Package 76 wide 0.5x elevated help/subtitle layer at 2.5m'
