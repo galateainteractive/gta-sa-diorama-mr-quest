@@ -39,10 +39,10 @@ preventing a horn, camera, crane or mission action from opening the selector.
 | Right Stick | Weapon-selector direction; vehicle turret; camera zoom |
 | `A` | Jump, handbrake, parachute deploy, accept/start |
 | `B` | Sprint/swim, vehicle weapon/nitro, cancel/exit |
-| `X` | Classic attack; next radio station in a vehicle; grab/drop |
+| `X` | Classic melee attack; next radio station in a vehicle; grab/drop |
 | `Y` | Enter/exit vehicle; reset/split in the relevant minigame |
 | `L2` | Aim, brake/descend, decline/remove/easier |
-| `R2` | Fire, accelerate/ascend, accept/buy/place/harder |
+| `R2` | Fire; hold spray/extinguisher; accelerate/ascend; accept/buy/place/harder |
 | `L3` | Crouch |
 | `R3` | On-foot weapon selector; contextual horn/camera/machinery action |
 | `L3 + R3` | Cycle `TRACK`, `FOLLOW`, `FIXED` views |
@@ -87,7 +87,9 @@ scripts or native pad lifecycle need special handling:
 
 - `8` phone: Both Grips + `R2`, with the existing ringing-flow guard;
 - `19` target: complete `L2` press/hold/release lifecycle plus direct `CPad`
-  targeting; `R2` attacks independently while aiming;
+  targeting; `R2` attacks independently while aiming. Spray and extinguisher
+  bypass this fixed-heading task and use `R2` alone so the Left Stick remains
+  available to steer CJ;
 - `29` weapon switching: the Diorama `R3` owned-weapon selector;
 - `156/160` HUD/stats tutorials: bounded `R2` windows, never a permanent hold;
 - `166` radio swipe: direct `X`/Left Grip + `X` station bridges;

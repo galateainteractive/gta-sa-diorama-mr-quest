@@ -22,12 +22,18 @@ Runtime controls:
 
 - both grips + the left-controller `Menu` button: open or close the Diorama MR
   menu; both grips + `Y` is the fallback when the system consumes `Menu`;
+- `DIORAMA GUARDIAN` in that menu switches contextual boundary suppression
+  between `HIDDEN` and `VISIBLE`; `HIDDEN` applies only while Diorama
+  passthrough is active and never suppresses the boundary in Immersive VR;
 - `A`: jump on foot;
 - `B`: sprint on foot;
-- `X`: alternate classic attack on foot;
+- `X`: classic melee attack on foot;
 - `Y`: enter or exit a vehicle;
-- `L2`: hold GTA's native targeting state; releasing it lowers the weapon;
-- `R2`: fire while `L2` is held;
+- `L2`: hold GTA's native targeting state; releasing it lowers the weapon.
+  Spray and extinguisher deliberately stay on the mobile classic-attack path
+  instead, because targeting would lock their direction in Diorama;
+- `R2`: fire while `L2` is held; hold `R2` alone for the spray can or
+  extinguisher, leaving the Left Stick free to steer CJ;
 - `L3`: toggle crouch on foot;
 - `R3`: open the on-foot weapon selector; point at an owned weapon with the
   right stick and press `R3` again to equip it and close the selector;
@@ -284,8 +290,11 @@ Tabletop attacks use GTA's classic combat task rather than tracked physical-hand
 aiming. The modern trigger layout routes `L2` through GTA Android's native
 `CPad::GetTarget`, `GetEnterTargeting` and `GetExitTargeting` lifecycle, while
 retaining `widget_target` as a mobile-script compatibility path. `L2` + `R2`
-merges into `CPad::GetWeapon` for punches, melee, guns and spray weapons without
-depending on a touch-widget poll; `X` remains a compatibility attack binding.
+merges into `CPad::GetWeapon` for ordinary aimed weapons without depending on a
+touch-widget poll. Spray and extinguisher bypass targeting and use held `R2`
+alone, leaving the Left Stick available to steer CJ. Their area effect also
+receives an explicit target on CJ's forward basis instead of falling back to
+the hidden mobile-camera heading.
 Targeting press/release edges remain visible to every native consumer for the
 exact GTA frame, so one early query cannot steal the L2-release event from CJ.
 The bridge stays on foot and outside tabletop grabs, preserving vehicle trigger
@@ -319,6 +328,7 @@ Supported process-start values:
 ```ini
 enabled=1
 passthrough=1
+boundary_suppression=1
 visual_scale=0.010
 anchor_forward_m=1.25
 anchor_down_m=0.55

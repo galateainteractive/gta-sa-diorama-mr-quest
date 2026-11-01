@@ -1015,7 +1015,10 @@ def patch_manifest(text: str) -> str:
         '    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" '
         # Meta's native OpenXR runtime only exposes XR_FB_passthrough when the
         # app declares passthrough as a required feature.
-        'android:required="true"/>\n    <application',
+        'android:required="true"/>\n'
+        '    <uses-permission '
+        'android:name="com.oculus.permission.BOUNDARY_VISIBILITY"/>\n'
+        '    <application',
         1,
     )
     return text

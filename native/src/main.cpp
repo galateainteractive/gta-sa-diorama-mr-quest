@@ -1090,10 +1090,13 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
         cutsceneCyclePrev = cutsceneCycle;
         cutsceneStorePrev = cutsceneStore;
 
-        // L3+R3 (both thumbstick clicks) recenters the view: the current head
-        // pose becomes straight-ahead. Edge-triggered so holding does it once.
+        // L3+R3 retains the legacy recenter only in Immersive VR. Diorama owns
+        // the same chord in UpdateTabletopControls to cycle TRACK/FOLLOW/FIXED
+        // while preserving the complete miniature transform; its only recenter
+        // is the Quest Meta-button reference-space change handled above.
         static bool recenterPrev = false;
-        const bool recenterChord = !cutsceneCameras && in.l3 && in.r3;
+        const bool recenterChord = !tabletop::Enabled() &&
+            !cutsceneCameras && in.l3 && in.r3;
         if (recenterChord && !recenterPrev) vrcam::RequestRecenter();
         recenterPrev = recenterChord;
 
@@ -1163,9 +1166,9 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
 
         switch (menuPage) {
         case PG_MAIN: {
-            // Play mode, weapon/holster setup, driving, HUD, appearance,
-            // cheats, graphics, controls, about and close.
-            const int N = 14;
+            // Play mode, Diorama boundary preference, weapon/holster setup,
+            // driving, HUD, appearance, cheats, graphics, controls and close.
+            const int N = 15;
             if (navUp)   mainSel = (mainSel - 1 + N) % N;
             if (navDown) mainSel = (mainSel + 1) % N;
             if (mainSel == 0 && minus) {
@@ -1176,45 +1179,54 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
                 savr::tabletop::SetConfiguredEnabled(
                     !savr::tabletop::ConfiguredEnabled());
             }
-            if (mainSel == 7) {
+            if (mainSel == 1) {
+                if (minus)
+                    savr::tabletop::SetBoundarySuppressionEnabled(false);
+                if (plus)
+                    savr::tabletop::SetBoundarySuppressionEnabled(true);
+                if (enter)
+                    savr::tabletop::SetBoundarySuppressionEnabled(
+                        !savr::tabletop::BoundarySuppressionEnabled());
+            }
+            if (mainSel == 8) {
                 if (minus) savr::appearance::SetHandSkin(savr::appearance::HAND_SKIN_LIGHT);
                 if (plus)  savr::appearance::SetHandSkin(savr::appearance::HAND_SKIN_DARK);
                 if (enter) savr::appearance::CycleHandSkin();
             }
             if (enter) {
-                if      (mainSel == 1) {
+                if      (mainSel == 2) {
                     calibWeaponType = savr::calib::ActiveWeapon();
                     menuPage = PG_CALIB;
                     calibSel = 0;
                 }
-                else if (mainSel == 2) {
+                else if (mainSel == 3) {
                     savr::holster::BeginCalibrationPreview();
                     menuPage = PG_HOLSTER_CALIB;
                     holsterCalibSel = 0;
                 }
-                else if (mainSel == 3) { menuPage = PG_HOLSTERS; holsterSel = 0; }
-                else if (mainSel == 4) {
+                else if (mainSel == 4) { menuPage = PG_HOLSTERS; holsterSel = 0; }
+                else if (mainSel == 5) {
                     const int activeType=savr::driving::GetActiveVehicleType();
                     if (activeType!=savr::driving::VEHICLE_NONE)
                         drivingVehicleType=activeType;
                     menuPage = PG_DRIVING; drivingSel = 0;
                 }
-                else if (mainSel == 5) { menuPage = PG_LOCOMOTION; locomotionSel = 0; }
-                else if (mainSel == 6) { menuPage = PG_HUD;      hudSel = 0; }
-                else if (mainSel == 8) {
+                else if (mainSel == 6) { menuPage = PG_LOCOMOTION; locomotionSel = 0; }
+                else if (mainSel == 7) { menuPage = PG_HUD;      hudSel = 0; }
+                else if (mainSel == 9) {
                     menuPage = PG_CHEATS; cheatCategory = -1; cheatSel = 0;
                 }
-                else if (mainSel == 9) { menuPage = PG_GRAPHICS; gfxSel = 0; }
-                else if (mainSel == 10) {
+                else if (mainSel == 10) { menuPage = PG_GRAPHICS; gfxSel = 0; }
+                else if (mainSel == 11) {
                     // The mode-specific guide is the public Controls landing
                     // page. Remapping remains available one level deeper.
                     menuPage = PG_CONTROLS_TIPS;
                     controlsTipsPage = 0;
                     controlsSel = 0;
                 }
-                else if (mainSel == 11) { menuPage = PG_BASKETBALL; basketballSel = 0; }
-                else if (mainSel == 12) { menuPage = PG_ABOUT; aboutFirstRun = false; aboutArmed = false; }
-                else if (mainSel == 13)  menuPage = PG_NONE;
+                else if (mainSel == 12) { menuPage = PG_BASKETBALL; basketballSel = 0; }
+                else if (mainSel == 13) { menuPage = PG_ABOUT; aboutFirstRun = false; aboutArmed = false; }
+                else if (mainSel == 14)  menuPage = PG_NONE;
             }
             if (back) menuPage = PG_NONE;
             break;

@@ -2,6 +2,29 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Anchor the automatic `DIORAMA MR MENU` reminder to the same `LOCAL` space,
+  orientation and depth as GTA's frontend screen, placing its compact cropped
+  banner directly below that screen. It no longer follows head rotation, and a
+  Meta recenter moves the frontend and reminder together; full SAVR menus keep
+  their existing head-locked presentation.
+- Keep `L3 + R3` exclusive to `TRACK`/`FOLLOW`/`FIXED` cycling in Diorama.
+  The legacy simultaneous recenter now remains Immersive-only, allowing the
+  existing continuous-transition compensation to preserve the miniature's
+  position, rotation and scale; the Meta button remains Diorama's recenter.
+- Add a `DIORAMA GUARDIAN` menu preference backed by
+  `XR_META_boundary_visibility`. Boundary suppression is requested only while
+  Diorama MR is focused and after `xrEndFrame` has successfully submitted its
+  passthrough layer. A rejected request retries every 30 real passthrough
+  frames; Immersive VR, focus loss, passthrough shutdown and unsupported
+  runtimes all keep or restore the Quest boundary.
+- Declare only the contextual `BOUNDARY_VISIBILITY` permission. Do not mark the
+  whole APK as boundaryless, because the same installation also contains the
+  Immersive VR mode.
+- Keep the spray can and extinguisher out of GTA's fixed-heading targeting task
+  in Diorama. Holding `R2` now runs their continuous attack while the Left
+  Stick remains available, and an explicit forward target prevents the hidden
+  mobile camera from turning the jet behind CJ.
+
 - Recover the retail 2.11 touch-widget name/id map and bridge verified mobile
   mission, store, casino, gym, school, arcade and vehicle/machinery actions to
   the existing Quest controls only while GTA polls their widget.

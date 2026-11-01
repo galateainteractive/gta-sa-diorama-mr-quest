@@ -27,6 +27,7 @@ constexpr char kScaleProperty[] = "debug.savr.tabletop_scale";
 struct Settings {
     bool enabled{true};
     bool passthrough{true};
+    bool boundarySuppression{true};
     float visualScale{0.01f};
     float anchorForwardMeters{1.25f};
     float anchorDownMeters{0.55f};
@@ -38,6 +39,7 @@ std::once_flag g_loadOnce;
 std::mutex g_saveMutex;
 std::atomic<bool> g_activeEnabled{true};
 std::atomic<bool> g_configuredEnabled{true};
+std::atomic<bool> g_boundarySuppression{true};
 std::atomic<float> g_visualScale{0.01f};
 std::atomic<int> g_radiusPreset{1};
 // Preset 3 is deliberately a 75 m A/B step. 90 m was already close enough
@@ -80,7 +82,7 @@ float ParseFloat(const char* value, float fallback) {
     return end != value && std::isfinite(parsed) ? parsed : fallback;
 }
 
-bool IsEnabledSetting(const char* source) {
+bool IsSetting(const char* source, const char* expectedKey) {
     if (!source) return false;
     char line[192]{};
     std::snprintf(line, sizeof(line), "%s", source);
@@ -89,10 +91,10 @@ bool IsEnabledSetting(const char* source) {
     char* separator = std::strchr(key, '=');
     if (!separator) return false;
     *separator = '\0';
-    return strcasecmp(Trim(key), "enabled") == 0;
+    return strcasecmp(Trim(key), expectedKey) == 0;
 }
 
-bool SaveConfiguredEnabled(bool enabled) {
+bool SaveBoolSetting(const char* key, bool enabled, const char* description) {
     std::lock_guard<std::mutex> lock(g_saveMutex);
     FILE* output = std::fopen(kSettingsTempPath, "w");
     if (!output) {
@@ -104,8 +106,8 @@ bool SaveConfiguredEnabled(bool enabled) {
     if (FILE* input = std::fopen(kSettingsPath, "r")) {
         char line[192]{};
         while (std::fgets(line, sizeof(line), input)) {
-            if (IsEnabledSetting(line)) {
-                std::fprintf(output, "enabled=%d\n", enabled ? 1 : 0);
+            if (IsSetting(line, key)) {
+                std::fprintf(output, "%s=%d\n", key, enabled ? 1 : 0);
                 found = true;
             } else {
                 std::fputs(line, output);
@@ -116,18 +118,29 @@ bool SaveConfiguredEnabled(bool enabled) {
         const Settings& current = g_settings;
         std::fprintf(output,
                      "# GTA SA Diorama MR miniature-mode settings.\n"
+                     "enabled=%d\n"
                      "passthrough=%d\n"
+                     "boundary_suppression=%d\n"
                      "visual_scale=%.3f\n"
                      "anchor_forward_m=%.2f\n"
                      "anchor_down_m=%.2f\n"
                      "radius_preset=%d\n",
+                     strcasecmp(key, "enabled") == 0
+                         ? (enabled ? 1 : 0)
+                         : (g_configuredEnabled.load(
+                                std::memory_order_relaxed) ? 1 : 0),
                      current.passthrough ? 1 : 0,
+                     strcasecmp(key, "boundary_suppression") == 0
+                         ? (enabled ? 1 : 0)
+                         : (g_boundarySuppression.load(
+                                std::memory_order_relaxed) ? 1 : 0),
                      static_cast<double>(current.visualScale),
                      static_cast<double>(current.anchorForwardMeters),
                      static_cast<double>(current.anchorDownMeters),
                      current.radiusPreset);
+        found = true;
     }
-    if (!found) std::fprintf(output, "enabled=%d\n", enabled ? 1 : 0);
+    if (!found) std::fprintf(output, "%s=%d\n", key, enabled ? 1 : 0);
 
     const bool writeOk = std::fflush(output) == 0 &&
                          std::ferror(output) == 0;
@@ -135,7 +148,7 @@ bool SaveConfiguredEnabled(bool enabled) {
     if (!writeOk || !closeOk ||
         std::rename(kSettingsTempPath, kSettingsPath) != 0) {
         std::remove(kSettingsTempPath);
-        LOGW("[tabletop.settings] could not persist play mode");
+        LOGW("[tabletop.settings] could not persist %s", description);
         return false;
     }
     return true;
@@ -160,6 +173,9 @@ void LoadSettings() {
                 loaded.enabled = ParseBool(value, loaded.enabled);
             } else if (strcasecmp(key, "passthrough") == 0) {
                 loaded.passthrough = ParseBool(value, loaded.passthrough);
+            } else if (strcasecmp(key, "boundary_suppression") == 0) {
+                loaded.boundarySuppression = ParseBool(
+                    value, loaded.boundarySuppression);
             } else if (strcasecmp(key, "visual_scale") == 0) {
                 loaded.visualScale = ParseFloat(value, loaded.visualScale);
             } else if (strcasecmp(key, "anchor_forward_m") == 0) {
@@ -206,10 +222,14 @@ void LoadSettings() {
     g_settings = loaded;
     g_activeEnabled.store(loaded.enabled, std::memory_order_relaxed);
     g_configuredEnabled.store(configuredEnabled, std::memory_order_relaxed);
+    g_boundarySuppression.store(loaded.boundarySuppression,
+                                std::memory_order_relaxed);
     g_visualScale.store(loaded.visualScale, std::memory_order_relaxed);
     g_radiusPreset.store(loaded.radiusPreset, std::memory_order_relaxed);
-    LOGI("[tabletop] enabled=%d passthrough=%d scale=%.3f anchor_forward=%.2fm anchor_down=%.2fm radius=%.0fm",
+    LOGI("[tabletop] enabled=%d passthrough=%d boundary_suppression=%d "
+         "scale=%.3f anchor_forward=%.2fm anchor_down=%.2fm radius=%.0fm",
          loaded.enabled ? 1 : 0, loaded.passthrough ? 1 : 0,
+         loaded.boundarySuppression ? 1 : 0,
          static_cast<double>(loaded.visualScale),
          static_cast<double>(loaded.anchorForwardMeters),
          static_cast<double>(loaded.anchorDownMeters),
@@ -235,7 +255,7 @@ bool SetConfiguredEnabled(bool enabled) {
     (void)GetSettings();
     if (enabled == g_configuredEnabled.load(std::memory_order_relaxed))
         return true;
-    if (!SaveConfiguredEnabled(enabled)) return false;
+    if (!SaveBoolSetting("enabled", enabled, "play mode")) return false;
     g_configuredEnabled.store(enabled, std::memory_order_release);
     LOGI("[tabletop.settings] next play mode=%s restart_required=%d",
          enabled ? "diorama" : "immersive", enabled != Enabled() ? 1 : 0);
@@ -255,6 +275,20 @@ void ResetVisualScale() { SetVisualScale(GetSettings().visualScale); }
 float AnchorForwardMeters() { return GetSettings().anchorForwardMeters; }
 float AnchorDownMeters() { return GetSettings().anchorDownMeters; }
 bool PassthroughEnabled() { return GetSettings().passthrough; }
+bool BoundarySuppressionEnabled() {
+    (void)GetSettings();
+    return g_boundarySuppression.load(std::memory_order_relaxed);
+}
+bool SetBoundarySuppressionEnabled(bool enabled) {
+    (void)GetSettings();
+    if (enabled == g_boundarySuppression.load(std::memory_order_relaxed))
+        return true;
+    if (!SaveBoolSetting("boundary_suppression", enabled,
+                         "boundary preference")) return false;
+    g_boundarySuppression.store(enabled, std::memory_order_release);
+    LOGI("[tabletop.settings] boundary suppression=%d", enabled ? 1 : 0);
+    return true;
+}
 
 int RadiusPresetIndex() {
     (void)GetSettings();

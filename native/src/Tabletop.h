@@ -18,6 +18,11 @@ void ResetVisualScale();
 float AnchorForwardMeters();
 float AnchorDownMeters();
 bool PassthroughEnabled();
+// User preference for contextual boundary suppression. The XR backend applies
+// it only while Diorama MR is active and passthrough is actually running;
+// Immersive VR and unsupported runtimes always retain the system boundary.
+bool BoundarySuppressionEnabled();
+bool SetBoundarySuppressionEnabled(bool enabled);
 
 int RadiusPresetIndex();
 float RadiusMeters();

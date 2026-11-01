@@ -82,6 +82,7 @@ Write-Output 'PASS official marker pipeline retained and custom waypoint beacon 
 # mobile target-widget lifecycle and a context-gated modern trigger alias.
 $cameraSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\VrCamera.cpp')
 $fireSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\VrFire.cpp')
+$effectsSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\GraphicsEffects.cpp')
 $mainSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'native\src\main.cpp')
 foreach ($sourcePattern in @('TabletopModernAimRaw\(',
                              'TabletopModernAttackForCombat\(',
@@ -94,7 +95,7 @@ foreach ($sourcePattern in @('TabletopModernAimRaw\(',
 if ($cameraSource -match 'target widget .*bridge=none' -or
     $fireSource -notmatch 'IsTabletopModernAttackActive\(' -or
     $fireSource -notmatch 'targets=lock:%p/free:%p' -or
-    $fireSource -notmatch 'route=classic_pad_target_no_physical_ray' -or
+    $fireSource -notmatch 'route=classic_pad_forward_area_no_physical_ray' -or
     $mainSource -notmatch 'attackHeld \|\| modernTriggerAttack' -or
     $cameraSource -notmatch 'tabletopCombatReleaseGate') {
     throw 'Package 39 modern combat routing audit failed'
@@ -122,6 +123,28 @@ if (-not $attackBody.Success -or
     throw 'Package 40 R2 still depends on a widget/target poll'
 }
 Write-Output 'PASS Package 40 direct CPad targeting, independent R2 and CJ ped safety'
+
+# Spray and extinguisher must not enter the fixed-heading targeting task in
+# Diorama. They use R2 without L2 so the left thumb remains available for
+# steering, and the effect receives CJ's explicit forward direction.
+foreach ($sourcePattern in @(
+        'bool TabletopClassicAreaWeaponActive\(\)',
+        'weaponType == 41 \|\| weaponType == 42',
+        'if \(TabletopClassicAreaWeaponActive\(\)\) return false;',
+        'if \(TabletopClassicAreaWeaponActive\(\)\) return TabletopAreaAttackRaw\(in\);')) {
+    if ($cameraSource -notmatch $sourcePattern) {
+        throw "Movable spray/extinguisher audit failed: $sourcePattern"
+    }
+}
+if ($fireSource -notmatch 'const bool buttonAttack = !tabletopAreaWeapon' -or
+    $fireSource -notmatch 'vrcam::IsTabletopModernAttackActive\(\)') {
+    throw 'Movable spray/extinguisher R2 route is missing'
+}
+if ($effectsSource -notmatch 'kTabletopAreaTargetDistanceM' -or
+    $effectsSource -notmatch 'origin->x \+ actorForward\.x \* scale') {
+    throw 'Tabletop spray/extinguisher forward-target route is missing'
+}
+Write-Output 'PASS movable R2 spray/extinguisher with forward targeting'
 
 # Package 41 makes the controller layout fit Quest's split face buttons and
 # makes targeting edges frame-coherent instead of first-caller one-shots.
@@ -526,6 +549,8 @@ foreach ($sourcePattern in @(
         'text\.empty\(\) \|\| !tabletop::Enabled\(\)',
         '~widget_enter_targeting~", u"L2"',
         '~widget_attack~", u"X / R2 WHILE AIMING"',
+        '~widget_explicit_extinguisher~", u"HOLD R2"',
+        'X  ATTACK      R2  HOLD SPRAY',
         '~widget_explicit_crouch~", u"L3"',
         '~widget_enter_car~", u"Y"',
         '~widget_explicit_bicycle~", u"Y"',
@@ -918,7 +943,7 @@ foreach ($sourcePattern in @(
         'kTheaterHelpTextScreenY = 0\.68f',
         '!stereoEye&&element==hud::MESSAGES',
         '!stereoEye&&element==hud::HELP_TEXT\s*\? kTheaterHelpTextScreenY',
-        'drawDirectText\(hud::HELP_TEXT,g_briefTextTexture\)')) {
+        'drawDirectText\(hud::HELP_TEXT,g_briefTextTexture,')) {
     if ($xrSource -notmatch $sourcePattern) {
         throw "Package 79 theater subtitle placement audit failed: $sourcePattern"
     }

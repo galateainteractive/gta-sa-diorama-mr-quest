@@ -273,12 +273,6 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
         (!g.FindPlayerVehicle || g.FindPlayerVehicle(-1, false) == nullptr)) {
         xr::InputState input{};
         xr::GetInput(input);
-        const bool buttonAttack = locomotion::ActionHeld(
-            locomotion::BIND_ACT_ATTACK, input.a, input.b, input.x, input.y,
-            input.l3, input.r3, true);
-        const bool modernTriggerAttack =
-            vrcam::IsTabletopModernAttackActive();
-        const bool attack = buttonAttack || modernTriggerAttack;
         int slot = -1;
         int weaponType = 0;
         if (playerPed) {
@@ -291,6 +285,18 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
                     static_cast<std::uintptr_t>(slot) * kWeaponStride);
             }
         }
+        const bool tabletopAreaWeapon = weaponType == 41 || weaponType == 42;
+        // X stays available for punches/melee, but continuous area weapons use
+        // the right trigger so the player's left thumb can steer CJ while the
+        // spray is held. L2 is intentionally not required: GTA's native target
+        // task points these weapons with its hidden mobile-camera heading.
+        const bool buttonAttack = !tabletopAreaWeapon &&
+            locomotion::ActionHeld(
+                locomotion::BIND_ACT_ATTACK, input.a, input.b, input.x, input.y,
+                input.l3, input.r3, true);
+        const bool modernTriggerAttack =
+            vrcam::IsTabletopModernAttackActive();
+        const bool attack = buttonAttack || modernTriggerAttack;
         if (attack && (!g_tabletopAttackPreviously ||
                        weaponType != g_tabletopLastLoggedWeapon)) {
             int cameraMode = -1;
@@ -331,7 +337,7 @@ int OnPadGetWeapon(void* pad, void* ped, bool allowPassive) {
                  "camera_mode=%d heading=%.3f "
                  "targets=lock:%p/free:%p "
                  "actor_forward=(%.3f,%.3f,%.3f) "
-                 "route=classic_pad_target_no_physical_ray",
+                 "route=classic_pad_forward_area_no_physical_ray",
                  weaponType, slot, vanilla,
                  input.a ? 1 : 0, input.b ? 1 : 0,
                  input.x ? 1 : 0, input.y ? 1 : 0,

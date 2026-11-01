@@ -48,6 +48,8 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "MetaBoundaryVisibility.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -99,7 +101,8 @@ struct HudTextTexture {
     GLuint texture{};
     int width{};
     int height{};
-    std::uint64_t revision{~std::uint64_t{0}};
+    std::u16string uploadedText;
+    int uploadedStyle{-1};
     bool visible{};
 };
 
@@ -243,7 +246,7 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         {u"~widget_explicit_flight_descend~", u"L2"},
         {u"~widget_explicit_camera_zoom_in~", u"RIGHT STICK UP"},
         {u"~widget_explicit_camera_zoom_out~", u"RIGHT STICK DOWN"},
-        {u"~widget_explicit_extinguisher~", u"L2 + R2"},
+        {u"~widget_explicit_extinguisher~", u"HOLD R2"},
         {u"~widget_camera~", u"R3"},
         {u"~widget_vc_shoot~", u"R2"},
         {u"~widget_reply_yes~", u"R2"},
@@ -423,7 +426,7 @@ std::u16string AdaptDioramaTutorialText(std::u16string text,
         {u"Placing your thumb on the lower left corner of the screen will show an analog stick. Sensitivity can be set in the Redefine Controls Menu.",
          u"Use the Left Stick to move. Stick settings are available in the Diorama Controls menu."},
         {u"Tap the screen to lock on to a target. Tap ~m~~widget_attack~ to fire.",
-         u"Hold L2 to aim at a target. Press R2 to fire."},
+         u"Hold L2 and press R2 for aimed weapons. Hold R2 alone for spray or extinguisher."},
         {u"To look around swipe across the center of the screen. To fire tap ~m~~widget_vc_shoot~.",
          u"Use the Right Stick to look around. Press R2 to fire."},
         {u"To manually aim, touch the middle of the screen and move to the left and right whilst shooting.",
@@ -2612,6 +2615,8 @@ State s;
 
 bool g_hasPassthroughExt = false;
 bool g_hasPassthroughColorLutExt = false;
+bool g_hasBoundaryVisibilityExt = false;
+bool g_boundaryVisibilitySupported = false;
 std::atomic<bool> g_passthroughActive{false};
 std::atomic<std::uint64_t> g_tabletopMaskSnapshotAuthority{0};
 XrPassthroughFB g_passthrough{XR_NULL_HANDLE};
@@ -2626,6 +2631,18 @@ PFN_xrDestroyPassthroughLayerFB g_xrDestroyPassthroughLayerFB{};
 PFN_xrPassthroughLayerPauseFB g_xrPassthroughLayerPauseFB{};
 PFN_xrPassthroughLayerResumeFB g_xrPassthroughLayerResumeFB{};
 PFN_xrPassthroughLayerSetStyleFB g_xrPassthroughLayerSetStyleFB{};
+PFN_xrRequestBoundaryVisibilityMETA g_xrRequestBoundaryVisibilityMETA{};
+bool g_boundaryRequestValid = false;
+XrBoundaryVisibilityMETA g_lastBoundaryRequest =
+    XR_BOUNDARY_VISIBILITY_NOT_SUPPRESSED_META;
+// Quest accepts suppression only after passthrough has actually appeared in a
+// successfully submitted composition frame. Starting/resuming the FB feature
+// is not sufficient. Failed suppression requests retry after 30 real
+// passthrough submissions instead of exhausting a startup-time retry budget.
+bool g_passthroughSubmittedSinceResume = false;
+int g_boundaryRetryFrames = 0;
+std::uint32_t g_boundaryRetryAttempts = 0;
+constexpr int kBoundaryRetryFrameInterval = 30;
 PFN_xrCreatePassthroughColorLutMETA
     g_xrCreatePassthroughColorLutMETA{};
 PFN_xrDestroyPassthroughColorLutMETA
@@ -2713,7 +2730,7 @@ PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
     const PassthroughGrade sunset{
         -0.025f, 0.025f, 1.03f, {1.16f, 0.94f, 0.78f}, 0.36f};
     const PassthroughGrade night{
-        -0.155f, -0.035f, 0.82f, {0.84f, 0.93f, 1.08f}, 0.24f};
+        -0.135f, -0.035f, 0.82f, {0.84f, 0.93f, 1.08f}, 0.24f};
     const PassthroughGrade overcast{
         -0.035f, -0.105f, 0.78f, {0.93f, 0.97f, 1.02f}, 0.16f};
     const PassthroughGrade rain{
@@ -2989,11 +3006,121 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
     }
 }
 
+bool InitializeBoundaryVisibility() {
+    if (!g_hasBoundaryVisibilityExt || s.instance == XR_NULL_HANDLE ||
+        s.systemId == XR_NULL_SYSTEM_ID) return false;
+    const XrResult procResult = xrGetInstanceProcAddr(
+        s.instance, "xrRequestBoundaryVisibilityMETA",
+        reinterpret_cast<PFN_xrVoidFunction*>(
+            &g_xrRequestBoundaryVisibilityMETA));
+    if (XR_FAILED(procResult) || !g_xrRequestBoundaryVisibilityMETA) {
+        LOGW("[tabletop.boundary] entrypoint unavailable result=%d",
+             static_cast<int>(procResult));
+        g_xrRequestBoundaryVisibilityMETA = nullptr;
+        return false;
+    }
+
+    XrSystemBoundaryVisibilityPropertiesMETA boundaryProperties{
+        XR_TYPE_SYSTEM_BOUNDARY_VISIBILITY_PROPERTIES_META};
+    XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES};
+    properties.next = &boundaryProperties;
+    const XrResult propertiesResult = xrGetSystemProperties(
+        s.instance, s.systemId, &properties);
+    g_boundaryVisibilitySupported = XR_SUCCEEDED(propertiesResult) &&
+        boundaryProperties.supportsBoundaryVisibility == XR_TRUE;
+    __android_log_print(
+        ANDROID_LOG_INFO, SAVR_TAG,
+        "[tabletop.boundary] contextual support=%d properties=%d",
+        g_boundaryVisibilitySupported ? 1 : 0,
+        static_cast<int>(propertiesResult));
+    return g_boundaryVisibilitySupported;
+}
+
+void RequestBoundaryVisibility(XrBoundaryVisibilityMETA desired,
+                               const char* reason, bool force = false) {
+    if (!g_boundaryVisibilitySupported ||
+        !g_xrRequestBoundaryVisibilityMETA ||
+        s.session == XR_NULL_HANDLE || !s.running) return;
+    if (force || desired != g_lastBoundaryRequest) {
+        g_lastBoundaryRequest = desired;
+        g_boundaryRequestValid = false;
+        g_boundaryRetryFrames = 0;
+        g_boundaryRetryAttempts = 0;
+    }
+    if (!force && g_boundaryRequestValid &&
+        g_lastBoundaryRequest == desired) return;
+    if (desired == XR_BOUNDARY_VISIBILITY_SUPPRESSED_META) {
+        if (!g_passthroughSubmittedSinceResume) return;
+        if (!force && g_boundaryRetryFrames > 0) return;
+    }
+
+    const XrResult result = g_xrRequestBoundaryVisibilityMETA(
+        s.session, desired);
+    if (result == XR_SUCCESS) {
+        g_boundaryRequestValid = true;
+        g_boundaryRetryFrames = 0;
+        g_boundaryRetryAttempts = 0;
+        __android_log_print(
+            ANDROID_LOG_INFO, SAVR_TAG,
+            "[tabletop.boundary] requested=%s reason=%s result=%d",
+            desired == XR_BOUNDARY_VISIBILITY_SUPPRESSED_META
+                ? "suppressed" : "visible",
+            reason, static_cast<int>(result));
+        return;
+    }
+
+    if (desired == XR_BOUNDARY_VISIBILITY_SUPPRESSED_META) {
+        g_boundaryRequestValid = false;
+        g_boundaryRetryFrames = kBoundaryRetryFrameInterval;
+        ++g_boundaryRetryAttempts;
+        // Keep Release logs useful without emitting two warnings per second
+        // forever on a runtime or account policy that disallows suppression.
+        if (g_boundaryRetryAttempts <= 3 ||
+            (g_boundaryRetryAttempts % 120u) == 0u) {
+            __android_log_print(
+                ANDROID_LOG_WARN, SAVR_TAG,
+                "[tabletop.boundary] request=suppressed reason=%s result=%d "
+                "retry_in_frames=%d attempt=%u",
+                reason, static_cast<int>(result),
+                kBoundaryRetryFrameInterval, g_boundaryRetryAttempts);
+        }
+    } else {
+        // The runtime's safe/default state is visible, and passthrough is
+        // paused immediately after this best-effort restore. Do not spin on a
+        // visibility request when no more XR frames may follow.
+        g_boundaryRequestValid = true;
+        __android_log_print(
+            ANDROID_LOG_WARN, SAVR_TAG,
+            "[tabletop.boundary] request=visible reason=%s result=%d",
+            reason, static_cast<int>(result));
+    }
+}
+
+void SyncBoundaryVisibility(const char* reason, bool force = false) {
+    const bool shouldSuppress = tabletop::Enabled() &&
+        tabletop::BoundarySuppressionEnabled() &&
+        g_passthroughActive.load(std::memory_order_acquire) &&
+        s.sessionState == XR_SESSION_STATE_FOCUSED;
+    if (force) {
+        g_boundaryRequestValid = false;
+        g_boundaryRetryFrames = 0;
+        g_boundaryRetryAttempts = 0;
+    }
+    RequestBoundaryVisibility(
+        shouldSuppress ? XR_BOUNDARY_VISIBILITY_SUPPRESSED_META
+                       : XR_BOUNDARY_VISIBILITY_NOT_SUPPRESSED_META,
+        reason, force);
+}
+
 void SetPassthroughActive(bool active) {
     if (g_passthrough == XR_NULL_HANDLE ||
         g_passthroughLayer == XR_NULL_HANDLE ||
         active == g_passthroughActive.load(std::memory_order_acquire)) return;
     if (active) {
+        g_passthroughSubmittedSinceResume = false;
+        g_boundaryRetryFrames = 0;
+        g_boundaryRetryAttempts = 0;
+        g_boundaryRequestValid = false;
         const XrResult start = g_xrPassthroughStartFB(g_passthrough);
         const XrResult resume = XR_SUCCEEDED(start)
             ? g_xrPassthroughLayerResumeFB(g_passthroughLayer) : start;
@@ -3008,9 +3135,17 @@ void SetPassthroughActive(bool active) {
             XR_SUCCEEDED(start))
             g_xrPassthroughPauseFB(g_passthrough);
     } else {
+        // Restore the safety boundary while the real room is still visible;
+        // after pausing passthrough a suppression request is no longer allowed.
+        RequestBoundaryVisibility(
+            XR_BOUNDARY_VISIBILITY_NOT_SUPPRESSED_META,
+            "passthrough-off", true);
         g_xrPassthroughLayerPauseFB(g_passthroughLayer);
         g_xrPassthroughPauseFB(g_passthrough);
         g_passthroughActive.store(false, std::memory_order_release);
+        g_passthroughSubmittedSinceResume = false;
+        g_boundaryRetryFrames = 0;
+        g_boundaryRetryAttempts = 0;
         LOGI("[tabletop.passthrough] paused");
     }
 }
@@ -3068,6 +3203,10 @@ bool InitializePassthrough() {
     g_xrPassthroughLayerSetStyleFB(g_passthroughLayer, &style);
     g_passthroughWeatherLutReady = InitializePassthroughWeatherStyle();
     g_passthroughActive.store(true, std::memory_order_release);
+    g_passthroughSubmittedSinceResume = false;
+    g_boundaryRetryFrames = 0;
+    g_boundaryRetryAttempts = 0;
+    g_boundaryRequestValid = false;
     LOGI("[tabletop.passthrough] XR_FB_passthrough initialized");
     return true;
 }
@@ -3907,6 +4046,17 @@ EGLConfig ConfigOfContext(EGLDisplay display, EGLContext context) {
 void PollEvents() {
     XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
     while (xrPollEvent(s.instance, &event) == XR_SUCCESS) {
+        if (event.type == XR_TYPE_EVENT_DATA_BOUNDARY_VISIBILITY_CHANGED_META) {
+            const auto* boundaryEvent =
+                reinterpret_cast<const XrEventDataBoundaryVisibilityChangedMETA*>(&event);
+            LOGI("[tabletop.boundary] observed=%s",
+                 boundaryEvent->boundaryVisibility ==
+                         XR_BOUNDARY_VISIBILITY_SUPPRESSED_META
+                     ? "suppressed" : "visible");
+            event = {XR_TYPE_EVENT_DATA_BUFFER};
+            continue;
+        }
+
         switch (event.type) {
         case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
             const auto& changed = *reinterpret_cast<XrEventDataSessionStateChanged*>(&event);
@@ -3937,6 +4087,12 @@ void PollEvents() {
                     g_threadDirty.store(true, std::memory_order_relaxed);  // hints next frame
                 }
             } else if (s.sessionState == XR_SESSION_STATE_FOCUSED) {
+                // A new focus epoch may reset runtime-owned boundary state.
+                // Re-evaluate after passthrough has resumed on the next frame.
+                g_boundaryRequestValid = false;
+                g_passthroughSubmittedSinceResume = false;
+                g_boundaryRetryFrames = 0;
+                g_boundaryRetryAttempts = 0;
                 // One bounded retry covers runtimes that populate the physical
                 // view mask only when the session becomes focused.
                 LoadHiddenAreaMasks();
@@ -4036,6 +4192,9 @@ void PollEvents() {
         }
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
             LOGW("instance loss pending");
+            RequestBoundaryVisibility(
+                XR_BOUNDARY_VISIBILITY_NOT_SUPPRESSED_META,
+                "instance-loss", true);
             s.running = false;
             break;
         default:
@@ -4986,11 +5145,28 @@ HudTextState SnapshotHudText() {
 
 bool UpdateHudTextTexture(HudTextTexture& target,
                           const std::u16string& text,
-                          int style,std::uint64_t revision) {
-    if (target.revision==revision) return target.visible;
-    target.revision=revision;
+                          int style) {
+    // 2x the original raster so the Java-side font stays sharp when the layer
+    // covers a third of the eye. renderVrText scales its typeface with width.
+    constexpr int kTextWidth=2048;
+    constexpr int kTextHeight=512;
+    if (text.empty()) {
+        target.visible=false;
+        return false;
+    }
+    // Each direct-text channel owns its content cache. A radio, timer or help
+    // update must not re-rasterise every other visible channel merely because
+    // the shared HUD state changed. When identical text reappears after being
+    // hidden, the existing GPU texture can be made visible without any Java,
+    // CPU conversion or upload work.
+    if (target.texture&&target.width==kTextWidth&&
+        target.height==kTextHeight&&
+        target.uploadedStyle==style&&target.uploadedText==text) {
+        target.visible=true;
+        return true;
+    }
     target.visible=false;
-    if (text.empty()||!g_hudTextVm||!g_hudTextApplication||
+    if (!g_hudTextVm||!g_hudTextApplication||
         !g_renderVrTextMethod) return false;
 
     JNIEnv* env=nullptr;
@@ -5004,10 +5180,6 @@ bool UpdateHudTextTexture(HudTextTexture& target,
         return false;
     }
 
-    // 2x the original raster so the Java-side font stays sharp when the layer
-    // covers a third of the eye. renderVrText scales its typeface with width.
-    constexpr int kTextWidth=2048;
-    constexpr int kTextHeight=512;
     jstring javaText=env->NewString(
         reinterpret_cast<const jchar*>(text.data()),
         static_cast<jsize>(text.size()));
@@ -5029,7 +5201,12 @@ bool UpdateHudTextTexture(HudTextTexture& target,
         return false;
     }
 
-    std::vector<jint> argb(static_cast<std::size_t>(count));
+    // The compositor calls this serially on its render thread. Retain the two
+    // 4 MiB conversion buffers between text changes instead of allocating and
+    // freeing them for every short vehicle/tutorial notification.
+    static thread_local std::vector<jint> argb;
+    static thread_local std::vector<std::uint8_t> rgba;
+    argb.resize(static_cast<std::size_t>(count));
     env->GetIntArrayRegion(pixels,0,count,argb.data());
     env->DeleteLocalRef(pixels);
     if (detach) g_hudTextVm->DetachCurrentThread();
@@ -5037,7 +5214,7 @@ bool UpdateHudTextTexture(HudTextTexture& target,
     // Android returns ARGB words in top-down row order. The HUD shader also
     // addresses source rectangles with a top-left origin, so preserve the row
     // order while converting to RGBA (a second flip makes text upside-down).
-    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(count)*4u);
+    rgba.resize(static_cast<std::size_t>(count)*4u);
     for (int y=0;y<kTextHeight;++y) {
         for (int x=0;x<kTextWidth;++x) {
             const std::uint32_t colour=static_cast<std::uint32_t>(
@@ -5062,6 +5239,8 @@ bool UpdateHudTextTexture(HudTextTexture& target,
     if (staleError!=GL_NO_ERROR)
         LOGW("[hud.text] cleared stale GL error 0x%x before upload",staleError);
 
+    const bool needsStorage=!target.texture||target.width!=kTextWidth||
+        target.height!=kTextHeight;
     if (!target.texture) glGenTextures(1,&target.texture);
     glBindTexture(GL_TEXTURE_2D,target.texture);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
@@ -5069,12 +5248,21 @@ bool UpdateHudTextTexture(HudTextTexture& target,
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT,4);
-    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,kTextWidth,kTextHeight,0,
-                 GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
-    target.width=kTextWidth;
-    target.height=kTextHeight;
+    if (needsStorage) {
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,kTextWidth,kTextHeight,0,
+                     GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,kTextWidth,kTextHeight,
+                        GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+    }
     const GLenum uploadError=glGetError();
     target.visible=target.texture!=0&&uploadError==GL_NO_ERROR;
+    if (target.visible) {
+        target.width=kTextWidth;
+        target.height=kTextHeight;
+        target.uploadedText=text;
+        target.uploadedStyle=style;
+    }
     LOGI("[hud.text] direct %s raster chars=%zu tex=%u visible=%d gl=0x%x",
          style==1?"big":"help",text.size(),target.texture,
          target.visible?1:0,uploadError);
@@ -5140,13 +5328,11 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         if (timerText.empty())
             timerText=u"TIME 04:32\nGOAL 12/30";
     }
-    const std::uint64_t textureRevision=(textState.revision<<4)|
-        (calibrating?static_cast<std::uint64_t>(selected+1):0u);
-    UpdateHudTextTexture(g_briefTextTexture,subtitleText,0,textureRevision);
-    UpdateHudTextTexture(g_helpTextTexture,helpText,0,textureRevision);
-    UpdateHudTextTexture(g_statTextTexture,statText,0,textureRevision);
-    UpdateHudTextTexture(g_bigTextTexture,bigText,1,textureRevision);
-    UpdateHudTextTexture(g_timerTextTexture,timerText,0,textureRevision);
+    UpdateHudTextTexture(g_briefTextTexture,subtitleText,0);
+    UpdateHudTextTexture(g_helpTextTexture,helpText,0);
+    UpdateHudTextTexture(g_statTextTexture,statText,0);
+    UpdateHudTextTexture(g_bigTextTexture,bigText,1);
+    UpdateHudTextTexture(g_timerTextTexture,timerText,0);
     // Per-eye convergence: shift every destination rect toward the nose by
     // the parallax of a plane kHudPlaneDistanceMetres away, so crops and
     // text fuse at that depth instead of at infinity behind the world.
@@ -5156,6 +5342,15 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     // needs no baked per-eye disparity. Projection eyes retain their explicit
     // convergence shift.
     const bool stereoEye=eye==0||eye==1;
+    const bool bigMessageEnabled=
+        hud::GetElementSettings(hud::MESSAGES).enabled||
+        (calibrating&&selected==hud::MESSAGES);
+    const bool bigMessageActive=
+        stereoEye&&g_bigTextTexture.visible&&bigMessageEnabled;
+    const int smallTextCount=
+        (g_briefTextTexture.visible?1:0)+
+        (g_statTextTexture.visible?1:0)+
+        (g_helpTextTexture.visible?1:0);
     const float hudDepthShiftUv=stereoEye?
         ((eye==0)?1.0f:-1.0f)*kStereoHalfIpd/
             (2.0f*kHudPlaneDistanceMetres*tanXForDepth):0.0f;
@@ -5249,7 +5444,7 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         // position again after disabling it.
         if (!settings.enabled&&!(calibrating&&element==selected)) return;
         const float baseX=static_cast<float>(settings.screenX)/100.0f;
-        const float baseY=!stereoEye&&element==hud::HELP_TEXT
+        float baseY=!stereoEye&&element==hud::HELP_TEXT
             ? kTheaterHelpTextScreenY
             : static_cast<float>(settings.screenY)/100.0f;
         const float baseW=static_cast<float>(settings.screenWidth)/100.0f;
@@ -5257,6 +5452,31 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
         const float scale=static_cast<float>(settings.scaleTenths)/10.0f;
         const float scaledW=baseW*scale;
         const float scaledH=baseH*scale;
+        // Failure reasons, subtitles and help cards share the centre band with
+        // stock big messages by default. When both channels are live, move the
+        // complete small-text stack just below the big-message rectangle rather
+        // than drawing e.g. "MISSION FAILED" through its explanation.
+        if (stereoEye&&element==hud::HELP_TEXT&&bigMessageActive&&
+            smallTextCount>0) {
+            const hud::ElementSettings bigSettings=
+                hud::GetElementSettings(hud::MESSAGES);
+            const float bigBaseY=
+                static_cast<float>(bigSettings.screenY)/100.0f;
+            const float bigBaseH=
+                static_cast<float>(bigSettings.screenHeight)/100.0f;
+            const float bigScale=
+                static_cast<float>(bigSettings.scaleTenths)/10.0f;
+            const float bigScaledH=bigBaseH*bigScale;
+            const float bigBottom=bigBaseY+
+                (bigBaseH-bigScaledH)*0.5f+bigScaledH;
+            constexpr float kMessageGap=0.02f;
+            const float shiftedBaseY=bigBottom+kMessageGap-
+                (baseH-scaledH)*0.5f+
+                static_cast<float>(smallTextCount-1)*scaledH;
+            const float latestBaseY=0.98f-
+                (baseH-scaledH)*0.5f-scaledH;
+            baseY=std::max(baseY,std::min(shiftedBaseY,latestBaseY));
+        }
         const float textDepthShiftUv = element == hud::HELP_TEXT
             ? (stereoEye?((eye==0)?1.0f:-1.0f)*kStereoHalfIpd /
                 (2.0f*kHelpTextPlaneDistanceMetres*tanXForDepth):0.0f)
@@ -7547,12 +7767,18 @@ bool Initialize(JavaVM* vm, jobject activity) {
         hasExt(XR_META_PASSTHROUGH_COLOR_LUT_EXTENSION_NAME);
     if (g_hasPassthroughColorLutExt)
         extensions.push_back(XR_META_PASSTHROUGH_COLOR_LUT_EXTENSION_NAME);
-    LOGI("[perf.init] xr_ext perf_settings=%d thread_settings=%d refresh=%d meta_metrics=%d visibility_mask=%d passthrough=%d",
+    g_hasBoundaryVisibilityExt =
+        hasExt(XR_META_BOUNDARY_VISIBILITY_EXTENSION_NAME);
+    if (g_hasBoundaryVisibilityExt)
+        extensions.push_back(XR_META_BOUNDARY_VISIBILITY_EXTENSION_NAME);
+    LOGI("[perf.init] xr_ext perf_settings=%d thread_settings=%d refresh=%d "
+         "meta_metrics=%d visibility_mask=%d passthrough=%d boundary=%d",
          g_hasPerfExt ? 1 : 0, g_hasThreadExt ? 1 : 0,
          g_hasDisplayRefreshExt ? 1 : 0,
          g_hasPerformanceMetricsExt ? 1 : 0,
          g_hasVisibilityMaskExt ? 1 : 0,
-         g_hasPassthroughExt ? 1 : 0);
+         g_hasPassthroughExt ? 1 : 0,
+         g_hasBoundaryVisibilityExt ? 1 : 0);
     LOGI("[tabletop.passthrough.weather] color_lut_ext=%d",
          g_hasPassthroughColorLutExt ? 1 : 0);
     // Capability evidence only. Do not enable foveation here: GTA renders the
@@ -7604,6 +7830,7 @@ bool Initialize(JavaVM* vm, jobject activity) {
     if (!Check(xrGetSystem(s.instance, &systemInfo, &s.systemId), "xrGetSystem")) {
         return false;
     }
+    InitializeBoundaryVisibility();
 
     if (!EnumerateViews()) {
         return false;
@@ -8364,9 +8591,9 @@ void BuildControlsTipsMenu() {
 
         section("ON FOOT", 134);
         command("A  JUMP        B  SPRINT", 162);
-        command("X  ATTACK      Y  ENTER / EXIT", 184);
-        command("L3  CROUCH     L2  AIM", 206);
-        command("R2  FIRE WHILE AIMING", 228, true);
+        command("X  ATTACK      R2  HOLD SPRAY", 184);
+        command("Y  ENTER / EXIT     L3  CROUCH", 206);
+        command("L2  AIM + R2  FIRE (GUNS)", 228, true);
 
         section("WEAPONS", 262);
         command("R3  OPEN SELECTOR", 290);
@@ -8465,8 +8692,14 @@ void BuildMainMenu() {
     std::snprintf(playModeRow, sizeof(playModeRow), "PLAY MODE  < %s >%s",
                   tabletop::ConfiguredEnabled() ? "DIORAMA MR" : "IMMERSIVE VR",
                   tabletop::ModeChangeNeedsRestart() ? "  [RESTART]" : "");
+    char boundaryRow[64];
+    std::snprintf(boundaryRow, sizeof(boundaryRow),
+                  "DIORAMA GUARDIAN   < %s >",
+                  tabletop::BoundarySuppressionEnabled()
+                      ? "HIDDEN" : "VISIBLE");
     const char* kItems[] = {
         playModeRow,
+        boundaryRow,
         "WEAPON CALIBRATION",
         "HOLSTER CALIBRATION",
         "HOLSTER LOADOUT",
@@ -8481,14 +8714,14 @@ void BuildMainMenu() {
         "ABOUT",
         "CLOSE"
     };
-    const int N   = 14;
+    const int N   = 15;
     const int sel = g_mainSel.load(std::memory_order_relaxed);
-    const int top = 78, rowH = 29;
+    const int top = 76, rowH = 27;
     for (int i = 0; i < N; ++i) {
         const int y = top + i * rowH;
         if (i == sel) PanelFillRect(40, y - 6, kPanelW - 40, y + 30, 120, 40, 110, 235);
-        const bool submenu=i==1||i==2||i==3||i==4||i==5||i==6||
-                           i==8||i==9||i==10||i==11||i==12;
+        const bool submenu=i==2||i==3||i==4||i==5||i==6||i==7||
+                           i==9||i==10||i==11||i==12||i==13;
         if (submenu)
             PanelText(kItems[i],cx,y,2,i==sel?255:100,
                       i==sel?235:225,i==sel?120:255);
@@ -9551,8 +9784,7 @@ bool EnsureWeaponSelectorTexture() {
 // Upload the current panel into the debug swapchain and describe it as a
 // head-locked quad (view space), matching the Vice City overlay's placement.
 bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
-    if (s.debug.handle == XR_NULL_HANDLE || s.viewSpace == XR_NULL_HANDLE ||
-        s.debug.poisoned) return false;
+    if (s.debug.handle == XR_NULL_HANDLE || s.debug.poisoned) return false;
     const bool mainMenu = g_mainMenuActive.load(std::memory_order_relaxed);
     const bool calibMenu = g_calibActive.load(std::memory_order_relaxed);
     const bool holsterCalibMenu = g_holsterCalibActive.load(std::memory_order_relaxed);
@@ -9679,18 +9911,58 @@ bool PresentDebugPanel(XrCompositionLayerQuad& quad) {
 
     quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     quad.layerFlags        = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-    quad.space             = s.viewSpace;                 // head-locked
     quad.eyeVisibility     = XR_EYE_VISIBILITY_BOTH;
     quad.subImage.swapchain= s.debug.handle;
     quad.subImage.imageRect.offset = {0, 0};
     quad.subImage.imageRect.extent = {kPanelW, kPanelH};
     quad.pose.orientation  = {0.0f, 0.0f, 0.0f, 1.0f};
-    quad.pose.position     = {0.0f, -0.20f, -1.65f};
-    // Vice City's settings surface is deliberately much larger than the old
-    // square debug card. Keep the proven 512 texture but present it at a useful
-    // cockpit-menu size so rows can be read without leaning forward.
-    quad.size              = {1.8f, 1.8f * static_cast<float>(kPanelH) /
-                                    static_cast<float>(kPanelW)};
+    if (frontendHint) {
+        if (s.space == XR_NULL_HANDLE) return false;
+
+        // Present only the compact lower banner from the cached 512 panel.
+        // PanelPixel stores top-down CPU coordinates bottom-up in GL, so the
+        // top-down range y=362..512 occupies texture rows 0..150.
+        constexpr int kHintCropX = 12;
+        constexpr int kHintCropY = 0;
+        constexpr int kHintCropW = kPanelW - 24;
+        constexpr int kHintCropH = 150;
+        constexpr float kHintWidthMeters = 1.85f;
+        constexpr float kMenuWidthMeters = 3.2f;
+        constexpr float kMenuDistanceMeters = 2.2f;
+        constexpr float kMenuGapMeters = 0.08f;
+        const float hintHeightMeters = kHintWidthMeters *
+            static_cast<float>(kHintCropH) / static_cast<float>(kHintCropW);
+        const int cropW = g_theaterCropW.load(std::memory_order_relaxed);
+        const int cropH = g_theaterCropH.load(std::memory_order_relaxed);
+        const float menuAspect = cropW > 0 && cropH > 0
+            ? static_cast<float>(cropW) / static_cast<float>(cropH)
+            : static_cast<float>(s.theater.width) /
+                  static_cast<float>(s.theater.height);
+        const float menuHeightMeters = kMenuWidthMeters / menuAspect;
+
+        // The GTA frontend quad uses this same LOCAL space, identity
+        // orientation and 2.2 m depth. Matching those values makes the hint a
+        // stable companion directly below it. A Meta recenter changes LOCAL,
+        // so the menu and hint move together without app-side pose copying.
+        quad.space = s.space;
+        quad.subImage.imageRect.offset = {kHintCropX, kHintCropY};
+        quad.subImage.imageRect.extent = {kHintCropW, kHintCropH};
+        quad.pose.position = {
+            0.0f,
+            -(menuHeightMeters * 0.5f + kMenuGapMeters +
+              hintHeightMeters * 0.5f),
+            -kMenuDistanceMeters};
+        quad.size = {kHintWidthMeters, hintHeightMeters};
+    } else {
+        if (s.viewSpace == XR_NULL_HANDLE) return false;
+        quad.space = s.viewSpace;                         // head-locked
+        quad.pose.position = {0.0f, -0.20f, -1.65f};
+        // Vice City's settings surface is deliberately much larger than the
+        // old square debug card. Keep the proven 512 texture but present it at
+        // a useful cockpit-menu size so rows can be read without leaning.
+        quad.size = {1.8f, 1.8f * static_cast<float>(kPanelH) /
+                           static_cast<float>(kPanelW)};
+    }
     return true;
 }
 
@@ -13826,6 +14098,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     // producing a one-frame full-world flash outside the radial mask.
     SetPassthroughActive(tabletop::PassthroughEnabled() &&
                          s.sessionState == XR_SESSION_STATE_FOCUSED);
+    SyncBoundaryVisibility("frame");
 
     // (Re)apply CPU/GPU perf hints and the app-main thread pin when they change
     // (menu edit, or the GameThread TID first arriving). Cheap when not dirty.
@@ -14000,6 +14273,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     bool zeroCopyRepeat = false;
     bool repeatCopyFallback = false;
     bool projectionLayerSubmitted = false;
+    bool passthroughLayerSubmitted = false;
     bool projectionTabletop = false;
     bool projectionFullCopy = false;
     std::uint64_t projectionEpoch = 0;
@@ -14382,6 +14656,7 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
             layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(
                 &passthroughLayer);
             ++layerCount;
+            passthroughLayerSubmitted = true;
         }
     }
 
@@ -14399,6 +14674,19 @@ void RenderFrame(double consumerUpdateMs, double consumerUpdateCpuMs) {
     Check(ended, "xrEndFrame");
     if (XR_FAILED(ended)) ResetStereoPhaseFeedback();
     const long long tEndDone = nowNs();
+    if (XR_SUCCEEDED(ended) && passthroughLayerSubmitted) {
+        const bool firstSubmittedFrame =
+            !g_passthroughSubmittedSinceResume;
+        g_passthroughSubmittedSinceResume = true;
+        if (!firstSubmittedFrame && g_boundaryRetryFrames > 0)
+            --g_boundaryRetryFrames;
+        // This is intentionally after xrEndFrame: Quest can reject boundary
+        // suppression until the compositor has accepted at least one frame
+        // containing XrCompositionLayerPassthroughFB.
+        SyncBoundaryVisibility(firstSubmittedFrame
+            ? "first-passthrough-end-frame"
+            : "passthrough-end-frame");
+    }
     if (XR_SUCCEEDED(ended) && projectionLayerSubmitted &&
         submittedStereoSequence >= 0) {
         if (projectionFullCopy) {

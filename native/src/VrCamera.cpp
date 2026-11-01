@@ -3669,6 +3669,21 @@ int WeaponTypeInSlot(void* ped, int slot) {
         reinterpret_cast<const char*>(ped) + kOffWeapons + slot * kWeaponStride);
 }
 
+int ActivePlayerWeaponType() {
+    if (!g.FindPlayerPed) return 0;
+    void* const ped = g.FindPlayerPed(-1);
+    if (!ped) return 0;
+    constexpr std::uintptr_t kActiveWeaponSlotOffset = 0x8DC;
+    const int slot = static_cast<int>(*reinterpret_cast<const std::int8_t*>(
+        static_cast<const std::uint8_t*>(ped) + kActiveWeaponSlotOffset));
+    return WeaponTypeInSlot(ped, slot);
+}
+
+bool TabletopClassicAreaWeaponActive() {
+    const int weaponType = ActivePlayerWeaponType();
+    return weaponType == 41 || weaponType == 42; // spray can / extinguisher
+}
+
 void ReleaseHolsterModel(HolsterModelCache& cache) {
     if (cache.clump && g.RpClumpDestroy) g.RpClumpDestroy(cache.clump);
     if (cache.modelInfo && g.CBaseModelInfo_RemoveRef)
@@ -5484,6 +5499,7 @@ std::atomic<double> g_weaponTargetLastPollMs{0.0};
 // direct pad bridge below is the authoritative route; the widget bridge stays
 // as a compatibility path for mobile-only scripts.
 std::atomic<bool> g_tabletopPadTargetBridgeActive{false};
+std::atomic<bool> g_tabletopManualAimBridgeActive{false};
 constexpr std::uint32_t kNoAimEdgeFrame =
     std::numeric_limits<std::uint32_t>::max();
 std::atomic<std::uint32_t> g_tabletopAimPressFrame{kNoAimEdgeFrame};
@@ -5523,7 +5539,26 @@ bool TabletopModernAimRaw(const xr::InputState& in) {
     // Either grip belongs to tabletop manipulation and its menu chords. Never
     // let a map grab also enter GTA's targeting state.
     if (in.grip[0] >= 0.55f || in.grip[1] >= 0.55f) return false;
+    // Spray and extinguisher are continuous trigger attacks in Diorama. GTA's
+    // native targeting task fixes the actor to the legacy camera heading, but
+    // Diorama intentionally has no right-stick scene/aim turn. Entering that
+    // task therefore strands CJ in place with no useful direction control.
+    // Keep these two weapons out of targeting so the left stick remains
+    // authoritative while the area effect is active.
+    if (TabletopClassicAreaWeaponActive()) return false;
     return in.triggers[0] >= kTabletopCombatTriggerPress;
+}
+
+bool TabletopAreaAttackRaw(const xr::InputState& in) {
+    if (!TabletopClassicAreaWeaponActive() ||
+        !g_tabletopActive.load(std::memory_order_acquire) ||
+        g_inputBlocked.load(std::memory_order_relaxed) ||
+        WeaponSelectorActive()) {
+        return false;
+    }
+    if (g.FindPlayerVehicle && g.FindPlayerVehicle(-1, false)) return false;
+    if (in.grip[0] >= 0.55f || in.grip[1] >= 0.55f) return false;
+    return in.triggers[1] >= kTabletopCombatTriggerPress;
 }
 
 bool WeaponTargetPollFresh() {
@@ -5545,19 +5580,93 @@ bool TabletopModernAimForCombat(const xr::InputState& in) {
 bool TabletopModernAttackForCombat(const xr::InputState& in) {
     // Fire must not depend on a touch-widget poll. The controller/bottle route
     // never asks for widget 19, which made Package 39 deliberately suppress R2.
+    // Continuous area weapons deliberately use R2 without L2: the native
+    // target task owns a hidden flat-camera heading and prevents the player
+    // from steering CJ with the left stick in Diorama.
+    if (TabletopClassicAreaWeaponActive()) return TabletopAreaAttackRaw(in);
     return TabletopModernAimRaw(in) &&
            in.triggers[1] >= kTabletopCombatTriggerPress;
 }
 
 using PadGetTargetFn = int (*)(void*, bool);
 using PadTargetEdgeFn = int (*)(void*);
+using PadAimWeaponLeftRightFn = float (*)(void*, void*, bool*);
+using PadAimWeaponUpDownFn = int (*)(void*, void*, bool*);
 PadGetTargetFn g_origPadGetTarget = nullptr;
 PadTargetEdgeFn g_origPadGetEnterTargetingBody = nullptr;
 PadTargetEdgeFn g_origPadGetExitTargetingBody = nullptr;
+PadAimWeaponLeftRightFn g_origPadAimWeaponLeftRight = nullptr;
+PadAimWeaponUpDownFn g_origPadAimWeaponUpDown = nullptr;
 
 bool PadTargetControlsEnabled(const void* pad) {
     return pad && *reinterpret_cast<const std::uint16_t*>(
         static_cast<const std::uint8_t*>(pad) + 0x110) == 0;
+}
+
+bool TabletopManualAimStick(const void* pad, float* xOut, float* yOut,
+                            bool* movedOut) {
+    if (!xOut || !yOut || !PadTargetControlsEnabled(pad) ||
+        !g_tabletopManualAimBridgeActive.load(std::memory_order_acquire) ||
+        WeaponSelectorActive()) {
+        return false;
+    }
+
+    xr::InputState in{};
+    xr::GetInput(in);
+    if (!TabletopModernAimRaw(in) || in.thumbrest[0] || in.thumbrest[1]) {
+        return false;
+    }
+
+    constexpr float kDeadzone = 0.16f;
+    const float rawX = in.rightStick[0];
+    const float rawY = in.rightStick[1];
+    const float magnitude = std::hypot(rawX, rawY);
+    float x = 0.0f;
+    float y = 0.0f;
+    bool moved = false;
+    if (std::isfinite(magnitude) && magnitude > kDeadzone) {
+        const float clampedMagnitude = std::min(magnitude, 1.0f);
+        const float scaledMagnitude =
+            (clampedMagnitude - kDeadzone) / (1.0f - kDeadzone);
+        const float scale = scaledMagnitude / magnitude;
+        x = rawX * scale;
+        y = rawY * scale;
+        moved = true;
+    }
+
+    *xOut = std::clamp(x, -1.0f, 1.0f);
+    *yOut = std::clamp(y, -1.0f, 1.0f);
+    if (movedOut) *movedOut = moved;
+    return true;
+}
+
+float OnPadAimWeaponLeftRight(void* pad, void* ped, bool* manualAim) {
+    float stickX = 0.0f;
+    float stickY = 0.0f;
+    bool moved = false;
+    if (TabletopManualAimStick(pad, &stickX, &stickY, &moved)) {
+        if (manualAim && moved) *manualAim = true;
+        // Retail CPad aim values use the same approximately [-128,127] range
+        // as NewState.RightStickX. The camera applies its own frame-time and
+        // sensitivity scaling after this accessor returns.
+        return stickX * 127.0f;
+    }
+    return g_origPadAimWeaponLeftRight
+        ? g_origPadAimWeaponLeftRight(pad, ped, manualAim) : 0.0f;
+}
+
+int OnPadAimWeaponUpDown(void* pad, void* ped, bool* manualAim) {
+    float stickX = 0.0f;
+    float stickY = 0.0f;
+    bool moved = false;
+    if (TabletopManualAimStick(pad, &stickX, &stickY, &moved)) {
+        if (manualAim && moved) *manualAim = true;
+        // The OpenXR stick axis already matches this accessor's effective
+        // camera convention: up must raise the weapon and down must lower it.
+        return static_cast<int>(std::lround(stickY * 127.0f));
+    }
+    return g_origPadAimWeaponUpDown
+        ? g_origPadAimWeaponUpDown(pad, ped, manualAim) : 0;
 }
 
 int OnPadGetTarget(void* pad, bool camera) {
@@ -6333,11 +6442,13 @@ void OnUpdatePads() {
     }
     const bool inputBlocked = g_inputBlocked.load(std::memory_order_relaxed);
     UpdateTabletopControls(in, inputBlocked);
+    const bool classicAreaAttack = TabletopClassicAreaWeaponActive();
     const bool attackRaw = !inputBlocked && tabletop::Enabled() &&
         !WeaponSelectorActive() &&
         (!g.FindPlayerVehicle || g.FindPlayerVehicle(-1, false) == nullptr) &&
-        (locomotion::ActionHeld(locomotion::BIND_ACT_ATTACK,
-                                in.a, in.b, in.x, in.y, in.l3, in.r3, true) ||
+        ((!classicAreaAttack &&
+          locomotion::ActionHeld(locomotion::BIND_ACT_ATTACK,
+                                 in.a, in.b, in.x, in.y, in.l3, in.r3, true)) ||
          TabletopModernAttackForCombat(in));
     const bool attackPrevious = g_tabletopClassicAttackHeld.exchange(
         attackRaw, std::memory_order_relaxed);
@@ -6601,14 +6712,13 @@ void OnUpdatePads() {
                                in.a, in.b, in.x, in.y, in.l3, in.r3, true))
         ns[14] = 255;
 
-    if (vehicle == nullptr &&
+    if (vehicle == nullptr && !TabletopClassicAreaWeaponActive() &&
         locomotion::ActionHeld(locomotion::BIND_ACT_ATTACK,
                                in.a,in.b,in.x,in.y,in.l3,in.r3,true))
         ns[17] = 255;
-    // GTA V-style tabletop controls: L2 keeps the stock mobile targeting
-    // widget held, and R2 feeds the same classic attack button as X. This
-    // deliberately stays out of vehicles and requires a fresh target-widget
-    // poll so trigger-driven dialogs do not turn into punches.
+    // GTA V-style tabletop controls: ordinary weapons use L2 + R2. Spray and
+    // extinguisher use R2 alone, because their native target task locks CJ to
+    // the hidden mobile-camera heading instead of the visible Diorama view.
     if (vehicle == nullptr && TabletopModernAttackForCombat(in))
         ns[17] = 255;
 
@@ -32052,6 +32162,53 @@ bool InstallTabletopPadTargeting() {
     return active;
 }
 
+bool InstallTabletopManualAim() {
+    g_tabletopManualAimBridgeActive.store(false, std::memory_order_release);
+    void* const gameHandle = dlopen("libGame.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!gameHandle || !g.LoadBase) {
+        if (gameHandle) dlclose(gameHandle);
+        LOGW("[tabletop.aim] manual stick unavailable: no libGame/base");
+        return false;
+    }
+
+    void* const leftRight = dlsym(
+        gameHandle, "_ZN4CPad18AimWeaponLeftRightEP4CPedPb");
+    void* const upDown = dlsym(
+        gameHandle, "_ZN4CPad15AimWeaponUpDownEP4CPedPb");
+    static constexpr std::uint32_t kLeftRightPrologue[4] = {
+        0xd10143ffu, 0xfd000be8u, 0xa9027bfdu, 0xa90357f6u,
+    };
+    static constexpr std::uint32_t kUpDownPrologue[4] = {
+        0xd10103ffu, 0xa9017bfdu, 0xa90257f6u, 0xa9034ff4u,
+    };
+    const bool fingerprint = leftRight && upDown &&
+        reinterpret_cast<std::uintptr_t>(leftRight) - g.LoadBase == 0x49fd2cu &&
+        reinterpret_cast<std::uintptr_t>(upDown) - g.LoadBase == 0x4a0108u &&
+        std::memcmp(leftRight, kLeftRightPrologue,
+                    sizeof(kLeftRightPrologue)) == 0 &&
+        std::memcmp(upDown, kUpDownPrologue, sizeof(kUpDownPrologue)) == 0;
+    if (!fingerprint) {
+        LOGW("[tabletop.aim] manual stick disabled: retail 2.11 fingerprint mismatch");
+        dlclose(gameHandle);
+        return false;
+    }
+
+    g_origPadAimWeaponLeftRight =
+        reinterpret_cast<PadAimWeaponLeftRightFn>(InstallTrampoline(
+            leftRight, reinterpret_cast<void*>(&OnPadAimWeaponLeftRight)));
+    g_origPadAimWeaponUpDown =
+        reinterpret_cast<PadAimWeaponUpDownFn>(InstallTrampoline(
+            upDown, reinterpret_cast<void*>(&OnPadAimWeaponUpDown)));
+    const bool active = g_origPadAimWeaponLeftRight &&
+        g_origPadAimWeaponUpDown;
+    g_tabletopManualAimBridgeActive.store(active, std::memory_order_release);
+    LOGI("[tabletop.aim] manual stick active=%d horizontal=%d vertical=%d scale=127 deadzone=0.16",
+         active ? 1 : 0, g_origPadAimWeaponLeftRight ? 1 : 0,
+         g_origPadAimWeaponUpDown ? 1 : 0);
+    dlclose(gameHandle);
+    return active;
+}
+
 // CPad::ExitVehicleJustDown starts with two PC-relative CBNZ gates, so the
 // generic 16-byte trampoline above is not ABI-safe for this one target. Verify
 // the exact libGame.so prologue and build a callable thunk that starts at +0x10,
@@ -32850,8 +33007,37 @@ bool TransformTabletopMoveStick(float* x, float* y) {
         !g_logicalVrCameraValid || !g_tabletopRenderCameraValid) {
         return false;
     }
-    const float gameYaw = std::atan2(-g_logicalVrCamera.forward.x,
-                                      g_logicalVrCamera.forward.y);
+    float gameYaw = std::atan2(-g_logicalVrCamera.forward.x,
+                                g_logicalVrCamera.forward.y);
+    // The ordinary on-foot task interprets NewState in the logical camera
+    // frame. Targeting and duck-with-gun tasks instead interpret it against
+    // the actor's current heading. Using the logical camera in those states
+    // can rotate a forward push by more than 90 degrees in Diorama.
+    const int activeWeaponType = ActivePlayerWeaponType();
+    const bool duckWithGun = g_duckLatched &&
+        activeWeaponType >= 22 && activeWeaponType <= 38;
+    const bool actorRelative =
+        g_tabletopAimPreviousRaw.load(std::memory_order_relaxed) ||
+        duckWithGun;
+    if (actorRelative && g.FindPlayerPed) {
+        const void* const ped = g.FindPlayerPed(-1);
+        const auto* const pedBytes = static_cast<const std::uint8_t*>(ped);
+        const std::uint8_t* matrix = nullptr;
+        if (pedBytes) {
+            std::memcpy(&matrix, pedBytes + 0x18, sizeof(matrix));
+        }
+        if (matrix) {
+            const float pedForwardX =
+                *reinterpret_cast<const float*>(matrix + 0x10);
+            const float pedForwardY =
+                *reinterpret_cast<const float*>(matrix + 0x14);
+            const float length = std::hypot(pedForwardX, pedForwardY);
+            if (std::isfinite(length) && length > 0.10f) {
+                gameYaw = std::atan2(-pedForwardX / length,
+                                      pedForwardY / length);
+            }
+        }
+    }
     const float visibleYaw = std::atan2(-g_tabletopRenderCamera.forward.x,
                                          g_tabletopRenderCamera.forward.y);
     if (!std::isfinite(gameYaw) || !std::isfinite(visibleYaw)) return false;
@@ -33140,6 +33326,7 @@ bool Install() {
     // Controller combat uses CPad directly; mobile tutorials such as the
     // bottle lesson never touch widget_target.
     InstallTabletopPadTargeting();
+    InstallTabletopManualAim();
 
     if (g.CPad_ExitVehicleJustDown != nullptr) {
         g_origExitVehicleJustDown =

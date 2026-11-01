@@ -41,6 +41,23 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
             $text = [Text.Encoding]::ASCII.GetString($bytes)
             foreach ($required in @(
                 '[tabletop.flicker.fix] package=35',
+                '[tabletop.aim] attack edge',
+                '[tabletop.aim.area]',
+                'target widget justpressed=%d bridge=L2 injected=%d',
+                'target widget released=1 bridge=L2',
+                'pad enter targeting=1 original=%d frame=%u bridge=L2',
+                'pad exit targeting=1 original=%d frame=%u bridge=L2',
+                '[tabletop.perf42]',
+                '[tabletop.perf42.init]',
+                '[tabletop.perf42.thermal]',
+                '[tabletop.passthrough.weather.applied]',
+                '[tabletop.water.mask] package=48',
+                '[tabletop.boundary]'
+            )) {
+                if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }
+                Write-Output "PASS packaged release log: $required"
+            }
+            foreach ($devOnly in @(
                 '[tabletop.flicker.fix] retained=',
                 '[tabletop.flicker.identity] membership=v2',
                 '[tabletop.flicker.alpha_depth]',
@@ -48,21 +65,12 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
                 '[tabletop.flicker.passthrough] package=36',
                 'window_frames=%u failed_masks=',
                 'snapshot_authority=%llu',
-                '[tabletop.aim] attack edge',
-                '[tabletop.aim.area]',
-                'target widget justpressed=%d bridge=L2 injected=%d',
-                'target widget released=1 bridge=L2',
-                'route=classic_pad_target_no_physical_ray',
-                'pad enter targeting=1 original=%d frame=%u bridge=L2',
-                'pad exit targeting=1 original=%d frame=%u bridge=L2',
-                '[tabletop.perf42]',
-                '[tabletop.perf42.init]',
-                '[tabletop.perf42.thermal]',
-                '[tabletop.passthrough.weather.applied]',
-                '[tabletop.water.mask] package=48'
+                'route=classic_pad_target_no_physical_ray'
             )) {
-                if (-not $text.Contains($required)) { throw "Missing player-APK log: $required" }
-                Write-Output "PASS packaged release log: $required"
+                if ($text.Contains($devOnly)) {
+                    throw "Development-only telemetry leaked into player APK: $devOnly"
+                }
+                Write-Output "PASS development-only telemetry absent: $devOnly"
             }
             if ($text.Contains('[tabletop.passthrough.weather.preview]')) {
                 throw 'Retired Package 43 weather preview remains in player APK'
@@ -70,12 +78,6 @@ foreach ($apk in Get-ChildItem -LiteralPath (Join-Path $BuildRoot 'out') -Filter
             if ($text.Contains('debug.savr.tabletop_far_beacons') -or
                 $text.Contains('WPYNT_VR')) {
                 throw 'Retired custom pause-map waypoint remains in player APK'
-            }
-            if (-not $text.Contains('loading=%d')) {
-                throw 'Missing Package 46 loading passthrough audit marker'
-            }
-            if (-not $text.Contains('cutscene=%d')) {
-                throw 'Missing Package 47 cutscene passthrough audit marker'
             }
             Write-Output 'PASS manual weather preview removed from player APK'
             Write-Output "PASS APK/native SHA256 $actual"

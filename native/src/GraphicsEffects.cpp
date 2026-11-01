@@ -3174,6 +3174,38 @@ bool OnFireAreaEffect(void* weapon, void* firingEntity,
         }
     }
 
+    // Spray can and extinguisher must never fall back to the hidden mobile
+    // camera when their target is null. In Diorama the visible, controllable
+    // direction is CJ's forward basis: R2 leaves the left thumb free to turn
+    // him, and this short explicit target makes the jet follow that facing.
+    // Do not alter NPCs, immersive VR or the separately calibrated physical
+    // flamethrower route.
+    if (localTabletopArea && (weaponType == 41 || weaponType == 42)) {
+        const auto* const entityBytes =
+            static_cast<const std::uint8_t*>(firingEntity);
+        const auto* const matrix =
+            *reinterpret_cast<const std::uint8_t* const*>(entityBytes + 0x18);
+        GameSymbols::Vec3 actorForward{};
+        if (matrix) {
+            std::memcpy(&actorForward, matrix + 0x10, sizeof(actorForward));
+        }
+        const float forwardLengthSq =
+            actorForward.x * actorForward.x +
+            actorForward.y * actorForward.y +
+            actorForward.z * actorForward.z;
+        if (std::isfinite(forwardLengthSq) && forwardLengthSq > 1.0e-6f) {
+            constexpr float kTabletopAreaTargetDistanceM = 2.0f;
+            const float scale = kTabletopAreaTargetDistanceM /
+                std::sqrt(forwardLengthSq);
+            GameSymbols::Vec3 routedTarget{
+                origin->x + actorForward.x * scale,
+                origin->y + actorForward.y * scale,
+                origin->z + actorForward.z * scale};
+            return g_origFireAreaEffect(weapon, firingEntity, origin, nullptr,
+                                        &routedTarget);
+        }
+    }
+
     // The Quest physical-fire route currently owns hitscan weapons only.  The
     // stock area-weapon producer therefore still derives flamethrower direction
     // from the legacy player camera/heading and a ped-relative barrel point.
