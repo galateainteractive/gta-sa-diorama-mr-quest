@@ -11353,6 +11353,16 @@ bool ShouldUseTabletopTrafficLowLod(void* entity) {
         return false;
     }
 
+    // The production low-LOD path is for ambient road traffic only.  Never
+    // infer ownership from distance: FIXED deliberately separates the visual
+    // camera from the live gameplay anchor, and the enter-car transition can
+    // briefly publish those positions on different frames.  Player safety
+    // covers the transition; the exact retail player-vehicle pointer keeps the
+    // occupied car full-detail in every Diorama view mode afterward.
+    if (TabletopEntityInsidePlayerSafety(entity)) return false;
+    if (g.FindPlayerVehicle &&
+        entity == g.FindPlayerVehicle(-1, false)) return false;
+
     // Keep aircraft and boats on their audited paths. Automobile and bike
     // appearances are the ordinary road traffic this production path targets.
     const int appearance = g.CVehicle_GetVehicleAppearance(entity);

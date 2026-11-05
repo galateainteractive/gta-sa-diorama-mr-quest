@@ -819,6 +819,16 @@ foreach ($sourcePattern in @(
         throw "Package 74 traffic LOD audit failed: $sourcePattern"
     }
 }
+$trafficLodFunction = [regex]::Match(
+    $cameraSource,
+    '(?s)bool ShouldUseTabletopTrafficLowLod\(void\* entity\).*?(?=class ScopedTabletopTrafficLowLod)'
+).Value
+if ([string]::IsNullOrWhiteSpace($trafficLodFunction) -or
+    $trafficLodFunction -notmatch 'TabletopEntityInsidePlayerSafety\(entity\)' -or
+    $trafficLodFunction -notmatch
+        'entity == g\.FindPlayerVehicle\(-1, false\)') {
+    throw 'Package 74 traffic LOD can classify the player vehicle as ambient traffic'
+}
 foreach ($sourcePattern in @(
         'constexpr float kRadiusPresets\[\]\{30\.0f, 60\.0f, 75\.0f, 120\.0f\}',
         'constexpr int kOfficialRadiusPreset = 1',

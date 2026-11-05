@@ -2,6 +2,11 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Never classify the player's current car as distant ambient traffic. The live
+  player-safety sphere protects the enter-car transition, and an explicit
+  `FindPlayerVehicle` identity check keeps the occupied vehicle on the full-
+  detail render path in `FIXED`, `TRACK` and `FOLLOW`; ordinary distant road
+  traffic retains the production low-LOD optimization.
 - When a folder previously used by an older installer is reused as the game
   source, ignore APKs inside its managed `runs`, tool, download, SDK, log,
   verification and backup trees. Prefer an original split set stored directly
