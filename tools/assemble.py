@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -508,13 +509,106 @@ def prepare_aircraft_hlod(data_apk: Path, build: Path) -> None:
         raise KitError("aircraft HLOD generator did not produce aircraft.hlod")
 
 
+MANAGED_WORK_DIRECTORY_NAMES = frozenset(
+    {
+        "runs",
+        ".downloads",
+        ".tools",
+        ".android-sdk",
+        "device-backups",
+        "device-verification",
+        "logs",
+    }
+)
+
+
+def discover_directory_apks(source: Path) -> tuple[list[Path], list[Path]]:
+    """Find source APKs without re-ingesting an older installer's outputs."""
+    if source.name.lower() in MANAGED_WORK_DIRECTORY_NAMES:
+        raise KitError(
+            f"selected game folder is a managed installer directory: {source}. "
+            "Choose the original export folder, not runs, tools, downloads, logs, or backups."
+        )
+    if (source / "build-manifest.json").is_file() or (
+        (source / "input-apks").is_dir() and (source / "out").is_dir()
+    ):
+        raise KitError(
+            f"selected game folder is a generated build run: {source}. "
+            "Choose the original Google Play export folder instead."
+        )
+
+    all_apks = [path for path in sorted(source.rglob("*.apk")) if path.is_file()]
+    direct_apks = [path for path in all_apks if path.parent == source]
+    # An old installer version could put the official split set directly in the
+    # work root and later create runs beside it.  A direct base.apk identifies
+    # that original set unambiguously, so nested generated APKs must not join it.
+    if any(path.name.lower() == "base.apk" for path in direct_apks):
+        direct_set = set(direct_apks)
+        return direct_apks, [path for path in all_apks if path not in direct_set]
+
+    accepted: list[Path] = []
+    ignored: list[Path] = []
+    for path in all_apks:
+        relative = path.relative_to(source)
+        first = relative.parts[0].lower() if relative.parts else ""
+        if first in MANAGED_WORK_DIRECTORY_NAMES:
+            ignored.append(path)
+        else:
+            accepted.append(path)
+    return accepted, ignored
+
+
+def verify_apk_discovery_policy() -> None:
+    with tempfile.TemporaryDirectory(prefix="gta-apk-discovery-") as temporary:
+        root = Path(temporary)
+
+        old_work = root / "old-work"
+        old_work.mkdir()
+        direct_base = old_work / "base.apk"
+        direct_split = old_work / "split_config.arm64_v8a.apk"
+        direct_base.touch()
+        direct_split.touch()
+        generated = old_work / "runs" / "old-run" / "out" / "base.apk"
+        generated.parent.mkdir(parents=True)
+        generated.touch()
+        selected, ignored = discover_directory_apks(old_work)
+        if selected != [direct_base, direct_split] or ignored != [generated]:
+            raise KitError("direct legacy export isolation self-test failed")
+
+        nested_work = root / "nested-work"
+        exported = nested_work / "exports" / "GTA-SA-Play-export-test" / "base.apk"
+        generated = nested_work / "runs" / "old-run" / "out" / "base.apk"
+        exported.parent.mkdir(parents=True)
+        generated.parent.mkdir(parents=True)
+        exported.touch()
+        generated.touch()
+        selected, ignored = discover_directory_apks(nested_work)
+        if selected != [exported] or ignored != [generated]:
+            raise KitError("nested legacy export isolation self-test failed")
+
+        generated_run = root / "runs"
+        generated_run.mkdir()
+        try:
+            discover_directory_apks(generated_run)
+        except KitError:
+            pass
+        else:
+            raise KitError("managed run-directory rejection self-test failed")
+
+
 def materialize_apk_inputs(source: Path, work: Path, build_root: Path) -> list[tuple[Path, str]]:
     if not source.exists():
         raise KitError(f"game package path does not exist: {source}")
 
     candidates: list[tuple[Path, str]] = []
     if source.is_dir():
-        candidates = [(path, path.name) for path in sorted(source.rglob("*.apk"))]
+        discovered, ignored = discover_directory_apks(source)
+        if ignored:
+            say(
+                f"    ignoring {len(ignored)} APK(s) from old managed build/tool folders "
+                "inside the selected game source"
+            )
+        candidates = [(path, path.name) for path in discovered]
     elif source.suffix.lower() == ".apk":
         with zipfile.ZipFile(source) as archive:
             names = {item.filename.lower() for item in archive.infolist()}
@@ -1668,6 +1762,10 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
+        if sys.argv[1:] == ["--self-test-input-discovery"]:
+            verify_apk_discovery_policy()
+            print("APK input discovery self-test: PASS")
+            raise SystemExit(0)
         raise SystemExit(main())
     except KitError as error:
         print(f"ERROR: {error}", file=sys.stderr)

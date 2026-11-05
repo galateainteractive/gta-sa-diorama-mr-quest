@@ -2,6 +2,11 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- When a folder previously used by an older installer is reused as the game
+  source, ignore APKs inside its managed `runs`, tool, download, SDK, log,
+  verification and backup trees. Prefer an original split set stored directly
+  in that old root, reject generated run folders themselves, and keep the full
+  retail version, signer, engine and split-set verification afterward.
 - Rename the installer destination to **PC work folder** and clarify that it
   stores exports and temporary build data while the finished game installs on
   Quest. Reject the work root, its parents, and managed `runs`, tool, download,

@@ -40,6 +40,14 @@ tool, SDK, log, verification and backup folders are rejected as source input
 before a build starts. A safe older export in its own folder beneath the work
 root remains supported.
 
+If a folder was already used as work storage by an older installer release and
+is later reused as an external game source, generated APKs below its managed
+`runs`, tool, download, SDK, log, verification and backup folders are ignored.
+An original split set stored directly in that old root is preferred over all
+nested APKs. Generated build-run folders themselves are rejected. The selected
+retail APKs still undergo the complete version, signer, engine and split-set
+verification before any personal build begins.
+
 Close SideQuest completely, including its system-tray process, before pressing
 Build and Install. The installer detects SideQuest before starting an expensive
 build. If a completed build later reaches a USB/ADB error, use **Install latest

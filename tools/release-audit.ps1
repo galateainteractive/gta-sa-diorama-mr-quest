@@ -248,6 +248,11 @@ foreach ($script in Get-ChildItem -LiteralPath (Join-Path $Root 'tools') -Filter
     & $PythonExe -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_bytes().decode(), filename=sys.argv[1])' $script.FullName
     if ($LASTEXITCODE -ne 0) { throw "Python syntax check failed: $($script.FullName)" }
 }
+$assemblerPath = Join-Path $Root 'tools\assemble.py'
+& $PythonExe $assemblerPath --self-test-input-discovery
+if ($LASTEXITCODE -ne 0) {
+    throw 'APK input discovery isolation self-test failed.'
+}
 
 $shippedScripts = @(
     $files | Where-Object { $_.Extension.ToLowerInvariant() -in @('.ps1', '.sh', '.bat') }
