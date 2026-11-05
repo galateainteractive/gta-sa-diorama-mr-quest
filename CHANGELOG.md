@@ -2,6 +2,12 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Rename the installer destination to **PC work folder** and clarify that it
+  stores exports and temporary build data while the finished game installs on
+  Quest. Reject the work root, its parents, and managed `runs`, tool, download,
+  log, verification and backup folders as game/audio input before building.
+  Automatic exports and older exports kept in their own sibling folder remain
+  valid, so an existing installation can be reused safely.
 - Put Build storage first in the Windows installer. Android-phone extraction
   now follows it as step 2 and automatically writes the verified split set to
   the already-selected `<Build storage>\exports` folder.

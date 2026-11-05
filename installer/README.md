@@ -21,18 +21,24 @@ set, backs up ADB-accessible saves/settings if a signing change requires
 reinstalling, installs the complete set, publishes the verified payloads, and
 leaves the game stopped.
 
-The installer presents **Build storage** as step 1, before game extraction. It
+The installer presents **PC work folder** as step 1, before game extraction. It
 defaults to the user's Local AppData directory but
 can be moved to any writable folder, such as `D:\Diorama MR`. The choice is
 saved for later runs and controls the location of downloads, tools, game
 exports, build runs and device backups. A new build or phone export is blocked
 until the selected drive has at least 15 GB free; retrying an already completed
-build remains available without repeating that space requirement.
+build remains available without repeating that space requirement. This is PC
+workspace storage, not the final game destination; the finished personal build
+is installed on Quest.
 
 When **Extract from Android phone** is used in step 2, the complete official
 split set is exported automatically to
-`<Build storage>\exports\GTA-SA-Play-export-<timestamp>` and that new folder is
+`<PC work folder>\exports\GTA-SA-Play-export-<timestamp>` and that new folder is
 selected as the game source. Existing exports can still be selected manually.
+The work root itself, any parent containing it, and managed `runs`, download,
+tool, SDK, log, verification and backup folders are rejected as source input
+before a build starts. A safe older export in its own folder beneath the work
+root remains supported.
 
 Close SideQuest completely, including its system-tray process, before pressing
 Build and Install. The installer detects SideQuest before starting an expensive
