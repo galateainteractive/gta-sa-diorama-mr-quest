@@ -145,6 +145,10 @@ if ($windowsInstallerText -notmatch [regex]::Escape("@('shell', 'chmod', '-R', '
     $linuxInstallerText -notmatch [regex]::Escape('adb_cmd shell chmod -R a+rX "$target"')) {
     throw 'An installer no longer makes shell-published Quest payloads readable by the game UID.'
 }
+if ($windowsInstallerText -notmatch [regex]::Escape("'shell', 'chmod', '-R', 'a+rwX', `$remoteChild") -or
+    $linuxInstallerText -notmatch [regex]::Escape('adb_cmd shell chmod -R a+rwX "$remote_root/$name"')) {
+    throw 'An installer no longer restores app write access to shell-owned saves, settings and caches.'
+}
 $loaderText = Get-Content -LiteralPath (Join-Path $Root 'loader\src\com\savr\SavrApplication.java') -Raw
 if ($loaderText -notmatch [regex]::Escape('getExternalFilesDir(null)')) {
     throw 'The Java loader no longer seeds settings through the app-owned files directory.'
@@ -305,7 +309,8 @@ $resetText = $resetText -join "`n"
 $expectedSettings = @(
     'vr_appearance.ini', 'vr_basketball.ini', 'vr_calib.ini', 'vr_calib.ini.tmp',
     'vr_driving.ini', 'vr_graphics.ini', 'vr_holsters.ini',
-    'vr_hud.ini', 'vr_locomotion.ini', 'vr_tabletop.ini'
+    'vr_hud.ini', 'vr_locomotion.ini', 'vr_tabletop.ini',
+    'vr_tabletop.ini.tmp'
 )
 $nativeSettings = @(
     Get-ChildItem -LiteralPath (Join-Path $Root 'native\src') -Filter '*.cpp' -File |

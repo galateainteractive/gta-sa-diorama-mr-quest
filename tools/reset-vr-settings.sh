@@ -22,6 +22,7 @@ SETTINGS_FILES=(
   vr_hud.ini
   vr_locomotion.ini
   vr_tabletop.ini
+  vr_tabletop.ini.tmp
 )
 
 usage() {

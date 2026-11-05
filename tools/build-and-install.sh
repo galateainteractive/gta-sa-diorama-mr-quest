@@ -852,6 +852,9 @@ restore_top_level_files() {
     fi
     adb_cmd shell sh -c "rm -rf '$remote_root/$name'" || die "could not prepare restore destination for $name"
     adb_cmd push "$backup/files/$name" "$remote_root/$name" >/dev/null || die "could not restore $name"
+    # adb push leaves files owned by the shell UID. A fresh install has a new
+    # app UID and must still be able to update saves, settings and CINFO.BIN.
+    adb_cmd shell chmod -R a+rwX "$remote_root/$name" || die "could not make restored item writable: $name"
   done < "$backup/top-level.txt"
   while IFS=$'\t' read -r relative expected; do
     [ -n "$relative" ] || continue

@@ -853,6 +853,28 @@ if ($cameraSource -notmatch
 }
 Write-Output 'PASS Package 75 vehicle L3+R3 view chord outranks contextual R3'
 
+# Package 83 keeps Diorama view transitions from leaking stock vehicle state:
+# the L3+R3 chord cannot reach the contextual R3 bridge, and both interior-glass
+# mutation paths are disabled (with saved materials restored) in tabletop mode.
+$widgetPollFunction = [regex]::Match(
+    $cameraSource,
+    '(?s)TabletopWidgetControl PolledTabletopWidgetControl\(int widgetId\).*?(?=\r?\nbool TabletopWidgetHeld)').Value
+$glassUpdateFunction = [regex]::Match(
+    $drivingSource,
+    '(?s)void UpdateInteriorGlassMaterials\(\).*?(?=\r?\n\})').Value
+$vehicleAlphaFunction = [regex]::Match(
+    $cameraSource,
+    '(?s)void\* OnRenderVehicleHiDetailAlpha\(void\* atomic\).*?(?=\r?\n\})').Value
+if ($widgetPollFunction -notmatch
+        'control == TabletopWidgetControl::R3 &&\s*g_tabletopWidgetInput\.current\.l3 &&\s*g_tabletopWidgetInput\.current\.r3' -or
+    $glassUpdateFunction -notmatch
+        'vrcam::IsStereoActive\(\)&&!vrcam::IsTabletopActive\(\)' -or
+    $vehicleAlphaFunction -notmatch
+        '!g_tabletopActive\.load\(std::memory_order_relaxed\)') {
+    throw 'Package 83 Diorama transition state-isolation audit failed'
+}
+Write-Output 'PASS Package 83 Diorama transitions isolate R3 and interior-glass state'
+
 # Package 76 moves the combined help/subtitle layer into a wide elevated box,
 # uses a compact 0.5x type scale and converges only this layer at 2.5 m.
 # Known layouts migrate; custom player calibration stays intact.

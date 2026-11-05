@@ -1,7 +1,17 @@
 # Changelog
 
-## Unreleased — complete Diorama contextual controls
+## GTA installer 1.3.8 — 2026-11-05
 
+- Remove the atomic `vr_tabletop.ini.tmp` write file together with the other VR
+  settings during a verified reset, keeping Windows/Linux reset parity complete.
+- After an approved signing-key replacement, restore saves, settings and
+  `CINFO.BIN` with app-write access instead of leaving them read-only under the
+  ADB shell UID. This prevents the reproducible `CColAccel::endCache` null-handle
+  crash when entering the game after a fresh install.
+- Keep the stationary player vehicle visible through repeated `TRACK`, `FOLLOW`
+  and `FIXED` transitions. The L3+R3 view chord no longer leaks R3 into GTA's
+  contextual vehicle input, and entering Diorama restores and bypasses both
+  first-person interior-glass hiding paths while leaving headlight effects intact.
 - Never classify the player's current car as distant ambient traffic. The live
   player-safety sphere protects the enter-car transition, and an explicit
   `FindPlayerVehicle` identity check keeps the occupied vehicle on the full-

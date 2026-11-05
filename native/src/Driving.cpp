@@ -1740,8 +1740,12 @@ void RestoreGlassMaterials() {
 }
 
 void UpdateInteriorGlassMaterials() {
+    // The interior glass workaround is only for the first-person stereo camera.
+    // A tabletop camera views the vehicle from outside and must keep the stock
+    // clump/material state intact. Passing nullptr also restores state saved
+    // immediately before the transition into tabletop mode.
     void* vehicle=(g.FindPlayerVehicle&&IsInteriorGlassHidden()&&
-                   vrcam::IsStereoActive())
+                   vrcam::IsStereoActive()&&!vrcam::IsTabletopActive())
         ? g.FindPlayerVehicle(-1,false) : nullptr;
     if (vehicle==g_glassVehicle) return;
     RestoreGlassMaterials();

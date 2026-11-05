@@ -6057,6 +6057,14 @@ TabletopWidgetControl PolledTabletopWidgetControl(int widgetId) {
         return TabletopWidgetControl::None;
     }
     const TabletopWidgetControl control = ControlForTabletopWidget(widgetId);
+    // L3+R3 belongs exclusively to the Diorama view-mode switch. This bridge is
+    // queried inside the original pad update, before UpdateTabletopControls
+    // consumes the chord, so do not expose R3 as a stock vehicle input.
+    if (control == TabletopWidgetControl::R3 &&
+        g_tabletopWidgetInput.current.l3 &&
+        g_tabletopWidgetInput.current.r3) {
+        return TabletopWidgetControl::None;
+    }
     if (control == TabletopWidgetControl::R3)
         g_tabletopWidgetR3LastPollMs.store(NowMs(), std::memory_order_relaxed);
     return control;
@@ -14550,6 +14558,7 @@ void* OnRenderVehicleHiDetailAlpha(void* atomic) {
     if (!g_origRenderVehicleHiDetailAlpha) return atomic;
     if (atomic&&driving::IsInteriorGlassHidden()&&
         g_stereoActive.load(std::memory_order_relaxed)&&
+        !g_tabletopActive.load(std::memory_order_relaxed)&&
         g.FindPlayerVehicle&&g.CVehicle_GetVehicleAppearance&&
         g.GetFrameNodeName) {
         void* vehicle=g.FindPlayerVehicle(-1,false);

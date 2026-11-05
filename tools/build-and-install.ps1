@@ -1311,6 +1311,13 @@ function Restore-QuestSavesAndSettings {
             # Remove only this verified backup target so the restored layout is exact.
             Invoke-AdbCapture -Arguments @('shell', 'rm', '-rf', $remoteChild) | Out-Null
             Invoke-AdbCapture -Arguments @('push', $localChild, $remoteChild) -EchoOutput | Out-Null
+            # adb push creates external-storage files as the shell UID. After a
+            # signature-replacement reinstall the game has a new app UID, so a
+            # read-only shell-owned CINFO.BIN makes CColAccel::endCache pass a
+            # null file handle to OS_FileWrite. Preserve the verified content
+            # while restoring app write access to saves, settings and caches.
+            Invoke-AdbCapture -Arguments @(
+                'shell', 'chmod', '-R', 'a+rwX', $remoteChild) | Out-Null
         }
     }
     foreach ($record in @($Backup.Manifest.files)) {

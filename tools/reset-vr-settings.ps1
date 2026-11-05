@@ -27,7 +27,8 @@ $script:SettingsFiles = @(
     'vr_holsters.ini',
     'vr_hud.ini',
     'vr_locomotion.ini',
-    'vr_tabletop.ini'
+    'vr_tabletop.ini',
+    'vr_tabletop.ini.tmp'
 )
 
 function Invoke-NativeCapture {
