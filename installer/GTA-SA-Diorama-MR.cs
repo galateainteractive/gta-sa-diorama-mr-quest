@@ -35,6 +35,7 @@ namespace GalateaDioramaInstaller
         internal const string SourceKitBuildScript = "tools\\build-and-install.ps1";
         internal const string SourceKitExportScript = "tools\\export-play-apks.ps1";
         internal const string SourceKitWorkFolder = "GalateaDioramaMods\\GTASADioramaMR";
+        internal const long MinimumWorkFreeBytes = 15L * 1024L * 1024L * 1024L;
         internal const string GamePackageFilter =
             "GTA SA package (*.apk;*.zip;*.apks;*.xapk;*.apkm;*.7z;*.rar)|*.apk;*.zip;*.apks;*.xapk;*.apkm;*.7z;*.rar|All files (*.*)|*.*";
         internal const string AudioSourceLabel = "Verified GTA SA audio pack";

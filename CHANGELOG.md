@@ -2,6 +2,10 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Let the Windows installer persist a user-selected build-storage folder for
+  downloads, tools, phone exports, build runs and backups. It now reports free
+  space up front and blocks a new export/build below the required 15 GB instead
+  of failing during payload staging on a full system drive.
 - Fix the intermittent BMX bunny-hop `SIGILL` by replacing the unsafe generic
   trampoline with a fingerprinted bridge that preserves both retail branch
   continuations.
