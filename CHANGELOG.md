@@ -2,6 +2,9 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Put Build storage first in the Windows installer. Android-phone extraction
+  now follows it as step 2 and automatically writes the verified split set to
+  the already-selected `<Build storage>\exports` folder.
 - Wait up to 45 seconds for the selected Quest serial to reconnect after the
   pinned ADB server restarts. Temporary missing, offline and unauthorized
   states no longer fail a completed personal build after a single probe.
