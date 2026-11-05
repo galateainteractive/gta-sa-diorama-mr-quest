@@ -949,3 +949,61 @@ foreach ($sourcePattern in @(
     }
 }
 Write-Output 'PASS Package 79 lower theater subtitles without duplicate mission title'
+
+# Package 80 fixes the intermittent BMX SIGILL caused by relocating a
+# PC-relative CBNZ into the generic 16-byte trampoline. The dedicated bridge
+# preserves the retail stack prologue and routes both continuations through
+# absolute literals. Release diagnostics also expose the exact Guardian result.
+foreach ($sourcePattern in @(
+        'void\* InstallBunnyHopTrampoline\(void\* target, void\* replacement\)',
+        't\[3\] = 0x35000068u',
+        'target\) \+ 0x10',
+        'target\) \+ 0x24',
+        'InstallBunnyHopTrampoline\(g\.CPad_GetBunnyHop')) {
+    if ($drivingSource -notmatch $sourcePattern) {
+        throw "Package 80 safe BunnyHop trampoline audit failed: $sourcePattern"
+    }
+}
+if ($drivingSource -match
+        'InstallVerifiedTrampoline\(g\.CPad_GetBunnyHop') {
+    throw 'Package 80 still routes GetBunnyHop through the unsafe generic trampoline'
+}
+foreach ($sourcePattern in @(
+        '\[tabletop\.boundary\] initialization skipped',
+        '\[tabletop\.boundary\] entrypoint unavailable',
+        '\[tabletop\.boundary\] observed=%s')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 80 Guardian diagnostic audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 80 safe BMX trampoline and release diagnostics'
+
+# Package 81 keeps Guardian suppression pending until Horizon reports the
+# matching visibility-change event instead of trusting request acceptance.
+foreach ($sourcePattern in @(
+        'g_boundaryRequestValid = !suppressionRequest',
+        'awaiting_observation=%d attempt=%u',
+        'if \(observed == g_lastBoundaryRequest\)',
+        'g_lastBoundaryRequest ==\s*XR_BOUNDARY_VISIBILITY_SUPPRESSED_META')) {
+    if ($xrSource -notmatch $sourcePattern) {
+        throw "Package 81 observed Guardian retry audit failed: $sourcePattern"
+    }
+}
+Write-Output 'PASS Package 81 observed Guardian state'
+
+# Package 82 restores the already-proven theater subtitle ownership: GTA's
+# GameSurface keeps its original cutscene subtitle, while the direct XR copy is
+# limited to stereo gameplay. Help/tutorial/stat channels remain independent.
+if ($xrSource -notmatch
+        'if \(stereoEye&&g_briefTextTexture\.visible\)') {
+    throw 'Package 82 does not limit the duplicate direct subtitle to stereo gameplay'
+}
+foreach ($retiredPattern in @(
+        'InstallTheaterSubtitleDeduplication',
+        'OnMessagesDisplay\(unsigned char beforeFade\)',
+        'g_origMessagesDisplay')) {
+    if ($cameraSource -match $retiredPattern) {
+        throw "Package 82 still hooks the stock cutscene subtitle: $retiredPattern"
+    }
+}
+Write-Output 'PASS Package 82 single stock subtitle in theater cutscenes'

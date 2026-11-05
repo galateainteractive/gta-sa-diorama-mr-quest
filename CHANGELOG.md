@@ -2,6 +2,15 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Fix the intermittent BMX bunny-hop `SIGILL` by replacing the unsafe generic
+  trampoline with a fingerprinted bridge that preserves both retail branch
+  continuations.
+- Keep retrying Guardian suppression until the Quest runtime explicitly reports
+  the boundary as suppressed; accepted requests alone are no longer treated as
+  proof that the boundary disappeared.
+- Restore the proven single-subtitle cutscene path: the theater keeps GTA's
+  original subtitle and does not draw a second direct-XR copy. Gameplay help,
+  tutorial and stat text remain unchanged.
 - Anchor the automatic `DIORAMA MR MENU` reminder to the same `LOCAL` space,
   orientation and depth as GTA's frontend screen, placing its compact cropped
   banner directly below that screen. It no longer follows head rotation, and a

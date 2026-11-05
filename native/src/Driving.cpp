@@ -2406,6 +2406,56 @@ int OnGetBunnyHopDown(void* pad) {
     return g_origBunnyHopDown ? g_origBunnyHopDown(pad) : 0;
 }
 
+void* InstallBunnyHopTrampoline(void* target, void* replacement) {
+    if (!target || !replacement) return nullptr;
+    constexpr std::uint32_t expected[4] = {
+        0xa9bf7bfdu, // STP X29,X30,[SP,#-0x10]!
+        0x910003fdu, // MOV X29,SP
+        0x79422008u, // LDRH W8,[X0,#0x110]
+        0x350000c8u  // CBNZ W8,function+0x24 (zero return)
+    };
+    std::uint32_t observed[4]{};
+    std::memcpy(observed, target, sizeof(observed));
+    if (std::memcmp(observed, expected, sizeof(observed)) != 0) {
+        LOGE("[driving] GetBunnyHop prologue mismatch "
+             "%08x %08x %08x %08x", observed[0], observed[1],
+             observed[2], observed[3]);
+        return nullptr;
+    }
+    const std::uintptr_t pageSize =
+        static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    void* trampoline = mmap(nullptr, pageSize,
+                            PROT_READ | PROT_WRITE | PROT_EXEC,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (trampoline == MAP_FAILED) return nullptr;
+    auto* t = reinterpret_cast<std::uint32_t*>(trampoline);
+    // The retail fourth word is a PC-relative CBNZ. Copying it verbatim made
+    // the taken path jump into the trampoline's literal/data area and execute
+    // it as code (SIGILL). Re-encode both exits locally, then branch to the
+    // original function after its relocated prologue or directly to its
+    // stack-balanced zero-return block.
+    t[0] = expected[0];
+    t[1] = expected[1];
+    t[2] = expected[2];
+    t[3] = 0x35000068u; // CBNZ W8,+12 (second absolute branch)
+    t[4] = 0x58000091u; // LDR X17,literal (+16)
+    t[5] = 0xD61F0220u; // BR X17
+    t[6] = 0x58000091u; // LDR X17,literal (+16)
+    t[7] = 0xD61F0220u; // BR X17
+    *reinterpret_cast<void**>(t + 8) = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) + 0x10);
+    *reinterpret_cast<void**>(t + 10) = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(target) + 0x24);
+    __builtin___clear_cache(reinterpret_cast<char*>(t),
+                            reinterpret_cast<char*>(t) + 48);
+    if (!PatchAbsoluteJump(target, replacement)) {
+        munmap(trampoline, pageSize);
+        return nullptr;
+    }
+    LOGI("[driving] CPad::GetBunnyHop A-button hook installed");
+    return trampoline;
+}
+
 void* InstallBunnyHopDownTrampoline(void* target, void* replacement) {
     if (!target || !replacement) return nullptr;
     constexpr std::uint32_t expected[4] = {
@@ -2583,12 +2633,9 @@ void InstallPadHooks() {
         InstallTouchQueryTrampoline(g.CPad_JumpJustDown,
             reinterpret_cast<void*>(&OnJumpJustDown),
             "Jump JumpJustDown"));
-    constexpr std::uint32_t bunnyHop[4]={
-        0xa9bf7bfdu,0x910003fdu,0x79422008u,0x350000c8u};
     g_origBunnyHop=reinterpret_cast<TouchQueryFn>(
-        InstallVerifiedTrampoline(g.CPad_GetBunnyHop,
-            reinterpret_cast<void*>(&OnGetBunnyHop), bunnyHop,
-            "CPad::GetBunnyHop"));
+        InstallBunnyHopTrampoline(g.CPad_GetBunnyHop,
+            reinterpret_cast<void*>(&OnGetBunnyHop)));
     g_origBunnyHopDown=reinterpret_cast<TouchQueryFn>(
         InstallBunnyHopDownTrampoline(g.CPad_GetBunnyHopDown,
             reinterpret_cast<void*>(&OnGetBunnyHopDown)));

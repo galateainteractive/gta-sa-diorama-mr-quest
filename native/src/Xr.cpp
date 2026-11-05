@@ -3008,14 +3008,25 @@ void UpdatePassthroughWeatherStyle(XrTime displayTime) {
 
 bool InitializeBoundaryVisibility() {
     if (!g_hasBoundaryVisibilityExt || s.instance == XR_NULL_HANDLE ||
-        s.systemId == XR_NULL_SYSTEM_ID) return false;
+        s.systemId == XR_NULL_SYSTEM_ID) {
+        __android_log_print(
+            ANDROID_LOG_WARN, SAVR_TAG,
+            "[tabletop.boundary] initialization skipped ext=%d instance=%d "
+            "system=%d",
+            g_hasBoundaryVisibilityExt ? 1 : 0,
+            s.instance != XR_NULL_HANDLE ? 1 : 0,
+            s.systemId != XR_NULL_SYSTEM_ID ? 1 : 0);
+        return false;
+    }
     const XrResult procResult = xrGetInstanceProcAddr(
         s.instance, "xrRequestBoundaryVisibilityMETA",
         reinterpret_cast<PFN_xrVoidFunction*>(
             &g_xrRequestBoundaryVisibilityMETA));
     if (XR_FAILED(procResult) || !g_xrRequestBoundaryVisibilityMETA) {
-        LOGW("[tabletop.boundary] entrypoint unavailable result=%d",
-             static_cast<int>(procResult));
+        __android_log_print(
+            ANDROID_LOG_WARN, SAVR_TAG,
+            "[tabletop.boundary] entrypoint unavailable result=%d",
+            static_cast<int>(procResult));
         g_xrRequestBoundaryVisibilityMETA = nullptr;
         return false;
     }
@@ -3056,23 +3067,35 @@ void RequestBoundaryVisibility(XrBoundaryVisibilityMETA desired,
 
     const XrResult result = g_xrRequestBoundaryVisibilityMETA(
         s.session, desired);
+    const bool suppressionRequest =
+        desired == XR_BOUNDARY_VISIBILITY_SUPPRESSED_META;
+    if (suppressionRequest) ++g_boundaryRetryAttempts;
     if (result == XR_SUCCESS) {
-        g_boundaryRequestValid = true;
-        g_boundaryRetryFrames = 0;
-        g_boundaryRetryAttempts = 0;
-        __android_log_print(
-            ANDROID_LOG_INFO, SAVR_TAG,
-            "[tabletop.boundary] requested=%s reason=%s result=%d",
-            desired == XR_BOUNDARY_VISIBILITY_SUPPRESSED_META
-                ? "suppressed" : "visible",
-            reason, static_cast<int>(result));
+        // A successful call only means that Horizon accepted the request. On
+        // some Quest 3 firmware the boundary stays visible and no matching
+        // change event follows. Keep retrying until the runtime explicitly
+        // reports SUPPRESSED; the event handler below is the authority that
+        // makes a suppression request valid.
+        g_boundaryRequestValid = !suppressionRequest;
+        g_boundaryRetryFrames = suppressionRequest
+            ? kBoundaryRetryFrameInterval : 0;
+        if (!suppressionRequest || g_boundaryRetryAttempts <= 3 ||
+            (g_boundaryRetryAttempts % 120u) == 0u) {
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.boundary] requested=%s reason=%s result=%d "
+                "awaiting_observation=%d attempt=%u",
+                suppressionRequest ? "suppressed" : "visible",
+                reason, static_cast<int>(result),
+                suppressionRequest ? 1 : 0, g_boundaryRetryAttempts);
+        }
+        if (!suppressionRequest) g_boundaryRetryAttempts = 0;
         return;
     }
 
-    if (desired == XR_BOUNDARY_VISIBILITY_SUPPRESSED_META) {
+    if (suppressionRequest) {
         g_boundaryRequestValid = false;
         g_boundaryRetryFrames = kBoundaryRetryFrameInterval;
-        ++g_boundaryRetryAttempts;
         // Keep Release logs useful without emitting two warnings per second
         // forever on a runtime or account policy that disallows suppression.
         if (g_boundaryRetryAttempts <= 3 ||
@@ -4049,10 +4072,26 @@ void PollEvents() {
         if (event.type == XR_TYPE_EVENT_DATA_BOUNDARY_VISIBILITY_CHANGED_META) {
             const auto* boundaryEvent =
                 reinterpret_cast<const XrEventDataBoundaryVisibilityChangedMETA*>(&event);
-            LOGI("[tabletop.boundary] observed=%s",
-                 boundaryEvent->boundaryVisibility ==
-                         XR_BOUNDARY_VISIBILITY_SUPPRESSED_META
-                     ? "suppressed" : "visible");
+            const XrBoundaryVisibilityMETA observed =
+                boundaryEvent->boundaryVisibility;
+            if (observed == g_lastBoundaryRequest) {
+                g_boundaryRequestValid = true;
+                g_boundaryRetryFrames = 0;
+                g_boundaryRetryAttempts = 0;
+            } else if (g_lastBoundaryRequest ==
+                       XR_BOUNDARY_VISIBILITY_SUPPRESSED_META) {
+                // Horizon can restore the safety boundary after accepting our
+                // request (focus changes and system overlays are common causes).
+                // Re-arm the bounded retry instead of trusting stale success.
+                g_boundaryRequestValid = false;
+                g_boundaryRetryFrames = kBoundaryRetryFrameInterval;
+            }
+            __android_log_print(
+                ANDROID_LOG_INFO, SAVR_TAG,
+                "[tabletop.boundary] observed=%s",
+                observed ==
+                        XR_BOUNDARY_VISIBILITY_SUPPRESSED_META
+                    ? "suppressed" : "visible");
             event = {XR_TYPE_EVENT_DATA_BUFFER};
             continue;
         }
@@ -5494,10 +5533,10 @@ bool DrawHudComposite(GLuint sourceTexture,int targetWidth,int targetHeight,
     };
     drawDirectText(hud::MESSAGES,g_bigTextTexture,kWhiteTint,0);
     int smallTextStackLevel=0;
-    // Keep one dependable subtitle path in every presentation mode. The flat
-    // theater's stock copy is suppressed at CMessages::Display, while this
-    // direct layer supplies the same approved text in the lower-third layout.
-    if (g_briefTextTexture.visible) {
+    // The theater GameSurface already contains GTA's cutscene subtitle. Keep
+    // that original copy and draw the direct subtitle only for stereo gameplay;
+    // otherwise the same sentence appears twice at two different heights.
+    if (stereoEye&&g_briefTextTexture.visible) {
         drawDirectText(hud::HELP_TEXT,g_briefTextTexture,kSubtitleTint,
                        smallTextStackLevel++);
     }
