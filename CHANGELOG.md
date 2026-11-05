@@ -2,6 +2,11 @@
 
 ## Unreleased — complete Diorama contextual controls
 
+- Wait up to 45 seconds for the selected Quest serial to reconnect after the
+  pinned ADB server restarts. Temporary missing, offline and unauthorized
+  states no longer fail a completed personal build after a single probe.
+- Separate the installer's game-source and build-storage steps, rename existing
+  source actions explicitly, and give status text DPI-safe vertical space.
 - Let the Windows installer persist a user-selected build-storage folder for
   downloads, tools, phone exports, build runs and backups. It now reports free
   space up front and blocks a new export/build below the required 15 GB instead

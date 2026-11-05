@@ -939,23 +939,68 @@ function Restart-PinnedAdbServer {
     }
 }
 
+function Get-AdbDeviceInventory {
+    $result = Invoke-AdbCapture -Arguments @('devices', '-l') -WithoutSerial -AllowFailure
+    $devices = @()
+    if ($result.ExitCode -ne 0) { return $devices }
+    foreach ($line in $result.Lines) {
+        if ($line -match '^([^\s]+)\s+(device|unauthorized|offline)\s*(.*)$') {
+            $devices += [pscustomobject]@{
+                Serial = $Matches[1]
+                State = $Matches[2]
+                Detail = $Matches[3]
+            }
+        }
+    }
+    return $devices
+}
+
+function Wait-ForRequestedAdbDevice {
+    param(
+        [Parameter(Mandatory = $true)][string]$RequestedSerial,
+        [int]$TimeoutSeconds = 45
+    )
+    Write-Host "Waiting up to $TimeoutSeconds seconds for Quest $RequestedSerial to reconnect after the ADB restart..."
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    $lastState = 'not found'
+    $nextNoticeSeconds = 5
+    do {
+        $devices = @(Get-AdbDeviceInventory)
+        $match = @($devices | Where-Object { $_.Serial -eq $RequestedSerial })
+        if ($match.Count -eq 1) {
+            $lastState = [string]$match[0].State
+            if ($lastState -eq 'device') {
+                Write-Host "Quest reconnected after $([math]::Round($timer.Elapsed.TotalSeconds, 1)) seconds."
+                return $match[0]
+            }
+        }
+        else { $lastState = 'not found' }
+
+        if ($timer.Elapsed.TotalSeconds -ge $nextNoticeSeconds) {
+            Write-Host "  Still waiting for $RequestedSerial (current state: $lastState)..."
+            $nextNoticeSeconds += 5
+        }
+        Start-Sleep -Milliseconds 1000
+    } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+
+    if ($lastState -eq 'unauthorized') {
+        throw "Requested Quest is connected but not authorized after the ADB restart: $RequestedSerial. Put on the headset and allow USB debugging, then use the no-rebuild retry."
+    }
+    if ($lastState -eq 'offline') {
+        throw "Requested Quest remained offline after waiting $TimeoutSeconds seconds: $RequestedSerial. Reconnect its USB cable, then use the no-rebuild retry."
+    }
+    throw "Requested Quest did not reconnect within $TimeoutSeconds seconds after the ADB restart: $RequestedSerial. Reconnect it, then use the no-rebuild retry."
+}
+
 function Select-QuestDevice {
     param([string]$RequestedSerial)
     Restart-PinnedAdbServer
-    $result = Invoke-AdbCapture -Arguments @('devices', '-l') -WithoutSerial
-    $devices = @()
-    foreach ($line in $result.Lines) {
-        if ($line -match '^([^\s]+)\s+(device|unauthorized|offline)\s*(.*)$') {
-            $devices += [pscustomobject]@{ Serial = $Matches[1]; State = $Matches[2]; Detail = $Matches[3] }
-        }
-    }
     if (-not [string]::IsNullOrWhiteSpace($RequestedSerial)) {
-        $match = @($devices | Where-Object { $_.Serial -eq $RequestedSerial })
-        if ($match.Count -ne 1) { throw "Requested ADB device was not found: $RequestedSerial" }
-        if ($match[0].State -ne 'device') { throw "Requested ADB device is $($match[0].State): $RequestedSerial" }
+        Wait-ForRequestedAdbDevice -RequestedSerial $RequestedSerial -TimeoutSeconds 45 | Out-Null
         $script:SelectedSerial = $RequestedSerial
     }
     else {
+        $devices = @(Get-AdbDeviceInventory)
         $ready = @($devices | Where-Object { $_.State -eq 'device' })
         if ($ready.Count -eq 0) {
             $blocked = @($devices | Where-Object { $_.State -ne 'device' })

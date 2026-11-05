@@ -270,6 +270,19 @@ if ($windowsInstallerText -match '\$stageContainer\s*=\s*"\$RemoteParent/\.savr-
     $posixInstallerText -match 'stage_container="\$parent/\.savr-stage-') {
     throw 'A payload installer stages adb push directly below its final Android/data parent.'
 }
+foreach ($requiredAdbReconnectPattern in @(
+    'function Wait-ForRequestedAdbDevice',
+    '\[int\]\$TimeoutSeconds = 45',
+    'Start-Sleep -Milliseconds 1000',
+    'Wait-ForRequestedAdbDevice -RequestedSerial \$RequestedSerial -TimeoutSeconds 45')) {
+    if ($windowsInstallerText -notmatch $requiredAdbReconnectPattern) {
+        throw "Windows installer lacks bounded Quest reconnect handling: $requiredAdbReconnectPattern"
+    }
+}
+if ($windowsInstallerText -match
+        'if \(\$match\.Count -ne 1\) \{ throw "Requested ADB device was not found') {
+    throw 'Windows installer still fails immediately while Quest reconnects after an ADB restart.'
+}
 
 $resetFiles = @(
     'RESET_VR_SETTINGS.bat', 'RESET_VR_SETTINGS.sh',
