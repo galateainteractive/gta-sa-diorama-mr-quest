@@ -9,11 +9,12 @@ independent repository's `main` branch.
 - [x] Preserve the tested Package 48 state before publication changes.
 - [x] Adopt the Diorama MR public name without renaming stable internal keys.
 - [x] Preserve the MIT license and document the exact upstream provenance.
-- [x] Create the independent private GitHub repository at
-      `galateainteractive/gta-sa-diorama-mr-quest`.
+- [x] Create the independent GitHub repository privately for pre-publication
+      review at `galateainteractive/gta-sa-diorama-mr-quest`.
 - [x] Configure it as `origin` and push development history and safety tags.
 - [x] Point `UPDATE.bat` at the independent Diorama MR repository.
-- [ ] Run the complete release audit, including Bash syntax checks.
+- [x] Run the complete release audit, including Bash and Python checks in CI.
+- [x] Publish the repository and enable private vulnerability reporting.
 
 ## Player-facing product
 
@@ -35,6 +36,6 @@ independent repository's `main` branch.
 - [ ] Verify a fresh install and an update that preserves saves, audio and
       configuration.
 - [ ] Test Diorama MR defaults and the immersive fallback on Quest.
-- [ ] Publish no APK, Rockstar asset, audio bank, signing key, diagnostic log or
+- [x] Publish no APK, Rockstar asset, audio bank, signing key, diagnostic log or
       personal path.
 - [ ] Tag the first public pre-release only after the headset smoke test.
