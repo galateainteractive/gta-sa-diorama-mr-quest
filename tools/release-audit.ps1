@@ -33,13 +33,19 @@ $forbiddenFilePatterns = @(
     'service-account*.json'
 )
 
-$gitMetadataRoot = (Join-Path $Root '.git').TrimEnd('\') + '\'
+$gitMetadataRoot = [System.IO.Path]::GetFullPath((Join-Path $Root '.git'))
+$gitMetadataPrefix = $gitMetadataRoot.TrimEnd(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
+) + [System.IO.Path]::DirectorySeparatorChar
 $allItems = @(
     Get-ChildItem -LiteralPath $Root -Force -Recurse |
         Where-Object {
+            $_.FullName -ne $gitMetadataRoot -and
             -not $_.FullName.StartsWith(
-                $gitMetadataRoot,
-                [System.StringComparison]::OrdinalIgnoreCase)
+                $gitMetadataPrefix,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
         }
 )
 $badDirectories = @(
