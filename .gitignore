@@ -37,7 +37,17 @@
 *.pfx
 *.pem
 *.key
+*.kdbx
 release-signing.properties
+.env
+.env.*
+!.env.example
+credentials*.json
+*credentials.json
+service-account*.json
+google-services.json
+.npmrc
+.pypirc
 
 # User inputs, archives and diagnostics
 *.zip

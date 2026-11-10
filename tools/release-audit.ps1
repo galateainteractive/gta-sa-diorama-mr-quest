@@ -24,7 +24,14 @@ $forbiddenExtensions = @(
     '.pyc', '.o', '.obj', '.a', '.lib', '.exe', '.dll', '.dylib',
     '.class', '.jar', '.wasm', '.bin'
 )
-$forbiddenFileNames = @('.env', 'local.properties', 'release-signing.properties')
+$forbiddenFileNames = @(
+    '.env', '.npmrc', '.pypirc', 'google-services.json',
+    'local.properties', 'release-signing.properties'
+)
+$forbiddenFilePatterns = @(
+    '.env.*', '*credentials.json', 'credentials*.json',
+    'service-account*.json'
+)
 
 $gitMetadataRoot = (Join-Path $Root '.git').TrimEnd('\') + '\'
 $allItems = @(
@@ -50,8 +57,10 @@ if ($badDirectories.Count -gt 0) {
 $files = @($allItems | Where-Object { -not $_.PSIsContainer })
 $badFiles = @(
     $files | Where-Object {
+        $fileName = $_.Name.ToLowerInvariant()
         $forbiddenExtensions -contains $_.Extension.ToLowerInvariant() -or
-        $forbiddenFileNames -contains $_.Name.ToLowerInvariant()
+        $forbiddenFileNames -contains $fileName -or
+        @($forbiddenFilePatterns | Where-Object { $fileName -like $_ }).Count -gt 0
     }
 )
 if ($badFiles.Count -gt 0) {
@@ -355,15 +364,21 @@ $forbiddenTextPatterns = @(
     '(?i)\bOpenAI\b|\bGemini\b|\bCopilot\b|generated[- ]by(?: an? )?(?:AI|LLM)',
     '(?i)another agent|concurrently-owned|see memory|qbuild',
     '(?m)^(<<<<<<<|=======|>>>>>>>)',
-    '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
-    '\bAKIA[0-9A-Z]{16}\b', '\bgh[pousr]_[A-Za-z0-9_]{20,}\b'
+    '-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
+    '\b(?:AKIA|ASIA)[0-9A-Z]{16}\b',
+    '\bgh[pousr]_[A-Za-z0-9]{20,}\b',
+    '\bgithub_pat_[A-Za-z0-9_]{40,}\b',
+    '\bsk-[A-Za-z0-9]{20,}\b',
+    '\bAIza[0-9A-Za-z_-]{30,}\b',
+    '\bxox[baprs]-[A-Za-z0-9-]{10,}\b',
+    'https?://[^/\s@]+:[^/\s@]+@'
 )
 foreach ($file in $textFiles) {
     if ($file.FullName -eq $MyInvocation.MyCommand.Path) { continue }
     $content = Get-Content -LiteralPath $file.FullName -Raw
     foreach ($pattern in $forbiddenTextPatterns) {
         if ($content -match $pattern) {
-            throw "Forbidden private, AI-session, conflict, or secret marker in $($file.FullName): $($Matches[0])"
+            throw "Forbidden private, AI-session, conflict, or secret marker in $($file.FullName)."
         }
     }
 }

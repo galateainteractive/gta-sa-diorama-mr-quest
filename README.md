@@ -449,6 +449,17 @@ the community reverse-engineering of the PC version,
 which we consult as a behavioural reference. Thanks to its authors and
 contributors. Full attribution is in [NOTICE.md](NOTICE.md).
 
+## Contributing and security
+
+Contributions are welcome when they preserve the source-only and lawful-input
+boundary of this repository. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a pull request. Never attach retail game files, APKs, audio banks,
+signing material, device diagnostics, saves, or personal configuration.
+
+Report security issues privately as described in [SECURITY.md](SECURITY.md).
+Do not publish credentials, exploit details, device identifiers, or private
+diagnostics in a public issue.
+
 ## Validation boundary
 
 The source kit validates sources, builds, signatures, APK payloads, and file
