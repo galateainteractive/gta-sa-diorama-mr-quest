@@ -21,6 +21,11 @@ set, backs up ADB-accessible saves/settings if a signing change requires
 reinstalling, installs the complete set, publishes the verified payloads, and
 leaves the game stopped.
 
+The personal build is installed as `com.savr.dioramamr` and appears in Quest
+as **GTA SA Diorama MR**. It is separate from the official Android game package
+`com.rockstargames.gtasa`, so the installer does not replace or uninstall the
+player's original GTA San Andreas app.
+
 The installer presents **PC work folder** as step 1, before game extraction. It
 defaults to the user's Local AppData directory but
 can be moved to any writable folder, such as `D:\Diorama MR`. The choice is

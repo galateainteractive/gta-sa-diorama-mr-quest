@@ -156,6 +156,13 @@ if ($exporterText -notmatch [regex]::Escape('split_config.arm64_v8a.apk') -or
 }
 $windowsInstallerText = Get-Content -LiteralPath (Join-Path $Root 'tools\build-and-install.ps1') -Raw
 $linuxInstallerText = Get-Content -LiteralPath (Join-Path $Root 'tools\build-and-install.sh') -Raw
+$installerProfileText = Get-Content -LiteralPath (Join-Path $Root 'installer\GTA-SA-Diorama-MR.cs') -Raw
+if ($installerProfileText -notmatch [regex]::Escape('AndroidPackage = "com.savr.dioramamr"') -or
+    $installerProfileText -notmatch [regex]::Escape('SourceKitBuildArguments = "-DioramaPackage"') -or
+    $windowsInstallerText -notmatch [regex]::Escape("[Alias('ExperimentalPackage')]") -or
+    $windowsInstallerText -notmatch [regex]::Escape('[switch]$DioramaPackage')) {
+    throw 'The official Windows installer no longer selects the side-by-side Diorama package.'
+}
 if ($windowsInstallerText -notmatch [regex]::Escape("@('shell', 'chmod', '-R', 'a+rX', `$RemoteFinal)") -or
     $linuxInstallerText -notmatch [regex]::Escape('adb_cmd shell chmod -R a+rX "$target"')) {
     throw 'An installer no longer makes shell-published Quest payloads readable by the game UID.'

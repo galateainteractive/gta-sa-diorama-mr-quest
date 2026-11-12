@@ -20,7 +20,7 @@ namespace GalateaDioramaInstaller
         internal const string CommandLineDeviceRelativePath = "";
         internal const bool GrantAllFilesAccess = false;
 
-        internal const string AndroidPackage = "com.rockstargames.gtasa";
+        internal const string AndroidPackage = "com.savr.dioramamr";
         internal const string DeviceRoot = "/sdcard/savr";
         internal const string DevicePayloadRoot = DeviceRoot + "/data_main/assets";
 
@@ -33,6 +33,7 @@ namespace GalateaDioramaInstaller
         internal const string SourceKitArchiveName = "GTA-SA-Diorama-MR-Source-Kit.zip";
         internal const string SourceKitVersion = "installer-v1";
         internal const string SourceKitBuildScript = "tools\\build-and-install.ps1";
+        internal const string SourceKitBuildArguments = "-DioramaPackage";
         internal const string SourceKitExportScript = "tools\\export-play-apks.ps1";
         internal const string SourceKitWorkFolder = "GalateaDioramaMods\\GTASADioramaMR";
         internal const long MinimumWorkFreeBytes = 15L * 1024L * 1024L * 1024L;

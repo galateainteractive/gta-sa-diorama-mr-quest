@@ -1,5 +1,21 @@
 # Changelog
 
+## GTA installer 1.3.9 — 2026-11-12
+
+- Install the personal Quest build under the dedicated package
+  `com.savr.dioramamr`, displayed as **GTA SA Diorama MR**. The official
+  `com.rockstargames.gtasa` app is no longer replaced or uninstalled by the
+  guided installer, so both applications can remain installed side by side.
+- Show a one-time interactive introduction to the three Diorama views when
+  controllable gameplay begins. The guide explains `TRACK`, `FOLLOW` and
+  `FIXED`, and closes only after the player presses `L3 + R3`, teaching the
+  production view-cycle control before continuing.
+- Reduce nighttime passthrough darkening from 40.5% to 25%, keeping the real
+  room more visible without changing the in-game time-of-day rendering.
+- Preserve `-ExperimentalPackage` as a compatibility alias for local test
+  shortcuts while promoting the clearer `-DioramaPackage` option to the
+  official Windows installer workflow.
+
 ## GTA installer 1.3.8 — 2026-11-05
 
 - Remove the atomic `vr_tabletop.ini.tmp` write file together with the other VR

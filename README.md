@@ -113,6 +113,11 @@ runtime payloads, and leaves the game stopped. If Android requires a signing
 replacement, the interface obtains explicit consent and retains the existing
 verified save/settings backup and restore transaction.
 
+The resulting Quest app is installed as `com.savr.dioramamr` and appears as
+**GTA SA Diorama MR**. It can coexist with the original Android package
+`com.rockstargames.gtasa`; the guided installer does not replace or uninstall
+the original game app.
+
 The Quest status is monitored automatically while the installer is open. It
 changes between disconnected, waiting for USB-debugging authorization, offline,
 and ready states as the headset is connected or removed; **Refresh** remains as
@@ -413,6 +418,10 @@ release:
   `FF5B7B6A083FE5994E3306B30AE19D311951D019A8DE7C3E6914F0E06D130A13`
 - `libGame.so` SHA-256:
   `4C6A7445E30B27AFDDA781302E4DB9BAC89C28FC1181B68B1EEF16F84D6A282E`
+
+These values identify the legally supplied source package. The personal output
+uses the separate package name `com.savr.dioramamr` and the display name
+**GTA SA Diorama MR**.
 
 Locale and density splits may vary; the wizard identifies them from their
 manifests rather than filenames. Directories and `.zip`, `.apks`, `.xapk`,

@@ -18,17 +18,18 @@ param(
     [switch]$AcceptAndroidLicenses,
     [switch]$ApproveSignatureReplacement,
     [switch]$PersonalUpdate,
-    [switch]$ExperimentalPackage
+    [Alias('ExperimentalPackage')]
+    [switch]$DioramaPackage
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:SourcePackageName = 'com.rockstargames.gtasa'
-$script:ExperimentalPackageName = 'com.savr.dioramamr'
-$script:ExperimentalDisplayName = 'GTA SA Diorama MR'
-$script:PackageName = if ($ExperimentalPackage.IsPresent) {
-    $script:ExperimentalPackageName
+$script:DioramaPackageName = 'com.savr.dioramamr'
+$script:DioramaDisplayName = 'GTA SA Diorama MR'
+$script:PackageName = if ($DioramaPackage.IsPresent) {
+    $script:DioramaPackageName
 } else {
     $script:SourcePackageName
 }
@@ -825,11 +826,11 @@ function Assert-BuildArtifacts {
     if ([string]$manifest.package -ne $script:PackageName) { throw 'Build manifest package is unexpected.' }
     if ($script:PackageName -ne $script:SourcePackageName -and
         [string]$manifest.sourcePackage -ne $script:SourcePackageName) {
-        throw 'Experimental build manifest does not identify the verified retail source package.'
+        throw 'Diorama build manifest does not identify the verified retail source package.'
     }
-    if ($script:PackageName -eq $script:ExperimentalPackageName -and
-        [string]$manifest.displayName -ne $script:ExperimentalDisplayName) {
-        throw 'Experimental build manifest has an unexpected display name.'
+    if ($script:PackageName -eq $script:DioramaPackageName -and
+        [string]$manifest.displayName -ne $script:DioramaDisplayName) {
+        throw 'Diorama build manifest has an unexpected display name.'
     }
     if ([string]$manifest.versionCode -ne $script:ExpectedVersionCode) { throw 'Build manifest versionCode is unexpected.' }
     if ([string]$manifest.versionName -ne $script:ExpectedVersionName) { throw 'Build manifest versionName is unexpected.' }
@@ -1490,9 +1491,9 @@ function Assert-InstalledApks {
 
 function Invoke-Main {
     $projectRoot = Get-FullPath (Join-Path $PSScriptRoot '..')
-    if ($ExperimentalPackage.IsPresent) {
-        Write-Warning "EXPERIMENTAL side-by-side package selected: $($script:PackageName)"
-        Write-Host "The normal package $($script:SourcePackageName) will not be replaced or uninstalled."
+    if ($DioramaPackage.IsPresent) {
+        Write-Host "Diorama MR side-by-side package selected: $($script:PackageName)"
+        Write-Host "The original package $($script:SourcePackageName) will not be replaced or uninstalled."
     }
     $buildScript = Join-Path $PSScriptRoot 'build.ps1'
     $assembleScript = Join-Path $PSScriptRoot 'assemble.py'
