@@ -2730,7 +2730,7 @@ PassthroughGrade WeatherTarget(const PassthroughWeatherState& state) {
     const PassthroughGrade sunset{
         -0.025f, 0.025f, 1.03f, {1.16f, 0.94f, 0.78f}, 0.36f};
     const PassthroughGrade night{
-        -0.135f, -0.035f, 0.82f, {0.84f, 0.93f, 1.08f}, 0.24f};
+        -0.083333f, -0.035f, 0.82f, {0.84f, 0.93f, 1.08f}, 0.24f};
     const PassthroughGrade overcast{
         -0.035f, -0.105f, 0.78f, {0.93f, 0.97f, 1.02f}, 0.16f};
     const PassthroughGrade rain{
