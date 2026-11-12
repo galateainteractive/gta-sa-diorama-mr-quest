@@ -23,6 +23,8 @@ namespace GalateaDioramaInstaller
         internal const string AndroidPackage = "com.savr.dioramamr";
         internal const string DeviceRoot = "/sdcard/savr";
         internal const string DevicePayloadRoot = DeviceRoot + "/data_main/assets";
+        internal static readonly string[] LegacyDeviceRoots = new string[0];
+        internal static readonly string[] LegacyMigrationExcludedNames = new string[0];
 
         internal const string EmbeddedApkResource = "";
         internal const string ExtractedApkName = "";
