@@ -1772,17 +1772,24 @@ void SendInputToGame(JNIEnv* env, jclass clazz) {
             break;
         }
         case PG_ABOUT: {
-            // VC behaviour: any button closes, but only after every button
-            // has first been seen released (so the opening press or the
-            // movement stick cannot instantly dismiss it).
-            const bool anyButton = in.a || in.b || in.x || in.y || in.menu;
-            if (!anyButton) aboutArmed = true;
-            else if (aboutArmed) {
-                menuPage = PG_NONE;
-                if (aboutFirstRun) {
+            if (aboutFirstRun) {
+                // The one-shot welcome is an interactive lesson: only the
+                // actual Diorama view chord dismisses it, and that same press
+                // performs the first TRACK -> FOLLOW transition.
+                const bool viewChord = in.l3 && in.r3;
+                if (!viewChord) aboutArmed = true;
+                else if (aboutArmed) {
+                    vrcam::CompleteTabletopViewTutorial();
+                    menuPage = PG_NONE;
                     savr::locomotion::MarkWelcomeSeen();
                     aboutFirstRun = false;
                 }
+            } else {
+                // The About page opened from the menu keeps the classic
+                // any-button close, after the opening press is released.
+                const bool anyButton = in.a || in.b || in.x || in.y || in.menu;
+                if (!anyButton) aboutArmed = true;
+                else if (aboutArmed) menuPage = PG_NONE;
             }
             break;
         }

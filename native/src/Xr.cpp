@@ -8500,9 +8500,38 @@ void BuildAboutMenu() {
     PanelClear();
     const int cx = kPanelW / 2;
     const bool firstRun = g_aboutFirstRun.load(std::memory_order_relaxed);
-    PanelTextFit(firstRun ? "WELCOME TO GTA SAN ANDREAS DIORAMA MR"
-                          : "ABOUT DIORAMA MR",
-                 cx, 22, 3, 100, 225, 255);
+    if (firstRun) {
+        PanelTextFit("WELCOME TO GTA SAN ANDREAS DIORAMA MR",
+                     cx, 20, 3, 100, 225, 255);
+
+        PanelFillRect(34, 70, kPanelW - 34, 104, 34, 55, 92, 245);
+        PanelTextFit("TRY ALL 3 DIORAMA VIEWS", cx, 78, 3, 255, 205, 80);
+
+        PanelFillRect(42, 126, kPanelW - 42, 152, 48, 38, 78, 205);
+        PanelTextFit("TRACK", cx, 130, 2, 255, 185, 105);
+        PanelTextFit("CJ STAYS CENTERED; THE WORLD MOVES LIKE A TREADMILL",
+                     cx, 166, 2, 225, 238, 248);
+
+        PanelFillRect(42, 194, kPanelW - 42, 220, 48, 38, 78, 205);
+        PanelTextFit("FOLLOW", cx, 198, 2, 255, 185, 105);
+        PanelTextFit("CJ STAYS CENTERED; VIEW ROTATES WITH CJ / CAR",
+                     cx, 234, 2, 225, 238, 248);
+
+        PanelFillRect(42, 262, kPanelW - 42, 288, 48, 38, 78, 205);
+        PanelTextFit("FIXED", cx, 266, 2, 255, 185, 105);
+        PanelTextFit("DIORAMA STAYS IN YOUR ROOM; CJ MOVES THROUGH IT",
+                     cx, 302, 2, 225, 238, 248);
+
+        PanelFillRect(34, 344, kPanelW - 34, 378, 34, 55, 92, 245);
+        PanelTextFit("TRY IT NOW", cx, 352, 3, 255, 205, 80);
+        PanelTextFit("CLICK BOTH THUMBSTICKS (L3 + R3)", cx, 398, 2,
+                     150, 220, 255);
+        PanelTextFit("TO CHANGE VIEW AND CLOSE THIS WINDOW", cx, 434, 2,
+                     225, 238, 248);
+        return;
+    }
+
+    PanelTextFit("ABOUT DIORAMA MR", cx, 22, 3, 100, 225, 255);
     char versionLine[64];
     std::snprintf(versionLine, sizeof(versionLine),
                   "VR BASE %s - DEVELOPMENT PREVIEW", kModVersionShown);
@@ -8510,34 +8539,6 @@ void BuildAboutMenu() {
     PanelFillRect(34, 78, kPanelW - 34, 138, 34, 55, 92, 245);
     PanelTextFit("OPEN THE DIORAMA MENU", cx, 86, 3, 255, 205, 80);
     PanelTextFit("HOLD BOTH GRIPS + MENU (OR Y)", cx, 116, 2, 235, 242, 255);
-
-    if (firstRun) {
-        PanelFillRect(42, 156, kPanelW - 42, 182, 48, 38, 78, 205);
-        PanelTextFit("PLAY MODE", cx, 160, 2, 255, 185, 105);
-        PanelTextFit("DIORAMA MR IS THE DEFAULT MODE", cx, 198, 2,
-                     225, 238, 248);
-        PanelTextFit("SELECT IMMERSIVE VR IN MAIN MENU > PLAY MODE", cx, 224, 2,
-                     150, 220, 255);
-        PanelTextFit("RESTART THE GAME TO APPLY", cx, 250, 2,
-                     150, 220, 255);
-
-        PanelFillRect(42, 278, kPanelW - 42, 304, 48, 38, 78, 205);
-        PanelTextFit("CREDITS", cx, 282, 2, 255, 185, 105);
-        PanelTextFit("DIORAMA MR BY GALATEA DIORAMA MODS", cx, 320, 2,
-                     225, 238, 248);
-        PanelTextFit("IMMERSIVE VR BASE: GTA SAN ANDREAS VR QUEST", cx, 346, 2,
-                     150, 220, 255);
-        PanelTextFit("BY THE ORIGINAL PORT CONTRIBUTORS", cx, 372, 2,
-                     150, 220, 255);
-
-        PanelFillRect(42, 398, kPanelW - 42, 424, 48, 38, 78, 205);
-        PanelTextFit("LEARN THE CONTROLS", cx, 402, 2, 255, 185, 105);
-        PanelTextFit("MENU > CONTROLS OPENS DIORAMA GUIDE", cx, 438, 2,
-                     225, 238, 248);
-        PanelTextFit("PRESS ANY BUTTON TO CLOSE", cx, 472, 2,
-                     255, 205, 80);
-        return;
-    }
 
     PanelFillRect(42, 162, kPanelW - 42, 188, 48, 38, 78, 205);
     PanelTextFit("GALATEA DIORAMA MODS", cx, 166, 2, 255, 185, 105);

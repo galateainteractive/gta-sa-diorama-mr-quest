@@ -92,6 +92,10 @@ bool TransformTabletopSwimStick(const void* ped, float* x, float* y);
 // layer whenever a VR menu (cheats or calibration) is open.
 void SetInputBlocked(bool blocked);
 
+// The one-shot welcome panel uses the real view transition, then suppresses
+// the still-held chord so the normal input path cannot cycle a second time.
+void CompleteTabletopViewTutorial();
+
 // True while Diorama MR's R3 weapon-selection overlay owns gameplay input.
 // The Java gamepad provider uses this to publish a neutral pad in parallel
 // with the native CPad hook, preventing stale movement or fire state.

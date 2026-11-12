@@ -2597,6 +2597,7 @@ struct TabletopTransformState {
 
 TabletopTransformState g_tabletopTransform{};
 std::atomic<bool> g_tabletopWeaponSelectorActive{false};
+std::atomic<bool> g_suppressTabletopViewChordUntilRelease{false};
 // Refreshed whenever the retail touch/script path polls a contextual widget
 // bound to R3. Script opcodes can run after UpdatePads, so a short freshness
 // window (rather than a same-call flag) lets that action outrank the selector.
@@ -2811,6 +2812,10 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     }
 
     const bool viewChordHeld = input.l3 && input.r3;
+    if (!viewChordHeld) {
+        g_suppressTabletopViewChordUntilRelease.store(
+            false, std::memory_order_relaxed);
+    }
     const bool gripsFree = input.grip[0] < 0.65f && input.grip[1] < 0.65f;
     // Normal play always uses CJ/vehicle as the sole coverage authority.
     // This also repairs a stale in-memory experimental mode without exposing
@@ -2843,6 +2848,8 @@ void UpdateTabletopControls(xr::InputState& input, bool blocked) {
     // continuously poll R3 for horn/hydraulics, but that must suppress only
     // the plain-R3 weapon selector, not the Diorama view control.
     if (!blocked && !selectorActive && viewChordHeld &&
+        !g_suppressTabletopViewChordUntilRelease.load(
+            std::memory_order_relaxed) &&
         (l3Edge || r3Edge)) {
         CycleTabletopView();
         suppressL3UntilRelease = true;
@@ -33179,6 +33186,13 @@ bool WorldPointToTracking(const float worldPoint[3], float trackingPoint[3]) {
 
 void SetInputBlocked(bool blocked) {
     g_inputBlocked.store(blocked, std::memory_order_relaxed);
+}
+
+void CompleteTabletopViewTutorial() {
+    if (!tabletop::Enabled()) return;
+    CycleTabletopView();
+    g_suppressTabletopViewChordUntilRelease.store(
+        true, std::memory_order_relaxed);
 }
 
 bool WeaponSelectorActive() {
