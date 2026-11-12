@@ -11,6 +11,8 @@ param(
     [string]$GamePackage,
     [string]$AudioSource,
     [string]$Keystore,
+    [ValidatePattern('^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$')]
+    [string]$TargetPackage = 'com.rockstargames.gtasa',
     [switch]$Package,
     [switch]$AllowUnofficialSource,
     [switch]$PersonalUpdateSource
@@ -70,16 +72,19 @@ Write-Host "==> libsavr.so ($Configuration, arm64-v8a, SAVR_DEV=OFF)"
     '-DANDROID_STL=c++_static' `
     '-DSAVR_DEV=OFF' `
     '-DSAVR_EXPERIMENTAL_BACKPRESSURE=ON' `
+    "-DSAVR_PACKAGE_NAME=$TargetPackage" `
     "-DCMAKE_BUILD_TYPE=$Configuration"
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed: $LASTEXITCODE" }
 
 $CMakeCache = Join-Path $NativeBuild 'CMakeCache.txt'
 $ExpectedSavrDev = 'SAVR_DEV:BOOL=OFF'
 $ExpectedBackpressure = 'SAVR_EXPERIMENTAL_BACKPRESSURE:BOOL=ON'
+$ExpectedPackage = "SAVR_PACKAGE_NAME:STRING=$TargetPackage"
 if (-not (Test-Path -LiteralPath $CMakeCache) -or
     -not (Select-String -LiteralPath $CMakeCache -SimpleMatch $ExpectedSavrDev -Quiet) -or
-    -not (Select-String -LiteralPath $CMakeCache -SimpleMatch $ExpectedBackpressure -Quiet)) {
-    throw "CMake cache did not retain requested player settings: $ExpectedSavrDev, $ExpectedBackpressure"
+    -not (Select-String -LiteralPath $CMakeCache -SimpleMatch $ExpectedBackpressure -Quiet) -or
+    -not (Select-String -LiteralPath $CMakeCache -SimpleMatch $ExpectedPackage -Quiet)) {
+    throw "CMake cache did not retain requested player settings: $ExpectedSavrDev, $ExpectedBackpressure, $ExpectedPackage"
 }
 
 & $CMake --build $NativeBuild
@@ -164,7 +169,8 @@ if ($Package.IsPresent) {
         '--native-lib', $NativeLibrary,
         '--loader-dex', $DexFile,
         '--openxr-loader', $OpenXrLoader,
-        '--keystore', $Keystore
+        '--keystore', $Keystore,
+        '--target-package', $TargetPackage
     )
     if ($AllowUnofficialSource.IsPresent) { $assembleArgs += '--allow-unofficial-source' }
     if ($PersonalUpdateSource.IsPresent) { $assembleArgs += '--personal-update-source' }

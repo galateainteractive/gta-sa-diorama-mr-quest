@@ -17,6 +17,7 @@ APKTOOL=""
 GAME_PACKAGE=""
 AUDIO_SOURCE=""
 KEYSTORE=""
+TARGET_PACKAGE="com.rockstargames.gtasa"
 PACKAGE=0
 ALLOW_UNOFFICIAL_SOURCE=0
 
@@ -38,6 +39,7 @@ Personal package options:
   --python EXE               Python 3 executable (default: python3/python)
   --apktool FILE             apktool 3.0.3 jar
   --keystore FILE            Personal signing key (default: build/signing)
+  --target-package NAME      Output Android package (default: retail package)
   --allow-unofficial-source  Developer escape hatch; public master never uses it
 
 The low-level build script never installs or launches the game.
@@ -179,6 +181,7 @@ while [ "$#" -gt 0 ]; do
     --game-package|-GamePackage) GAME_PACKAGE="${2:?missing game package}"; shift 2 ;;
     --audio-source|-AudioSource) AUDIO_SOURCE="${2:?missing audio source}"; shift 2 ;;
     --keystore|-Keystore) KEYSTORE="${2:?missing keystore}"; shift 2 ;;
+    --target-package|-TargetPackage) TARGET_PACKAGE="${2:?missing target package}"; shift 2 ;;
     --package|-Package) PACKAGE=1; shift ;;
     --allow-unofficial-source|-AllowUnofficialSource) ALLOW_UNOFFICIAL_SOURCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -195,6 +198,8 @@ case "$CONFIGURATION" in
   Debug|RelWithDebInfo|Release) ;;
   *) die "invalid configuration '$CONFIGURATION'" ;;
 esac
+[[ "$TARGET_PACKAGE" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]] ||
+  die "invalid Android package name '$TARGET_PACKAGE'"
 
 [ -n "$ANDROID_SDK" ] || die "Android SDK path is required (--android-sdk or ANDROID_SDK_ROOT)"
 [ -n "$JAVA_HOME_ARG" ] || die "JDK 21 path is required (--java-home or JAVA_HOME)"
@@ -286,6 +291,7 @@ echo "==> libsavr.so ($CONFIGURATION, arm64-v8a)"
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM=android-28 \
   -DSAVR_DEV=OFF \
+  "-DSAVR_PACKAGE_NAME=$TARGET_PACKAGE" \
   "-DCMAKE_BUILD_TYPE=$CONFIGURATION"
 grep -q '^SAVR_DEV:BOOL=OFF$' "$NATIVE_BUILD/CMakeCache.txt" || {
   echo 'CMake cache did not retain the required player setting SAVR_DEV=OFF' >&2
@@ -334,6 +340,7 @@ ASSEMBLE_ARGS=(
   --loader-dex "$DEX_FILE"
   --openxr-loader "$OPENXR_LOADER"
   --keystore "$KEYSTORE"
+  --target-package "$TARGET_PACKAGE"
 )
 if [ "$ALLOW_UNOFFICIAL_SOURCE" -eq 1 ]; then
   ASSEMBLE_ARGS+=(--allow-unofficial-source)

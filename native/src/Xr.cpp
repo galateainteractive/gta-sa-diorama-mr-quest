@@ -10245,7 +10245,7 @@ GLuint LoadRgbaTexture(const char* path, int w, int h) {
 void EnsureHandAssets() {
     if (g_handAssetsTried) return;
     g_handAssetsTried = true;
-    const char* dir = "/sdcard/Android/data/com.rockstargames.gtasa/files/vrhands/";
+    const char* dir = SAVR_EXTERNAL_FILES_DIR "/vrhands/";
     char path[256];
     std::snprintf(path, sizeof(path), "%sBigHandLeft.uxrh", dir);  LoadUxrh(path, g_handMesh[0]);
     std::snprintf(path, sizeof(path), "%sBigHandRight.uxrh", dir); LoadUxrh(path, g_handMesh[1]);

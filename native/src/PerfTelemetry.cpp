@@ -48,9 +48,9 @@ bool DetailedRenderTraceRequested() {
 
 #ifdef SAVR_DEV
 constexpr const char* kGameCsvPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_game_perf_v2.csv";
+    SAVR_EXTERNAL_FILES_DIR "/savr_game_perf_v2.csv";
 constexpr const char* kXrCsvPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_xr_perf_v2.csv";
+    SAVR_EXTERNAL_FILES_DIR "/savr_xr_perf_v2.csv";
 #endif
 
 struct DebugStatsAtomic {

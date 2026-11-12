@@ -603,7 +603,7 @@ constexpr int kRenderScaleCount =
 // GPU time. The menu still exposes up to 200% for deliberate local testing.
 constexpr int kDefaultRenderScaleIndex = 4;
 const char* const kGraphicsSettingsPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_graphics.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_graphics.ini";
 
 std::once_flag g_graphicsSettingsLoadOnce;
 std::mutex g_graphicsSettingsSaveMutex;

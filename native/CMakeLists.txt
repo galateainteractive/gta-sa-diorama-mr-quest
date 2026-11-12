@@ -18,6 +18,12 @@ if(SAVR_EXPERIMENTAL_BACKPRESSURE)
     add_compile_definitions(SAVR_EXPERIMENTAL_BACKPRESSURE=1)
 endif()
 
+set(SAVR_PACKAGE_NAME "com.rockstargames.gtasa" CACHE STRING
+    "Android application package used for app-scoped external files")
+if(NOT SAVR_PACKAGE_NAME MATCHES "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$")
+    message(FATAL_ERROR "Invalid Android package name: ${SAVR_PACKAGE_NAME}")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -91,11 +97,13 @@ set_property(SOURCE src/AircraftHlodData.S PROPERTY OBJECT_DEPENDS
     "${AIRCRAFT_HLOD_PACK}")
 
 target_include_directories(savr PRIVATE src ${OPENXR_DIR}/include)
+target_compile_definitions(savr PRIVATE SAVR_PACKAGE_NAME="${SAVR_PACKAGE_NAME}")
 
 # -fvisibility=hidden keeps our own symbol table down to the JNI entry points, so
 # nothing of ours can accidentally shadow a game symbol during resolution.
 target_compile_options(savr PRIVATE
     -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
+    "$<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/AppPaths.h>"
     -fvisibility=hidden
     $<$<CONFIG:Release>:-O2>
 )

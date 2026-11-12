@@ -103,7 +103,7 @@ constexpr int kDefaults[F_COUNT] = {
 constexpr bool kImmersiveDrivingEnabled = true;
 constexpr int kDrivingConfigVersion = 3;
 const char* const kPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_driving.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_driving.ini";
 
 std::once_flag g_initOnce;
 std::mutex g_saveMutex;

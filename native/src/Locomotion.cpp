@@ -14,7 +14,7 @@ namespace savr::locomotion {
 namespace {
 
 const char* const kPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_locomotion.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_locomotion.ini";
 
 std::once_flag g_initOnce;
 std::mutex g_saveMutex;

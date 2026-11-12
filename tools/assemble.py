@@ -44,6 +44,10 @@ DEFAULT_SETTING_NAMES = (
 )
 
 PACKAGE_NAME = "com.rockstargames.gtasa"
+TARGET_PACKAGE_NAME = PACKAGE_NAME
+EXPERIMENTAL_PACKAGE_NAME = "com.savr.dioramamr"
+EXPERIMENTAL_DISPLAY_NAME = "GTA SA Diorama MR"
+PACKAGE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 VERSION_CODE = "4234641"
 VERSION_NAME = "2.11.311"
 OFFICIAL_SIGNER_SHA256 = (
@@ -1059,7 +1063,74 @@ def validate_audio(source: Path, work: Path, build_root: Path) -> AudioTree:
     return AudioTree(audio_root, tuple(verified))
 
 
-def patch_manifest(text: str) -> str:
+def rewrite_manifest_package_identity(text: str) -> str:
+    """Rewrite Android identity fields without renaming Rockstar Java classes."""
+    if TARGET_PACKAGE_NAME == PACKAGE_NAME:
+        return text
+
+    source = re.escape(PACKAGE_NAME)
+    text, root_count = re.subn(
+        rf'(<manifest\b[^>]*\bpackage="){source}("[^>]*>)',
+        rf'\g<1>{TARGET_PACKAGE_NAME}\g<2>',
+        text,
+        count=1,
+    )
+    if root_count != 1:
+        raise KitError("decoded manifest does not declare the expected source package")
+
+    # These attributes carry app identity, not Java class names. Component
+    # android:name values deliberately stay com.rockstargames.* because the
+    # retail DEX still implements those classes.
+    for attribute in (
+        "authorities",
+        "permission",
+        "readPermission",
+        "writePermission",
+        "taskAffinity",
+        "targetPackage",
+    ):
+        text = re.sub(
+            rf'(android:{attribute}="[^"\n]*){source}',
+            rf'\g<1>{TARGET_PACKAGE_NAME}',
+            text,
+        )
+
+    # Custom permission declarations and requests use android:name but are
+    # package identities rather than component class names.
+    text = re.sub(
+        rf'(<(?:permission|uses-permission(?:-sdk-\d+)?)\b[^>]*\bandroid:name="){source}',
+        rf'\g<1>{TARGET_PACKAGE_NAME}',
+        text,
+    )
+    text = re.sub(
+        rf'(<meta-data\b[^>]*\bandroid:name="APP_NAME"[^>]*\bandroid:value="){source}',
+        rf'\g<1>{TARGET_PACKAGE_NAME}',
+        text,
+    )
+    if TARGET_PACKAGE_NAME == EXPERIMENTAL_PACKAGE_NAME:
+        text, label_count = re.subn(
+            r'(<application\b[^>]*\bandroid:label=")[^"]*(")',
+            rf'\g<1>{EXPERIMENTAL_DISPLAY_NAME}\g<2>',
+            text,
+            count=1,
+        )
+        if label_count == 0:
+            text, application_count = re.subn(
+                r'<application\b',
+                f'<application android:label="{EXPERIMENTAL_DISPLAY_NAME}"',
+                text,
+                count=1,
+            )
+            if application_count != 1:
+                raise KitError("decoded base manifest has no application element")
+    return text
+
+
+def patch_manifest(text: str, *, patch_vr_entrypoint: bool = True) -> str:
+    text = rewrite_manifest_package_identity(text)
+    if not patch_vr_entrypoint:
+        return text
+
     app_match = re.search(r"<application\b([^>]*)>", text)
     if not app_match:
         raise KitError("application tag not found in decoded manifest")
@@ -1126,7 +1197,14 @@ def create_manifest_stub(base: Path, destination: Path) -> None:
                 copy_zip_stream(source, info, output)
 
 
-def build_manifest(base: Path, build: Path, tools: Toolchain) -> bytes:
+def build_manifest(
+    base: Path,
+    build: Path,
+    tools: Toolchain,
+    *,
+    patch_vr_entrypoint: bool = True,
+) -> bytes:
+    build.mkdir(parents=True, exist_ok=True)
     decoded = build / "manifest-decoded"
     framework = build / "apktool-framework"
     stub = build / "manifest-source.apk"
@@ -1162,8 +1240,35 @@ def build_manifest(base: Path, build: Path, tools: Toolchain) -> bytes:
         ],
         failure="apktool manifest decode failed",
     )
+    apktool_metadata = decoded / "apktool.yml"
+    metadata_text = apktool_metadata.read_text(encoding="utf-8")
+    if "\nusesFramework:" not in metadata_text:
+        # Config splits contain no resource table, so Apktool cannot infer that
+        # their android:* attributes depend on framework id 1. Add the same
+        # explicit dependency that it discovers automatically for the base APK.
+        marker = f"apkFileName: {stub.name}\n"
+        if marker not in metadata_text:
+            raise KitError("apktool metadata has an unexpected layout")
+        metadata_text = metadata_text.replace(
+            marker,
+            marker
+            + "usesFramework:\n"
+            + "  ids:\n"
+            + "  - 1\n"
+            + "sdkInfo:\n"
+            + "  minSdkVersion: 28\n"
+            + "  targetSdkVersion: 36\n",
+            1,
+        )
+        apktool_metadata.write_text(metadata_text, encoding="utf-8")
     manifest = decoded / "AndroidManifest.xml"
-    manifest.write_text(patch_manifest(manifest.read_text(encoding="utf-8")), encoding="utf-8")
+    manifest.write_text(
+        patch_manifest(
+            manifest.read_text(encoding="utf-8"),
+            patch_vr_entrypoint=patch_vr_entrypoint,
+        ),
+        encoding="utf-8",
+    )
     run(
         [tools.java, "-jar", tools.apktool, "b", "-p", framework, decoded, "-o", rebuilt],
         failure="apktool manifest rebuild failed",
@@ -1370,7 +1475,30 @@ def assemble_apks(
     if sha256_file(openxr_loader) != OPENXR_LOADER_SHA256:
         raise KitError("OpenXR loader hash mismatch; required Khronos 1.1.43 arm64 binary")
 
-    manifest = None if personal_update_source else build_manifest(package.base.path, build, tools)
+    if personal_update_source:
+        manifest = (
+            build_manifest(
+                package.base.path,
+                build,
+                tools,
+                patch_vr_entrypoint=False,
+            )
+            if TARGET_PACKAGE_NAME != PACKAGE_NAME
+            else None
+        )
+    else:
+        manifest = build_manifest(package.base.path, build, tools)
+    split_manifests: dict[Path, bytes] = {}
+    if TARGET_PACKAGE_NAME != PACKAGE_NAME:
+        for index, apk in enumerate(package.apks):
+            if apk.path == package.base.path:
+                continue
+            split_manifests[apk.path] = build_manifest(
+                apk.path,
+                build / f"manifest-split-{index}",
+                tools,
+                patch_vr_entrypoint=False,
+            )
     dex_name = (
         existing_savr_loader_dex(package.base.path)
         if personal_update_source
@@ -1412,6 +1540,8 @@ def assemble_apks(
             add_or_replace(dex_name, dex_bytes, zipfile.ZIP_STORED)
             for name, (data, compression) in default_settings.items():
                 add_or_replace(name, data, compression)
+        elif apk.path in split_manifests:
+            replacements["AndroidManifest.xml"] = split_manifests[apk.path]
         if apk.path == package.arm64.path:
             add_or_replace("lib/arm64-v8a/libsavr.so", native_bytes, zipfile.ZIP_DEFLATED)
             add_or_replace(
@@ -1427,6 +1557,12 @@ def assemble_apks(
     for apk in package.apks:
         destination = output / output_name(apk)
         signer = align_sign_verify(destination, keystore, tools)
+        actual_package, _, _, _ = parse_badging(destination, tools.aapt2)
+        if actual_package != TARGET_PACKAGE_NAME:
+            raise KitError(
+                "post-build audit: output package mismatch for "
+                f"{destination.name} ({actual_package} != {TARGET_PACKAGE_NAME})"
+            )
         output_signers.add(signer)
         replaced, added = patches[destination]
         audit_rewrite(apk.path, destination, replaced, added)
@@ -1600,6 +1736,7 @@ def resolve_tools(args) -> Toolchain:
 
 
 def main() -> int:
+    global TARGET_PACKAGE_NAME
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-package", required=True, help="original APK, split folder, or archive")
     parser.add_argument("--audio-source", required=True, help="supported sound-mod folder or archive")
@@ -1613,6 +1750,11 @@ def main() -> int:
     parser.add_argument("--loader-dex")
     parser.add_argument("--openxr-loader")
     parser.add_argument("--keystore")
+    parser.add_argument(
+        "--target-package",
+        default=PACKAGE_NAME,
+        help="output Android package; source validation always uses the retail package",
+    )
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument(
         "--allow-unofficial-source",
@@ -1625,6 +1767,9 @@ def main() -> int:
         help="rebuild an existing SAVR personal split set in place of clean retail inputs",
     )
     args = parser.parse_args()
+    if not PACKAGE_NAME_PATTERN.fullmatch(args.target_package):
+        raise KitError(f"invalid Android package name: {args.target_package}")
+    TARGET_PACKAGE_NAME = args.target_package
 
     build = Path(args.build_dir).expanduser().resolve()
     source_root = ROOT.resolve()
@@ -1733,7 +1878,11 @@ def main() -> int:
         openxr_loader,
         args.personal_update_source,
     )
-    if args.personal_update_source and output_signer != package.signer_sha256:
+    if (
+        args.personal_update_source
+        and TARGET_PACKAGE_NAME == PACKAGE_NAME
+        and output_signer != package.signer_sha256
+    ):
         raise KitError(
             "the supplied update keystore does not match the existing personal APK set. "
             f"Input signer: {package.signer_sha256}; output signer: {output_signer}"
@@ -1741,7 +1890,13 @@ def main() -> int:
     payload_result = stage_payload(package, audio, payload, build)
     result = {
         "formatVersion": 1,
-        "package": PACKAGE_NAME,
+        "package": TARGET_PACKAGE_NAME,
+        "sourcePackage": PACKAGE_NAME,
+        "displayName": (
+            EXPERIMENTAL_DISPLAY_NAME
+            if TARGET_PACKAGE_NAME == EXPERIMENTAL_PACKAGE_NAME
+            else None
+        ),
         "versionCode": VERSION_CODE,
         "versionName": VERSION_NAME,
         "sourceSignerSha256": package.signer_sha256,

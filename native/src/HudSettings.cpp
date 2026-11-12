@@ -13,7 +13,7 @@ namespace savr::hud {
 namespace {
 
 constexpr const char* kPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_hud.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_hud.ini";
 
 // reference Quest build ships CLASSIC as the approachable default.  SA follows that behaviour
 // so a new test build immediately proves that the integration is active.

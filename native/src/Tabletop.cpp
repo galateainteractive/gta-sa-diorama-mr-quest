@@ -18,9 +18,9 @@ namespace savr::tabletop {
 namespace {
 
 constexpr char kSettingsPath[] =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_tabletop.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_tabletop.ini";
 constexpr char kSettingsTempPath[] =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_tabletop.ini.tmp";
+    SAVR_EXTERNAL_FILES_DIR "/vr_tabletop.ini.tmp";
 constexpr char kEnabledProperty[] = "debug.savr.tabletop";
 constexpr char kScaleProperty[] = "debug.savr.tabletop_scale";
 

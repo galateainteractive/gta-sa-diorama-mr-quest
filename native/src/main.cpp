@@ -2547,9 +2547,9 @@ void* WaitForGameLibrary(void*) {
     // through CFileMgr, which prepends the data dir.) The fix is to point cwd at
     // the game's data dir so the relative fopen lands on the deployed packs; the
     // case-insensitive /sdcard FUSE maps AUDIO/ -> audio/. Fixes SFX and radio.
-    const char* kDataDir = "/sdcard/Android/data/com.rockstargames.gtasa/files";
+    const char* kDataDir = SAVR_EXTERNAL_FILES_DIR;
     const bool audioPacksPresent =
-        access("/sdcard/Android/data/com.rockstargames.gtasa/files/audio/CONFIG/BankLkup.dat", F_OK) == 0;
+        access(SAVR_EXTERNAL_FILES_DIR "/audio/CONFIG/BankLkup.dat", F_OK) == 0;
     if (audioPacksPresent && chdir(kDataDir) == 0) {
         // Packs will now open through the real loaders — do NOT stub them, or the
         // stub's return-null keeps radio silent.
@@ -2605,7 +2605,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     // 22.05 kHz request.  The Java Application seeds this file before the game
     // activity (and therefore libGame) is created.
     constexpr char kOpenAlConfig[] =
-        "/sdcard/Android/data/com.rockstargames.gtasa/files/alsoft.conf";
+        SAVR_EXTERNAL_FILES_DIR "/alsoft.conf";
     const int configResult = setenv("ALSOFT_CONF", kOpenAlConfig, 1);
     const int logResult = setenv("ALSOFT_LOGLEVEL", "3", 1);
     LOGI("libsavr.so loaded, JavaVM %p", static_cast<void*>(vm));

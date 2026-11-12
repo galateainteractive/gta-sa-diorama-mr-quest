@@ -29,7 +29,7 @@ namespace savr::hdweapons {
 namespace {
 
 constexpr char kFilesDir[] =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files";
+    SAVR_EXTERNAL_FILES_DIR;
 // Registered RELATIVE to the files dir (Apply chdirs there first): the
 // ms_files name field is only 40 bytes and an absolute /sdcard path aborts
 // the engine's fortified strcpy. The engine lowercases + converts '\'->'/'
@@ -44,10 +44,10 @@ constexpr char kFilesDir[] =
 // our loose-PNG texture database, so the HD textures actually bind.
 constexpr char kImgPath[] = "hdweapons\\hdweapons.img";
 constexpr char kImgPathReal[] =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/hdweapons/"
+    SAVR_EXTERNAL_FILES_DIR "/hdweapons/"
     "hdweapons.img";
 constexpr char kTexDbListing[] =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/texdb/hdweapons/"
+    SAVR_EXTERNAL_FILES_DIR "/texdb/hdweapons/"
     "hdweapons.txt";
 
 constexpr int kInfoStride = 0x14;      // CStreamingInfo on arm64
@@ -91,7 +91,7 @@ bool PayloadPresent() {
 // the outcome also lands in a file the next debugging session can read.
 void WriteStatus(const char* text) {
     if (FILE* f = std::fopen(
-            "/sdcard/Android/data/com.rockstargames.gtasa/files/hdweapons/"
+            SAVR_EXTERNAL_FILES_DIR "/hdweapons/"
             "status.txt", "w")) {
         std::fputs(text, f);
         std::fclose(f);

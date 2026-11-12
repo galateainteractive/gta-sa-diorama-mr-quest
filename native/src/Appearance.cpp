@@ -12,7 +12,7 @@ namespace {
 
 constexpr int kDefaultHandSkin = HAND_SKIN_DARK;
 const char* const kPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_appearance.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_appearance.ini";
 
 std::once_flag g_initOnce;
 std::mutex g_saveMutex;

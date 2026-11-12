@@ -27,7 +27,7 @@ constexpr int kWeaponSlotCount = 13;
 constexpr int kOffActiveWeaponSlot = 0x8DC;
 
 const char* kSettingsPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_holsters.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_holsters.ini";
 
 const PointMetadata kMetadata[POINT_COUNT] = {
     {"WAIST LEFT",              -0.27f, -0.58f,  0.07f, false},

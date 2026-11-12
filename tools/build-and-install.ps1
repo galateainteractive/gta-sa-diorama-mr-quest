@@ -17,13 +17,21 @@ param(
     [switch]$NonInteractive,
     [switch]$AcceptAndroidLicenses,
     [switch]$ApproveSignatureReplacement,
-    [switch]$PersonalUpdate
+    [switch]$PersonalUpdate,
+    [switch]$ExperimentalPackage
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:PackageName = 'com.rockstargames.gtasa'
+$script:SourcePackageName = 'com.rockstargames.gtasa'
+$script:ExperimentalPackageName = 'com.savr.dioramamr'
+$script:ExperimentalDisplayName = 'GTA SA Diorama MR'
+$script:PackageName = if ($ExperimentalPackage.IsPresent) {
+    $script:ExperimentalPackageName
+} else {
+    $script:SourcePackageName
+}
 $script:ExpectedVersionCode = '4234641'
 $script:ExpectedVersionName = '2.11.311'
 $script:ExpectedSourceSigner = 'FF5B7B6A083FE5994E3306B30AE19D311951D019A8DE7C3E6914F0E06D130A13'
@@ -815,14 +823,22 @@ function Assert-BuildArtifacts {
     }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     if ([string]$manifest.package -ne $script:PackageName) { throw 'Build manifest package is unexpected.' }
+    if ($script:PackageName -ne $script:SourcePackageName -and
+        [string]$manifest.sourcePackage -ne $script:SourcePackageName) {
+        throw 'Experimental build manifest does not identify the verified retail source package.'
+    }
+    if ($script:PackageName -eq $script:ExperimentalPackageName -and
+        [string]$manifest.displayName -ne $script:ExperimentalDisplayName) {
+        throw 'Experimental build manifest has an unexpected display name.'
+    }
     if ([string]$manifest.versionCode -ne $script:ExpectedVersionCode) { throw 'Build manifest versionCode is unexpected.' }
     if ([string]$manifest.versionName -ne $script:ExpectedVersionName) { throw 'Build manifest versionName is unexpected.' }
-    if ($PersonalUpdate.IsPresent) {
+    if ($PersonalUpdate.IsPresent -and $script:PackageName -eq $script:SourcePackageName) {
         if ([string]$manifest.sourceSignerSha256 -ne [string]$manifest.outputSignerSha256) {
             throw 'Personal update output signer does not match the existing APK set.'
         }
     }
-    else {
+    elseif (-not $PersonalUpdate.IsPresent) {
         if (-not [bool]$manifest.officialSource) { throw 'The selected APK set is not the verified official retail source.' }
         if ([string]$manifest.sourceSignerSha256 -ne $script:ExpectedSourceSigner) { throw 'Official source signer hash changed.' }
     }
@@ -1071,11 +1087,32 @@ function Get-QuestFreeBytes {
 }
 
 function Assert-QuestFreeSpace {
-    param([Parameter(Mandatory = $true)]$BuildInfo)
+    param(
+        [Parameter(Mandatory = $true)]$BuildInfo,
+        [switch]$PayloadOnly,
+        [switch]$ApkOnly,
+        [switch]$DataMainAlreadyValid
+    )
     [int64]$apkBytes = 0
     foreach ($record in @($BuildInfo.Manifest.outputs)) { $apkBytes += [int64]$record.size }
     [int64]$payloadBytes = [int64]$BuildInfo.Manifest.payload.totalBytes
-    [int64]$required = (2 * $apkBytes) + $payloadBytes + 536870912
+    [int64]$required = 0
+    if ($PayloadOnly.IsPresent) {
+        [int64]$remainingPayload = [int64]$BuildInfo.Manifest.payload.audio.totalBytes +
+            [int64]$BuildInfo.Manifest.payload.vrhands.totalBytes
+        if (-not $DataMainAlreadyValid.IsPresent) {
+            $remainingPayload += [int64]$BuildInfo.Manifest.payload.data_main.totalBytes
+        }
+        # Reserve both a staging copy and a rollback copy for every remaining
+        # payload tree, plus 512 MiB of filesystem/headroom.
+        $required = (2 * $remainingPayload) + 536870912
+    }
+    elseif ($ApkOnly.IsPresent) {
+        $required = (2 * $apkBytes) + 536870912
+    }
+    else {
+        $required = (2 * $apkBytes) + $payloadBytes + 536870912
+    }
     [int64]$available = Get-QuestFreeBytes
     Write-Host ('Quest free space: {0:N2} GiB; conservative requirement: {1:N2} GiB' -f ($available / 1GB), ($required / 1GB))
     if ($available -lt $required) {
@@ -1092,8 +1129,9 @@ function Test-RemotePath {
 
 function Assert-SafeGeneratedRemotePath {
     param([Parameter(Mandatory = $true)][string]$RemotePath)
+    $packageFilesPattern = [regex]::Escape("Android/data/$($script:PackageName)/files")
     if ($RemotePath -match "['`r`n]" -or
-        $RemotePath -notmatch '^/sdcard/(savr|Android/data/com\.rockstargames\.gtasa/files)/\.savr-(stage|backup)-[a-f0-9]{32}(/[A-Za-z0-9_.-]+)?$') {
+        $RemotePath -notmatch "^/sdcard/(savr|$packageFilesPattern)/\.savr-(stage|backup)-[a-f0-9]{32}(/[A-Za-z0-9_.-]+)?$") {
         throw "Refusing unsafe generated remote path: $RemotePath"
     }
 }
@@ -1106,8 +1144,9 @@ function Remove-GeneratedRemotePath {
 
 function Assert-RemotePayloadHashes {
     param([Parameter(Mandatory = $true)][string]$RemoteRoot)
+    $packageFilesPattern = [regex]::Escape("Android/data/$($script:PackageName)/files")
     if ($RemoteRoot -match "['`r`n]" -or
-        $RemoteRoot -notmatch '^/sdcard/(savr/data_main|Android/data/com\.rockstargames\.gtasa/files/(audio|vrhands)|savr/\.savr-stage-[a-f0-9]{32}/(data_main|audio|vrhands))$') {
+        $RemoteRoot -notmatch "^/sdcard/(savr/data_main|$packageFilesPattern/(audio|vrhands)|savr/\.savr-stage-[a-f0-9]{32}/(data_main|audio|vrhands))$") {
         throw "Refusing to hash an unexpected remote root: $RemoteRoot"
     }
     $command = "cd '$RemoteRoot' && toybox sha256sum -c SHA256SUMS >/dev/null"
@@ -1451,6 +1490,10 @@ function Assert-InstalledApks {
 
 function Invoke-Main {
     $projectRoot = Get-FullPath (Join-Path $PSScriptRoot '..')
+    if ($ExperimentalPackage.IsPresent) {
+        Write-Warning "EXPERIMENTAL side-by-side package selected: $($script:PackageName)"
+        Write-Host "The normal package $($script:SourcePackageName) will not be replaced or uninstalled."
+    }
     $buildScript = Join-Path $PSScriptRoot 'build.ps1'
     $assembleScript = Join-Path $PSScriptRoot 'assemble.py'
     foreach ($required in @($buildScript, $assembleScript)) {
@@ -1566,6 +1609,7 @@ function Invoke-Main {
             '--sdk', $resolvedSdk,
             '--java-home', $resolvedJavaHome,
             '--apktool', $apktool,
+            '--target-package', $script:PackageName,
             '--validate-only'
         )
         if ($PersonalUpdate.IsPresent) { $validateArguments += '--personal-update-source' }
@@ -1583,6 +1627,7 @@ function Invoke-Main {
             -GamePackage $resolvedGamePackage `
             -AudioSource $resolvedAudioSource `
             -Keystore $keystore `
+            -TargetPackage $script:PackageName `
             -Package `
             -PersonalUpdateSource:$PersonalUpdate.IsPresent
     }
@@ -1618,7 +1663,18 @@ function Invoke-Main {
     $script:AdbExe = $pinnedAdb
     Select-QuestDevice -RequestedSerial $Serial
     Stop-GameAndVerify
-    Assert-QuestFreeSpace -BuildInfo $buildInfo
+    $resumeDataMainValid = $false
+    if ($PayloadOnly.IsPresent -and (Test-RemotePath -RemotePath '/sdcard/savr/data_main')) {
+        try {
+            Assert-RemotePayloadHashes -RemoteRoot '/sdcard/savr/data_main'
+            $resumeDataMainValid = $true
+        }
+        catch {
+            Write-Warning "Existing data_main failed verification and must be restaged: $($_.Exception.Message)"
+        }
+    }
+    Assert-QuestFreeSpace -BuildInfo $buildInfo -PayloadOnly:$PayloadOnly.IsPresent `
+        -ApkOnly:$ApkOnly.IsPresent -DataMainAlreadyValid:$resumeDataMainValid
 
     $backup = $null
     if ($PayloadOnly.IsPresent) {
@@ -1641,8 +1697,14 @@ function Invoke-Main {
         Select-QuestDevice -RequestedSerial $script:SelectedSerial
 
         Write-Step 'Publishing hash-verified Quest data'
-        Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'data_main') `
-            -RemoteParent '/sdcard/savr' -RemoteFinal '/sdcard/savr/data_main'
+        $dataMainFinal = '/sdcard/savr/data_main'
+        if ($resumeDataMainValid) {
+            Write-Host 'Existing data_main is hash-verified; skipping the 1.45 GB upload.'
+        }
+        else {
+            Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'data_main') `
+                -RemoteParent '/sdcard/savr' -RemoteFinal $dataMainFinal
+        }
         $packageFiles = "/sdcard/Android/data/$($script:PackageName)/files"
         Publish-PayloadTree -LocalRoot (Join-Path $buildInfo.PayloadRoot 'audio') `
             -RemoteParent $packageFiles -RemoteFinal "$packageFiles/audio"

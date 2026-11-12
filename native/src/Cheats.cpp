@@ -457,7 +457,7 @@ void Tick() {
             LOGI("[mission] flag after launch: DoMissionSkip=%d (tick %d)",
                  value, tick);
             if (FILE* f = std::fopen(
-                    "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_debug.txt",
+                    SAVR_EXTERNAL_FILES_DIR "/savr_debug.txt",
                     "a")) {
                 std::fprintf(f, "flag tick=%d value=%d\n", tick, value);
                 std::fclose(f);
@@ -806,7 +806,7 @@ void Activate(int index) {
              cheat.fn, static_cast<void*>(g_currentMissionPage),
              static_cast<void*>(g_currentSkipToMissionNumber));
         if (FILE* f = std::fopen(
-                "/sdcard/Android/data/com.rockstargames.gtasa/files/savr_debug.txt",
+                SAVR_EXTERNAL_FILES_DIR "/savr_debug.txt",
                 "a")) {
             std::fprintf(f, "launch page=%d num=%d\n",
                          page, number);

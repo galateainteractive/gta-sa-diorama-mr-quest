@@ -98,7 +98,7 @@ constexpr HandCalibSetting kHandCalibSettings[HAND_CALIB_FIELD_COUNT] = {
 std::atomic<int> g_handCalib[HAND_CALIB_FIELD_COUNT]{};
 std::atomic<bool> g_handCalibrationActive{false};
 const char* const kPhysicsIniPath =
-    "/sdcard/Android/data/com.rockstargames.gtasa/files/vr_basketball.ini";
+    SAVR_EXTERNAL_FILES_DIR "/vr_basketball.ini";
 
 void SavePhysics() {
     if (FILE* file = std::fopen(kPhysicsIniPath, "w")) {
