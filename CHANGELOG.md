@@ -1,6 +1,6 @@
 # Changelog
 
-## GTA installer 1.3.9 — 2026-11-12
+## GTA installer 1.3.10 — 2026-11-12
 
 - Install the personal Quest build under the dedicated package
   `com.savr.dioramamr`, displayed as **GTA SA Diorama MR**. The official
