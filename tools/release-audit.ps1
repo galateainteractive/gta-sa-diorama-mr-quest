@@ -337,7 +337,12 @@ $expectedSettings = @(
 $nativeSettings = @(
     Get-ChildItem -LiteralPath (Join-Path $Root 'native\src') -Filter '*.cpp' -File |
         ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw } |
-        ForEach-Object { [regex]::Matches($_, '/files/(vr_[a-z0-9_.-]+)') } |
+        ForEach-Object {
+            [regex]::Matches(
+                $_,
+                '(?:/files/|SAVR_EXTERNAL_FILES_DIR\s+"/)(vr_[a-z0-9_.-]+)'
+            )
+        } |
         ForEach-Object { $_.Groups[1].Value } |
         Sort-Object -Unique
 )
