@@ -63,8 +63,8 @@ void ToggleParachuteControl();
 bool FlightCameraTilt();
 // Cutscenes rendered in head-tracked stereo from the cutscene camera instead
 // of the flat theater screen.
-// One-shot welcome window flag, persisted: true after the player dismissed
-// the first-run ABOUT panel.
+// One-shot Diorama view-guide flag, persisted independently from the retired
+// welcome panel so existing installations receive the new lesson once.
 bool WelcomeSeen();
 void MarkWelcomeSeen();
 int  CutsceneMode();          // 0 cinema, 1 cinematic vr, 2 first person

@@ -98,7 +98,7 @@ void Save() {
     std::fprintf(file,"GameCutsceneMode=%d\n",g_gameCutsceneMode.load());
     for (const auto& [scene, camera] : g_cutsceneCameras)
         std::fprintf(file,"CutsceneCamera.%s=%d\n",scene.c_str(),camera);
-    std::fprintf(file,"WelcomeShown=%d\n",g_welcomeSeen.load()?1:0);
+    std::fprintf(file,"DioramaViewGuideShown=%d\n",g_welcomeSeen.load()?1:0);
     std::fprintf(file,"BindingsVersion=%d\n",kBindingsVersion);
     std::fprintf(file,"BindA=%d\n",g_binding[0].load());
     std::fprintf(file,"BindB=%d\n",g_binding[1].load());
@@ -158,7 +158,7 @@ void Load() {
                     g_cutsceneCameras[scene]=std::max(0,value);
                     continue;
                 }
-                if (std::sscanf(line,"WelcomeShown=%d",&value)==1)
+                if (std::sscanf(line,"DioramaViewGuideShown=%d",&value)==1)
                     welcomeSeen=value;
                 else if (std::sscanf(line,"BindingsVersion=%d",&value)==1)
                     bindingsVersion=value;
