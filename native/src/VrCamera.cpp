@@ -26340,6 +26340,46 @@ void OnScanWorld() {
         g_origScanWorld();
         return;
     }
+
+    // GTA's renderer does not use only CCam::m_nMode to decide how to draw the
+    // occupied vehicle. When gbFirstPersonRunThisFrame is set it removes the
+    // player's car from the normal list in SetupEntityVisibility and defers it
+    // to RenderFirstPersonVehicle, a late mono-camera pass. The phone camera can
+    // cycle into that state even though Diorama is visibly using TRACK/FOLLOW/
+    // FIXED, which made the same car disappear on every stock-camera cycle.
+    // Scope the flag off only while the main Diorama render list is built; keep
+    // the retail value intact for game logic and every non-Diorama camera.
+    class ScopedDioramaVehicleListMode {
+    public:
+        explicit ScopedDioramaVehicleListMode(bool active) {
+            if (!active || !g.gbFirstPersonRunThisFrame) return;
+            value_ = g.gbFirstPersonRunThisFrame;
+            saved_ = *value_;
+            *value_ = false;
+            if (saved_) {
+                static double lastLogMs = 0.0;
+                const double nowMs = NowMs();
+                if (nowMs - lastLogMs >= 1000.0) {
+                    lastLogMs = nowMs;
+                    LOGI("[tabletop.vehicle] bypassed stock first-person render-list split");
+                }
+            }
+        }
+        ~ScopedDioramaVehicleListMode() {
+            if (value_) *value_ = saved_;
+        }
+        ScopedDioramaVehicleListMode(const ScopedDioramaVehicleListMode&) = delete;
+        ScopedDioramaVehicleListMode& operator=(
+            const ScopedDioramaVehicleListMode&) = delete;
+
+    private:
+        bool* value_{};
+        bool saved_{};
+    };
+    const ScopedDioramaVehicleListMode dioramaVehicleListMode(
+        mainGameplayScan &&
+        g_tabletopActive.load(std::memory_order_acquire));
+
     ScopedEnginePreMainScan enginePreMainScan(mainGameplayScan);
     if (mainGameplayScan) {
         ++g_profCull.nearbyScanMainPasses;

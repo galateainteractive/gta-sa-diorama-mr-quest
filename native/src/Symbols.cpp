@@ -269,6 +269,7 @@ bool ResolveGameSymbols(void* handle) {
         {"_ZN9CRenderer23ms_nNoOfVisibleEntitiesE",                              reinterpret_cast<void**>(&g.CRenderer_ms_nNoOfVisibleEntities),      false},
         {"_ZN9CRenderer19ms_nNoOfVisibleLodsE",                                  reinterpret_cast<void**>(&g.CRenderer_ms_nNoOfVisibleLods),          false},
         {"_ZN9CRenderer24ms_nNoOfVisibleSuperLodsE",                             reinterpret_cast<void**>(&g.CRenderer_ms_nNoOfVisibleSuperLods),     false},
+        {"gbFirstPersonRunThisFrame",                                             reinterpret_cast<void**>(&g.gbFirstPersonRunThisFrame),              false},
         {"_ZN9CRenderer15ms_lodDistScaleE",                                      reinterpret_cast<void**>(&g.CRenderer_ms_lodDistScale),              false},
         {"_ZN9CRenderer18ms_lowLodDistScaleE",                                   reinterpret_cast<void**>(&g.CRenderer_ms_lowLodDistScale),           false},
         {"FadeDistMult",                                                         reinterpret_cast<void**>(&g.FadeDistMult),                           false},

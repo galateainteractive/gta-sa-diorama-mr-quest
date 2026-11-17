@@ -875,6 +875,24 @@ if ($widgetPollFunction -notmatch
 }
 Write-Output 'PASS Package 83 Diorama transitions isolate R3 and interior-glass state'
 
+# The phone camera has a separate first-person render-list flag. When set,
+# retail removes the occupied vehicle from the ordinary list and draws it in a
+# late mono pass. Diorama scopes that flag off during its main ScanWorld and
+# restores the exact retail value afterward.
+$scanWorldFunction = [regex]::Match(
+    $cameraSource,
+    '(?s)void OnScanWorld\(\).*?(?=\r?\nvoid On)').Value
+if ([string]::IsNullOrWhiteSpace($scanWorldFunction) -or
+    $symbolsHeader -notmatch 'bool\* gbFirstPersonRunThisFrame;' -or
+    $symbolsSource -notmatch '"gbFirstPersonRunThisFrame"' -or
+    $scanWorldFunction -notmatch
+        'mainGameplayScan &&\s*g_tabletopActive\.load\(std::memory_order_acquire\)' -or
+    $scanWorldFunction -notmatch '\*value_ = false;' -or
+    $scanWorldFunction -notmatch 'if \(value_\) \*value_ = saved_;') {
+    throw 'Diorama player-vehicle first-person list isolation audit failed'
+}
+Write-Output 'PASS Diorama keeps the player vehicle on the ordinary render list'
+
 # Package 76 moves the combined help/subtitle layer into a wide elevated box,
 # uses a compact 0.5x type scale and converges only this layer at 2.5 m.
 # Known layouts migrate; custom player calibration stays intact.

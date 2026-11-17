@@ -525,6 +525,11 @@ struct GameSymbols {
     int* CRenderer_ms_nNoOfVisibleEntities;
     int* CRenderer_ms_nNoOfVisibleLods;
     int* CRenderer_ms_nNoOfVisibleSuperLods;
+    // Retail removes the player's occupied vehicle from the ordinary render
+    // list while this flag is set and defers it to RenderFirstPersonVehicle.
+    // Diorama uses an external third-person camera even when the hidden phone
+    // camera happens to be in that state, so its main list scan scopes this off.
+    bool* gbFirstPersonRunThisFrame;
 
     // Bounded draw-distance A/B and its low-cost runtime witnesses. The LOD
     // scale is the user-quality lever consumed by CCamera::Process; far clip is

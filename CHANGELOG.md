@@ -1,5 +1,13 @@
 # Changelog
 
+## GTA installer 1.3.11 — 2026-11-17
+
+- Keep the occupied vehicle on Diorama's normal stereo render list even when
+  GTA's hidden phone camera cycles through its internal first-person state.
+  The retail flag is scoped off only for the main Diorama visibility scan and
+  restored immediately, preventing the car from disappearing periodically as
+  TRACK, FOLLOW and FIXED are cycled.
+
 ## GTA installer 1.3.10 — 2026-11-12
 
 - Install the personal Quest build under the dedicated package
